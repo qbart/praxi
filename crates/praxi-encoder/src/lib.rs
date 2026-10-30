@@ -308,7 +308,7 @@ impl<W: Write + Seek> Encoder<W> {
         let pts = self.frame;
         self.write_markers_until(self.time_base.to_micros(pts))?;
 
-        let keyframe = pts % self.config.keyint as u64 == 0;
+        let keyframe = pts.is_multiple_of(self.config.keyint as u64);
         for v in &mut self.variants {
             let (bw, bh) = v.params.format.block_size();
             gather_blocks(rgba, w, h, bw as usize, bh as usize, &mut v.src_blocks);
@@ -395,13 +395,12 @@ fn encode_bc7(src_blocks: &[u8], level: u32, rdo_lambda: f32, threads: usize, ou
         }
     });
     if rdo_lambda > 0.0 {
-        let pixels: Vec<[u8; 4]> = src_blocks.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]).collect();
+        let pixels: Vec<[u8; 4]> = src_blocks.as_chunks::<4>().0.to_vec();
         let params = uastc_enc::UastcRdoParams { lambda: rdo_lambda, ..Default::default() };
         uastc_enc::uastc_rdo(n as u32, &mut uastc, &pixels, &params, flags, threads as u32);
     }
     out.resize(n * 16, 0);
-    for (dst, src) in out.chunks_exact_mut(16).zip(&uastc) {
-        let dst: &mut [u8; 16] = dst.try_into().expect("16-byte block");
+    for (dst, src) in out.as_chunks_mut::<16>().0.iter_mut().zip(&uastc) {
         uastc_bc7::transcode_uastc_to_bc7(src, dst);
     }
 }

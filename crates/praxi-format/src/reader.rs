@@ -143,7 +143,7 @@ impl<R: Read + Seek> Reader<R> {
         let mut buf = vec![0u8; count * INDEX_ENTRY_SIZE as usize];
         self.inner.read_exact(&mut buf)?;
         let mut out = Vec::with_capacity(count);
-        for b in buf.chunks_exact(INDEX_ENTRY_SIZE as usize) {
+        for b in buf.as_chunks::<{ INDEX_ENTRY_SIZE as usize }>().0 {
             let e = IndexEntry { stream: le_u16(b, 0), pts: le_u64(b, 8), offset: le_u64(b, 16) };
             if e.stream as usize >= self.streams.len() || e.offset < self.data_start || e.offset >= self.header.index_offset {
                 return corrupt(format!("bad index entry {e:?}"));

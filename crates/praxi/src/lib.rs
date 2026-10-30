@@ -329,7 +329,7 @@ impl<R: Read + Seek> Player<R> {
         let mut start = u64::MAX;
         for t in &mut self.tracks {
             let entries = self.index.iter().filter(|e| e.stream == t.info.stream);
-            let before = entries.clone().filter(|e| t.time_base.to_micros(e.pts) <= target).last();
+            let before = entries.clone().rev().find(|e| t.time_base.to_micros(e.pts) <= target);
             let Some(entry) = before.or_else(|| entries.clone().next()) else {
                 return corrupt(format!("stream {} has no keyframe in the index", t.info.stream));
             };
