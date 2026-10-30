@@ -1,6 +1,13 @@
 SAMPLES_DIR := samples
 
-.PHONY: samples
+.PHONY: build test samples
+
+build:
+	cargo build --release
+
+test:
+	cargo test --workspace
+
 samples: $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 
 $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4:

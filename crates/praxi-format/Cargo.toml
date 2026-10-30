@@ -1,0 +1,8 @@
+[package]
+name = "praxi-format"
+description = "Reader and writer for the PRAXI container format"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+lz4_flex.workspace = true

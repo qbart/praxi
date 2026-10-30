@@ -1,0 +1,14 @@
+[package]
+name = "praxi-cli"
+description = "praxi command line tool"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "praxi"
+path = "src/main.rs"
+
+[dependencies]
+praxi-format.workspace = true
+praxi-encoder.workspace = true
+clap.workspace = true

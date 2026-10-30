@@ -1,0 +1,12 @@
+[package]
+name = "praxi-encoder"
+description = "Encoder for praxi video files (BC7, ASTC)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+praxi-format.workspace = true
+ktx-rs.workspace = true
+
+[dev-dependencies]
+praxi.workspace = true

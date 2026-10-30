@@ -1,0 +1,8 @@
+[package]
+name = "praxi"
+description = "Video player for games: GPU block-compressed frames, events, variants"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+praxi-format.workspace = true
