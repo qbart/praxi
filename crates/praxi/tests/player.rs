@@ -61,7 +61,7 @@ fn events<R: std::io::Read + std::io::Seek>(p: &mut Player<R>) -> Vec<Event> {
     std::iter::from_fn(|| p.poll_event()).collect()
 }
 
-fn marker(name: &str, ms: u64) -> Event {
+fn marker(name: &str, ms: u32) -> Event {
     Event::Marker { name: name.into(), time: ms * MS }
 }
 
