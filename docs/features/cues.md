@@ -1,8 +1,10 @@
 # Cues
 
 Cues are timed events stored in a praxi file. The player emits them while playing, so the
-engine can react: shake the camera, play a sound, show a subtitle. They are meant to be
-authored by tools: the encoder CLI, a future cue editor, or a subtitle converter.
+engine can react: shake the camera, play a sound, show text. Cues are generic: praxi stores
+and times them but gives no meaning to their types or fields; that is up to the game. They
+are meant to be authored by tools: the encoder CLI, the encoder library or a future cue
+editor.
 
 ## Model
 
@@ -11,15 +13,14 @@ A cue has:
 - **time**: when it starts (the chunk pts).
 - **duration**: how long it lasts. `0` makes an instantaneous cue (a marker).
 - **type**: a non-empty UTF-8 string chosen by the author, for example `explosion`,
-  `subtitle`, `camera.shake`. praxi gives meaning to none of them except the conventions
-  below.
+  `camera.shake`, `light.flash`.
 - **fields**: an ordered list of key/value pairs with unique keys. Values are typed:
   string, integer (i64), float (f64), bool or bytes.
 
 Cues live in **cue streams**. A file can have any number of them. A stream only has a
-**name** (free text, at most 32 bytes, for example `cues`, `subtitles`, `director`) used to
-group cues; streams carry no other meaning. Anything specific to a kind of cue, such as a
-subtitle's language, is a field of the cue.
+**name** (free text, at most 32 bytes, for example `cues`, `gameplay`, `director`) used to
+group cues; streams carry no other meaning. Anything specific to a kind of cue is a field
+of the cue.
 
 Cues in one stream may overlap and may share a start time.
 
@@ -43,31 +44,11 @@ The byte layout is in [PRAXI.md](../spec/PRAXI.md#cue-payload).
 - **Finishing** ends every cue still active before `Finished`.
 - Disabling a cue stream ends its active cues immediately (emitting `CueEnd`).
 
-## Conventions
-
-### Subtitles
-
-- Subtitles go in a cue stream named `subtitles`. All languages may share it.
-- Cue type `subtitle`, duration set to how long the text is shown.
-- Fields:
-  - `text` (string, required): the text, lines separated by `\n`. No markup.
-  - `lang` (string, required): BCP 47 language tag, for example `en`, `pl`, `pt-BR`.
-  - `speaker` (string, optional): who is speaking.
-  - `position` (string, optional): `bottom` (default) or `top`.
-
-The engine shows `text` on `Cue` when `lang` is the language the player picked, and hides
-it on `CueEnd` with the same `id`.
-
-### Markers
-
-An instantaneous cue with no fields, whose type names the moment (`explosion`, `fade-out`).
-
 ## Authoring
 
 - Encoder CLI: `--cue TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]` adds a cue to the
   stream named `cues`. Values given on the command line are strings. See
   [encoder.md](encoder.md).
 - Encoder library: any number of cue streams, typed field values.
-- Planned: `--subtitles FILE.srt:LANG` to convert SRT files into subtitle cues,
-  and a cue editor that rewrites the cue streams of an existing file without re-encoding
-  video.
+- Planned: a cue editor that rewrites the cue streams of an existing file without
+  re-encoding video.

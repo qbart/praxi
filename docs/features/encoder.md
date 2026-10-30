@@ -7,7 +7,7 @@ Encoding is offline. The `praxi-encoder` crate turns RGBA frames into a `.praxi`
 
 ```sh
 praxi encode input.mp4 -o intro.praxi --variant bc7 --variant astc6x6 \
-    --cue 2.5=explosion --cue "4+2.5=subtitle:text=Run!;lang=en;speaker=Ann"
+    --cue 2.5=explosion --cue "4+2.5=light.flash:color=red"
 praxi info intro.praxi
 ```
 
@@ -38,8 +38,8 @@ let config = EncoderConfig::new(width, height, fps_num, fps_den)
     .variant(VariantConfig::bc7())
     .variant(VariantConfig::astc(6))
     .cue(2.5, "explosion")
-    .cue_stream(CueStreamConfig::new("subtitles").cue(
-        CueConfig::new(4.0, "subtitle").duration(2.5).field("text", "Run!").field("lang", "en"),
+    .cue_stream(CueStreamConfig::new("gameplay").cue(
+        CueConfig::new(4.0, "camera.shake").duration(2.5).field("strength", 0.8),
     ));
 let mut encoder = Encoder::new(File::create("intro.praxi")?, config)?;
 for frame in frames {

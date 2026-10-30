@@ -17,8 +17,8 @@ player.advance(dt)?;
 while let Some(event) = player.poll_event() {
     match event {
         Event::Cue(cue) if cue.kind == "explosion" => shake_camera(),
-        Event::Cue(cue) if cue.kind == "subtitle" => show_text(cue.id, cue.get_str("text")),
-        Event::CueEnd { id, .. } => hide_text(id),
+        Event::Cue(cue) if cue.kind == "light.flash" => flash_on(cue.id, cue.get_str("color")),
+        Event::CueEnd { id, .. } => flash_off(id),
         Event::Finished => switch_to_gameplay(),
         _ => {}
     }
@@ -63,7 +63,7 @@ for track in 0..player.tracks().len() {
 | `Finished` | Non-looping playback reached the end. The last frame stays available. |
 
 Events are queued in the order they happen within one `advance` call. Cues, their
-ordering rules and the subtitle convention are described in [cues.md](cues.md).
+and their ordering rules are described in [cues.md](cues.md).
 
 ## Timing
 

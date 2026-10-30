@@ -15,7 +15,7 @@ upload: no YUV conversion and no per-pixel CPU work. Frames stay compressed in V
 - **Seamless transitions.** Fast seeking to keyframes, looping and timed cues, so the game
   can cut between gameplay and video without hitches (see [player.md](player.md)).
 - **Events.** The player emits events (started, finished, looped...) the engine can hook
-  into, including custom timed **cues** stored in the file, such as markers and subtitles
+  into, including custom timed **cues** stored in the file, such as markers or anything else the game defines
   (see [player.md](player.md) and [cues.md](cues.md)).
 - **Multi-stream playback.** Several players, and several tracks in one file, can play at
   the same time.
