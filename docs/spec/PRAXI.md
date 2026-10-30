@@ -1,6 +1,6 @@
 # PRAXI file format
 
-Version 0.1. File extension `.praxi`.
+Version 0.2. File extension `.praxi`.
 
 ## Conventions
 
@@ -29,7 +29,7 @@ Version 0.1. File extension `.praxi`.
 |---|---|---|---|
 | 0 | 8 | `magic` | `89 50 52 58 0D 0A 1A 0A` (`\x89PRX\r\n\x1a\n`) |
 | 8 | 2 | `version_major` | `0`. Readers reject other values. |
-| 10 | 2 | `version_minor` | `1`. Minor versions only add things older readers may ignore. |
+| 10 | 2 | `version_minor` | `2`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
 | 12 | 4 | `flags` | Reserved, `0`. |
 | 16 | 2 | `stream_count` | Number of entries in the stream table, at least 1. |
 | 18 | 2 | | Reserved. |
@@ -46,9 +46,9 @@ starting at 0.
 
 | Offset | Size | Field | Description |
 |---|---|---|---|
-| 0 | 1 | `kind` | `1` video, `2` audio (reserved), `3` markers. Readers skip streams of unknown kinds. |
+| 0 | 1 | `kind` | `1` video, `2` audio (reserved), `3` cues. Readers skip streams of unknown kinds. |
 | 1 | 1 | | Reserved. |
-| 2 | 2 | `group` | Streams with the same group are variants of one track; a player selects one of them. |
+| 2 | 2 | `group` | Video: streams with the same group are variants of one track; a player selects one of them. Cue streams: `0`, ignored. |
 | 4 | 4 | `timebase_num` | Time base numerator, at least 1. |
 | 8 | 4 | `timebase_den` | Time base denominator, at least 1. A pts of `p` is `p * num / den` seconds. |
 | 12 | 4 | `chunk_count` | Number of chunks of this stream in the file. |
@@ -73,9 +73,15 @@ Derived values:
 - `block_count = blocks_x * blocks_y`
 - `frame_size = block_count * block_bytes`
 
-### Marker parameters (`kind = 3`)
+### Cue parameters (`kind = 3`)
 
-All 48 bytes reserved.
+| Offset | Size | Field | Description |
+|---|---|---|---|
+| 16 | 8 | `max_duration` | Largest cue `duration` in the stream, in the stream's time base. Used for seeking. |
+| 24 | 8 | `language` | BCP 47 language tag, UTF-8, zero padded. All zero when the stream has no language. |
+| 32 | 32 | `name` | Stream name, UTF-8, zero padded. |
+
+Text fields hold no zero bytes; readers stop at the first zero byte.
 
 ### Audio parameters (`kind = 2`)
 
@@ -115,7 +121,8 @@ Chunks follow the stream table directly and run until `index_offset`. Each chunk
 ### Ordering
 
 Chunks are ordered by time (`pts * num / den`), non-decreasing over the whole file. Chunks
-with equal time may appear in any stream order. Within one stream, `pts` strictly increases.
+with equal time may appear in any stream order. Within a video stream `pts` strictly
+increases; within a cue stream it does not decrease (several cues may start together).
 
 ### Compression
 
@@ -145,16 +152,48 @@ the native layout of the texture format, so the payload can be uploaded as is.
 The frame equals the previous frame of the same stream, with each present block replaced.
 `raw_size` equals `ceil(block_count / 8) + changed * block_bytes`.
 
-## Marker payload
+## Cue payload
 
-Marker chunks carry a name: `raw_size` bytes of UTF-8 text without a terminator. The
-keyframe flag is set. The marker fires at the chunk's time. A marker stream has no
-variants; players report every marker stream.
+Each chunk of a cue stream holds one cue starting at the chunk's time. The keyframe flag is
+set. The decompressed payload is:
+
+| Size | Field | Description |
+|---|---|---|
+| 8 | `duration` | Duration in the stream's time base. `0` is an instantaneous cue. |
+| 2 | `type_len` | Length of `type`, at least 1. |
+| `type_len` | `type` | Cue type, UTF-8. |
+| 2 | `field_count` | Number of fields. |
+| ... | `fields` | `field_count` fields, below. |
+
+The payload ends right after the last field; `raw_size` is the total.
+
+Field:
+
+| Size | Field | Description |
+|---|---|---|
+| 2 | `key_len` | Length of `key`, at least 1. |
+| `key_len` | `key` | UTF-8. Keys are unique within a cue. |
+| 1 | `value_type` | See below. |
+| ... | `value` | Encoded by `value_type`. |
+
+| `value_type` | Value | Encoding |
+|---|---|---|
+| `1` | string | `u32` length, then that many bytes of UTF-8 |
+| `2` | integer | `i64`, two's complement |
+| `3` | float | `f64`, IEEE 754 binary64 |
+| `4` | bool | `u8`, `0` false or `1` true |
+| `5` | bytes | `u32` length, then that many bytes |
+
+Readers reject unknown value types, invalid UTF-8 and duplicate keys.
+
+The cue ends at time `(pts + duration) * num / den`. The header `duration_us` should be at
+least the latest cue end.
 
 ## Index
 
 `index_count` entries of 24 bytes at `index_offset`, ordered by chunk offset. The index has
-one entry for every keyframe chunk of every video stream.
+one entry for every keyframe chunk of every video stream and one for every chunk of every
+cue stream.
 
 | Offset | Size | Field | Description |
 |---|---|---|---|
@@ -170,6 +209,11 @@ index entry with time at or before `t` (or its first entry when there is none), 
 reading at the smallest of those offsets, decode chunks of each stream from its entry on,
 and ignore earlier chunks of streams whose entry comes later.
 
+Cues active at `t` are found through the index: for each cue stream, read the cues whose
+time lies in `[t - max_duration, t]` and keep those ending after `t`.
+
 ## Changelog
 
 - 0.1: initial version.
+- 0.2: marker streams replaced by cue streams (stream parameters, payload, index entries);
+  cue streams allow equal pts.

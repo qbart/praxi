@@ -16,7 +16,9 @@ player.play();
 player.advance(dt)?;
 while let Some(event) = player.poll_event() {
     match event {
-        Event::Marker { name, .. } if name == "explosion" => shake_camera(),
+        Event::Cue(cue) if cue.kind == "explosion" => shake_camera(),
+        Event::Cue(cue) if cue.kind == "subtitle" => show_text(cue.id, cue.get_str("text")),
+        Event::CueEnd { id, .. } => hide_text(id),
         Event::Finished => switch_to_gameplay(),
         _ => {}
     }
@@ -35,14 +37,16 @@ for track in 0..player.tracks().len() {
 - `tracks()` lists the selected video streams, one per group, in group order.
 - `play()`, `pause()`, `is_playing()`, `is_finished()`.
 - `set_looping(bool)`: on reaching the end, restart from the beginning instead of finishing.
-- `seek(time)`: jump to `time`. Decodes from the preceding keyframe of each track. Markers
-  between the keyframe and `time` are not emitted.
+- `seek(time)`: jump to `time`. Decodes from the preceding keyframe of each track.
+  Instantaneous cues at or before `time` are not emitted; cues active at `time` are
+  ([cues.md](cues.md#player-behaviour)).
 - `advance(dt)`: when playing, move the clock forward by `dt` and decode every chunk whose
   time is at or before the clock. Paused players ignore `dt`.
 - `position()` and `duration()`.
 - `video_frame(track)`: the latest decoded frame of a track (`None` before its first
   frame): texture format, sRGB flag, width, height, block data, frame index and timestamp.
   `index` changes only when a new frame was decoded, so engines can skip redundant uploads.
+- `cue_streams()` and `set_cue_stream_enabled(stream, bool)`: see [cues.md](cues.md).
 - `poll_event()`: the next queued event, oldest first.
 
 ## Events
@@ -53,13 +57,13 @@ for track in 0..player.tracks().len() {
 | `Paused` | `pause()` while playing. |
 | `Resumed` | `play()` while paused mid-way. |
 | `Seeked { to }` | After `seek()`. |
-| `Marker { name, time }` | The clock passes a marker stored in the file. |
+| `Cue(CueEvent)` | The clock reaches the start of a cue: `id`, `stream`, `time`, `duration`, `kind` (the cue type) and `fields`. |
+| `CueEnd { id, stream }` | The clock reaches the end of a cue with a non-zero duration, or the cue is ended by seeking, looping, finishing or disabling its stream. |
 | `Looped` | Looping playback reached the end and restarted. |
 | `Finished` | Non-looping playback reached the end. The last frame stays available. |
 
-Events are queued in the order they happen within one `advance` call. Markers are stored
-in the file as a marker stream ([PRAXI.md](../spec/PRAXI.md#marker-payload)) and are added
-at encode time ([encoder.md](encoder.md)).
+Events are queued in the order they happen within one `advance` call. Cues, their
+ordering rules and the subtitle convention are described in [cues.md](cues.md).
 
 ## Timing
 

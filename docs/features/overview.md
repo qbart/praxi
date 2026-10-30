@@ -12,10 +12,11 @@ upload: no YUV conversion and no per-pixel CPU work. Frames stay compressed in V
 - **Per-platform variants.** One video track can be stored in several GPU texture formats
   (BC for desktop/consoles, ASTC for mobile); the player picks the one the GPU supports
   (see [texture-variants.md](texture-variants.md)).
-- **Seamless transitions.** Fast seeking to keyframes, looping and timed markers, so the game
+- **Seamless transitions.** Fast seeking to keyframes, looping and timed cues, so the game
   can cut between gameplay and video without hitches (see [player.md](player.md)).
-- **Events.** The player emits events (started, finished, looped, markers...) the engine can
-  hook into (see [player.md](player.md)).
+- **Events.** The player emits events (started, finished, looped...) the engine can hook
+  into, including custom timed **cues** stored in the file, such as markers and subtitles
+  (see [player.md](player.md) and [cues.md](cues.md)).
 - **Multi-stream playback.** Several players, and several tracks in one file, can play at
   the same time.
 - **Engine agnostic.** The player hands out raw block data; uploading it is the engine's job.
