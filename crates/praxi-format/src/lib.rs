@@ -1,8 +1,10 @@
 //! Reader and writer for the PRAXI container format (`docs/spec/PRAXI.md`).
 
+mod cue;
 mod reader;
 mod writer;
 
+pub use cue::{Cue, Value};
 pub use reader::Reader;
 pub use writer::Writer;
 
@@ -11,7 +13,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 1;
+pub const VERSION_MINOR: u16 = 2;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;
@@ -30,7 +32,7 @@ pub const COLOR_FLAG_ALPHA: u16 = 2;
 pub enum Error {
     Io(std::io::Error),
     BadMagic,
-    UnsupportedVersion(u16),
+    UnsupportedVersion { major: u16, minor: u16 },
     Corrupt(String),
     /// The writer was used against the spec (bad stream table, out-of-order chunks...).
     Invalid(String),
@@ -41,7 +43,7 @@ impl fmt::Display for Error {
         match self {
             Error::Io(e) => write!(f, "i/o error: {e}"),
             Error::BadMagic => write!(f, "not a praxi file"),
-            Error::UnsupportedVersion(v) => write!(f, "unsupported format version {v}"),
+            Error::UnsupportedVersion { major, minor } => write!(f, "unsupported format version {major}.{minor}"),
             Error::Corrupt(msg) => write!(f, "corrupt praxi file: {msg}"),
             Error::Invalid(msg) => write!(f, "invalid praxi output: {msg}"),
         }
@@ -192,10 +194,24 @@ impl VideoParams {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Parameters of a cue stream.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CueParams {
+    /// Largest cue duration in the stream's time base. Filled in by the writer.
+    pub max_duration: u64,
+    /// BCP 47 tag, at most 8 bytes; empty for none.
+    pub language: String,
+    /// At most 32 bytes.
+    pub name: String,
+}
+
+pub const CUE_LANGUAGE_SIZE: usize = 8;
+pub const CUE_NAME_SIZE: usize = 32;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamParams {
     Video(VideoParams),
-    Markers,
+    Cues(CueParams),
     /// A stream of a kind this reader does not know; its chunks are skipped.
     Unknown(u8),
 }
@@ -204,7 +220,7 @@ impl StreamParams {
     pub fn kind(&self) -> u8 {
         match self {
             StreamParams::Video(_) => 1,
-            StreamParams::Markers => 3,
+            StreamParams::Cues(_) => 3,
             StreamParams::Unknown(kind) => *kind,
         }
     }
@@ -230,7 +246,7 @@ impl TimeBase {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamInfo {
     pub group: u16,
     pub time_base: TimeBase,
@@ -244,13 +260,26 @@ impl StreamInfo {
         StreamInfo { group, time_base, chunk_count: 0, params: StreamParams::Video(params) }
     }
 
-    pub fn markers(group: u16) -> StreamInfo {
-        StreamInfo { group, time_base: TimeBase::MICROS, chunk_count: 0, params: StreamParams::Markers }
+    /// A cue stream with a microsecond time base.
+    pub fn cues(name: impl Into<String>, language: impl Into<String>) -> StreamInfo {
+        StreamInfo {
+            group: 0,
+            time_base: TimeBase::MICROS,
+            chunk_count: 0,
+            params: StreamParams::Cues(CueParams { max_duration: 0, language: language.into(), name: name.into() }),
+        }
     }
 
     pub fn video_params(&self) -> Option<&VideoParams> {
         match &self.params {
             StreamParams::Video(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn cue_params(&self) -> Option<&CueParams> {
+        match &self.params {
+            StreamParams::Cues(c) => Some(c),
             _ => None,
         }
     }

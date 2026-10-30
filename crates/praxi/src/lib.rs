@@ -3,13 +3,13 @@
 //! Frames are GPU block-compressed textures; the player reconstructs them from keyframes and
 //! delta frames and hands the raw blocks to the engine for upload.
 
-use praxi_format::{ChunkHeader, IndexEntry, Reader, StreamParams, TimeBase};
+use praxi_format::{ChunkHeader, Cue, IndexEntry, Reader, StreamParams, TimeBase};
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::io::{Read, Seek};
 use std::time::Duration;
 
-pub use praxi_format::{self as format, TextureFormat, VideoParams};
+pub use praxi_format::{self as format, TextureFormat, Value, VideoParams};
 
 #[derive(Debug)]
 pub enum Error {
@@ -62,15 +62,59 @@ impl Capabilities {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     Started,
     Paused,
     Resumed,
     Seeked { to: Duration },
-    Marker { name: String, time: Duration },
+    /// The clock reached the start of a cue (`docs/features/cues.md`).
+    Cue(CueEvent),
+    /// A cue with a non-zero duration ended.
+    CueEnd { id: u64, stream: u16 },
     Looped,
     Finished,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CueEvent {
+    /// Identifies the cue within the file; matches the `id` of its `CueEnd`.
+    pub id: u64,
+    pub stream: u16,
+    pub time: Duration,
+    /// Zero for instantaneous cues.
+    pub duration: Duration,
+    /// The cue type.
+    pub kind: String,
+    pub fields: Vec<(String, Value)>,
+}
+
+impl CueEvent {
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.fields.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    pub fn get_str(&self, key: &str) -> Option<&str> {
+        match self.get(key)? {
+            Value::String(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CueStreamInfo {
+    pub stream: u16,
+    pub name: String,
+    /// BCP 47 tag; empty for none.
+    pub language: String,
+}
+
+/// A started cue with a non-zero duration.
+struct ActiveCue {
+    end_us: u64,
+    id: u64,
+    stream: u16,
 }
 
 /// The selected variant of one group.
@@ -174,7 +218,10 @@ pub struct Player<R: Read + Seek> {
     track_infos: Vec<TrackInfo>,
     /// Stream number to track index.
     stream_track: Vec<Option<usize>>,
-    marker_stream: Vec<bool>,
+    cue_streams: Vec<CueStreamInfo>,
+    /// Per stream number: a cue stream that is enabled.
+    cue_enabled: Vec<bool>,
+    active_cues: Vec<ActiveCue>,
     index: Vec<IndexEntry>,
     clock_us: u64,
     duration_us: u64,
@@ -222,7 +269,14 @@ impl<R: Read + Seek> Player<R> {
                 resume_offset: 0,
             });
         }
-        let marker_stream = streams.iter().map(|s| s.params == StreamParams::Markers).collect();
+        let mut cue_streams = Vec::new();
+        let mut cue_enabled = vec![false; streams.len()];
+        for (i, s) in streams.iter().enumerate() {
+            if let Some(c) = s.cue_params() {
+                cue_streams.push(CueStreamInfo { stream: i as u16, name: c.name.clone(), language: c.language.clone() });
+                cue_enabled[i] = true;
+            }
+        }
         let index = reader.read_index()?;
         let duration_us = reader.header().duration_us;
         Ok(Player {
@@ -230,7 +284,9 @@ impl<R: Read + Seek> Player<R> {
             track_infos: tracks.iter().map(|t| t.info).collect(),
             tracks,
             stream_track,
-            marker_stream,
+            cue_streams,
+            cue_enabled,
+            active_cues: Vec::new(),
             index,
             clock_us: 0,
             duration_us,
@@ -247,6 +303,23 @@ impl<R: Read + Seek> Player<R> {
     /// The selected video stream of each group, in group order.
     pub fn tracks(&self) -> &[TrackInfo] {
         &self.track_infos
+    }
+
+    /// Cue streams in stream order.
+    pub fn cue_streams(&self) -> &[CueStreamInfo] {
+        &self.cue_streams
+    }
+
+    /// Turns emitting the cues of `stream` on or off. Disabling ends its active cues.
+    /// Streams that are not cue streams are ignored.
+    pub fn set_cue_stream_enabled(&mut self, stream: u16, enabled: bool) {
+        if !self.cue_streams.iter().any(|c| c.stream == stream) {
+            return;
+        }
+        self.cue_enabled[stream as usize] = enabled;
+        if !enabled {
+            self.end_cues(|c| c.stream == stream);
+        }
     }
 
     pub fn play(&mut self) {
@@ -308,6 +381,7 @@ impl<R: Read + Seek> Player<R> {
             if !(self.at_end && self.clock_us >= self.duration_us) {
                 return Ok(());
             }
+            self.end_cues(|_| true);
             if self.looping && self.duration_us > 0 {
                 let carry = self.clock_us - self.duration_us;
                 self.rewind();
@@ -323,9 +397,11 @@ impl<R: Read + Seek> Player<R> {
     }
 
     /// Jumps to `to` (clamped to the duration), decoding from the preceding keyframes.
-    /// Markers before `to` are not emitted. A finished player becomes paused.
+    /// Instantaneous cues at or before `to` are not emitted; cues active at `to` are.
+    /// A finished player becomes paused.
     pub fn seek(&mut self, to: Duration) -> Result<()> {
         let target = (to.as_micros().min(u64::MAX as u128) as u64).min(self.duration_us);
+        self.end_cues(|_| true);
         let mut start = u64::MAX;
         for t in &mut self.tracks {
             let entries = self.index.iter().filter(|e| e.stream == t.info.stream);
@@ -348,7 +424,7 @@ impl<R: Read + Seek> Player<R> {
             self.state = State::Paused;
         }
         self.events.push_back(Event::Seeked { to: Duration::from_micros(target) });
-        Ok(())
+        self.begin_active_cues(target)
     }
 
     /// The latest decoded frame of `track`, or `None` before its first frame.
@@ -387,7 +463,8 @@ impl<R: Read + Seek> Player<R> {
         self.reader.seek_to(start).expect("data start is a valid chunk offset");
     }
 
-    fn process_due(&mut self, emit_markers: bool) -> Result<()> {
+    /// Decodes every chunk due at the clock. `emit_cues = false` (seeking) skips cues.
+    fn process_due(&mut self, emit_cues: bool) -> Result<()> {
         loop {
             let chunk = match self.pending.take() {
                 Some(c) => c,
@@ -395,7 +472,7 @@ impl<R: Read + Seek> Player<R> {
                     Some(c) => c,
                     None => {
                         self.at_end = true;
-                        return Ok(());
+                        break;
                     }
                 },
             };
@@ -403,8 +480,9 @@ impl<R: Read + Seek> Player<R> {
             let time_us = time_base.to_micros(chunk.pts);
             if time_us > self.clock_us {
                 self.pending = Some(chunk);
-                return Ok(());
+                break;
             }
+            self.end_cues(|c| c.end_us <= time_us);
             let stream = chunk.stream as usize;
             if let Some(ti) = self.stream_track[stream] {
                 if chunk.offset >= self.tracks[ti].resume_offset {
@@ -412,11 +490,74 @@ impl<R: Read + Seek> Player<R> {
                     self.frame_counter += 1;
                     self.tracks[ti].apply(&chunk, &self.payload, self.frame_counter)?;
                 }
-            } else if self.marker_stream[stream] && emit_markers {
-                self.reader.read_payload(&chunk, &mut self.payload)?;
-                let name = String::from_utf8_lossy(&self.payload).into_owned();
-                self.events.push_back(Event::Marker { name, time: Duration::from_micros(time_us) });
+            } else if self.cue_enabled[stream] && emit_cues {
+                self.begin_cue(&chunk)?;
             }
         }
+        let clock = self.clock_us;
+        self.end_cues(|c| c.end_us <= clock);
+        Ok(())
+    }
+
+    /// Reads the cue in `chunk` and emits its `Cue` event.
+    fn begin_cue(&mut self, chunk: &ChunkHeader) -> Result<()> {
+        self.reader.read_payload(chunk, &mut self.payload)?;
+        let cue = Cue::decode(&self.payload)?;
+        let time_base = self.reader.streams()[chunk.stream as usize].time_base;
+        let start_us = time_base.to_micros(chunk.pts);
+        let end_us = time_base.to_micros(chunk.pts.saturating_add(cue.duration));
+        if cue.duration > 0 {
+            self.active_cues.push(ActiveCue { end_us, id: chunk.offset, stream: chunk.stream });
+        }
+        self.events.push_back(Event::Cue(CueEvent {
+            id: chunk.offset,
+            stream: chunk.stream,
+            time: Duration::from_micros(start_us),
+            duration: Duration::from_micros(end_us - start_us),
+            kind: cue.kind,
+            fields: cue.fields,
+        }));
+        Ok(())
+    }
+
+    /// Emits `CueEnd` for the active cues matching `pred`, earliest end first.
+    fn end_cues(&mut self, pred: impl Fn(&ActiveCue) -> bool) {
+        let (mut ended, kept): (Vec<_>, Vec<_>) = self.active_cues.drain(..).partition(|c| pred(c));
+        self.active_cues = kept;
+        ended.sort_by_key(|c| (c.end_us, c.id));
+        for c in ended {
+            self.events.push_back(Event::CueEnd { id: c.id, stream: c.stream });
+        }
+    }
+
+    /// Emits `Cue` for every enabled cue with a duration that is active at `target`
+    /// (`docs/spec/PRAXI.md#seeking`).
+    fn begin_active_cues(&mut self, target: u64) -> Result<()> {
+        let mut found = Vec::new();
+        for c in &self.cue_streams {
+            if !self.cue_enabled[c.stream as usize] {
+                continue;
+            }
+            let s = &self.reader.streams()[c.stream as usize];
+            let max_us = s.cue_params().map_or(0, |p| s.time_base.to_micros(p.max_duration));
+            let low = target.saturating_sub(max_us.saturating_add(1));
+            for e in self.index.iter().filter(|e| e.stream == c.stream) {
+                let t = s.time_base.to_micros(e.pts);
+                if t >= low && t <= target {
+                    found.push((t, e.offset));
+                }
+            }
+        }
+        found.sort();
+        for (_, offset) in found {
+            let chunk = self.reader.chunk_at(offset)?;
+            self.reader.read_payload(&chunk, &mut self.payload)?;
+            let cue = Cue::decode(&self.payload)?;
+            let time_base = self.reader.streams()[chunk.stream as usize].time_base;
+            if cue.duration > 0 && time_base.to_micros(chunk.pts.saturating_add(cue.duration)) > target {
+                self.begin_cue(&chunk)?;
+            }
+        }
+        Ok(())
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     CHUNK_HEADER_SIZE, ChunkHeader, Compression, Error, HEADER_SIZE, Header, INDEX_ENTRY_SIZE,
-    IndexEntry, MAGIC, Result, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
+    IndexEntry, MAGIC, Result, CUE_LANGUAGE_SIZE, CUE_NAME_SIZE, CueParams, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
     TimeBase, VERSION_MAJOR, VideoParams, corrupt, le_u16, le_u32, le_u64,
 };
 use std::io::{Read, Seek, SeekFrom};
@@ -31,8 +31,8 @@ impl<R: Read + Seek> Reader<R> {
             index_offset: le_u64(&h, 32),
             index_count: le_u32(&h, 40),
         };
-        if header.version_major != VERSION_MAJOR {
-            return Err(Error::UnsupportedVersion(header.version_major));
+        if (header.version_major, header.version_minor) != (VERSION_MAJOR, VERSION_MINOR) {
+            return Err(Error::UnsupportedVersion { major: header.version_major, minor: header.version_minor });
         }
         let stream_count = le_u16(&h, 16) as usize;
         if stream_count == 0 {
@@ -85,17 +85,25 @@ impl<R: Read + Seek> Reader<R> {
         if self.pos >= self.header.index_offset {
             return Ok(None);
         }
-        if self.pos + CHUNK_HEADER_SIZE > self.header.index_offset {
-            return corrupt(format!("truncated chunk header at {}", self.pos));
+        let chunk = self.chunk_at(self.pos)?;
+        self.pos = chunk.offset + CHUNK_HEADER_SIZE + chunk.stored_size as u64;
+        Ok(Some(chunk))
+    }
+
+    /// Reads the chunk header at `offset` (from the index) without moving the reading
+    /// position of [`Reader::next_chunk`].
+    pub fn chunk_at(&mut self, offset: u64) -> Result<ChunkHeader> {
+        if offset < self.data_start || offset + CHUNK_HEADER_SIZE > self.header.index_offset {
+            return corrupt(format!("no chunk header fits at {offset}"));
         }
-        self.inner.seek(SeekFrom::Start(self.pos))?;
+        self.inner.seek(SeekFrom::Start(offset))?;
         let mut h = [0u8; CHUNK_HEADER_SIZE as usize];
         self.inner.read_exact(&mut h)?;
         let Some(compression) = Compression::from_id(h[3]) else {
-            return corrupt(format!("unknown compression {} at {}", h[3], self.pos));
+            return corrupt(format!("unknown compression {} at {offset}", h[3]));
         };
         let chunk = ChunkHeader {
-            offset: self.pos,
+            offset,
             stream: le_u16(&h, 0),
             flags: h[2],
             compression,
@@ -109,12 +117,10 @@ impl<R: Read + Seek> Reader<R> {
         if compression == Compression::None && chunk.stored_size != chunk.raw_size {
             return corrupt(format!("uncompressed chunk at {} has mismatched sizes", chunk.offset));
         }
-        let end = self.pos + CHUNK_HEADER_SIZE + chunk.stored_size as u64;
-        if end > self.header.index_offset {
-            return corrupt(format!("chunk at {} runs past the index", chunk.offset));
+        if offset + CHUNK_HEADER_SIZE + chunk.stored_size as u64 > self.header.index_offset {
+            return corrupt(format!("chunk at {offset} runs past the index"));
         }
-        self.pos = end;
-        Ok(Some(chunk))
+        Ok(chunk)
     }
 
     /// Reads and decompresses the payload of `chunk` into `out` (resized to `raw_size`).
@@ -179,8 +185,20 @@ fn decode_stream(i: usize, b: &[u8]) -> Result<StreamInfo> {
             }
             StreamParams::Video(v)
         }
-        3 => StreamParams::Markers,
+        3 => StreamParams::Cues(CueParams {
+            max_duration: le_u64(b, 16),
+            language: padded_text(i, &b[24..24 + CUE_LANGUAGE_SIZE])?,
+            name: padded_text(i, &b[32..32 + CUE_NAME_SIZE])?,
+        }),
         kind => StreamParams::Unknown(kind),
     };
     Ok(StreamInfo { group: le_u16(b, 2), time_base, chunk_count: le_u32(b, 12), params })
+}
+
+fn padded_text(i: usize, b: &[u8]) -> Result<String> {
+    let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
+    match std::str::from_utf8(&b[..end]) {
+        Ok(s) => Ok(s.to_string()),
+        Err(_) => corrupt(format!("stream {i}: invalid UTF-8 in cue stream text")),
+    }
 }

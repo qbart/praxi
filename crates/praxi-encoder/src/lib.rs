@@ -6,8 +6,11 @@ use ktx::astcenc::{
 };
 use ktx::basisu::{uastc_bc7, uastc_enc};
 use praxi_format::{
-    COLOR_FLAG_ALPHA, COLOR_FLAG_SRGB, StreamInfo, TextureFormat, TimeBase, VideoParams, Writer,
+    COLOR_FLAG_ALPHA, COLOR_FLAG_SRGB, Cue, StreamInfo, TextureFormat, TimeBase, VideoParams,
+    Writer,
 };
+
+pub use praxi_format::Value;
 use std::fmt;
 use std::io::{Seek, Write};
 
@@ -100,6 +103,55 @@ impl VariantConfig {
     }
 }
 
+/// One cue (`docs/features/cues.md`); times in seconds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CueConfig {
+    pub time: f64,
+    pub duration: f64,
+    pub kind: String,
+    pub fields: Vec<(String, Value)>,
+}
+
+impl CueConfig {
+    pub fn new(time: f64, kind: impl Into<String>) -> CueConfig {
+        CueConfig { time, duration: 0.0, kind: kind.into(), fields: Vec::new() }
+    }
+
+    pub fn duration(mut self, seconds: f64) -> CueConfig {
+        self.duration = seconds;
+        self
+    }
+
+    pub fn field(mut self, key: impl Into<String>, value: impl Into<Value>) -> CueConfig {
+        self.fields.push((key.into(), value.into()));
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CueStreamConfig {
+    pub name: String,
+    /// BCP 47 tag; empty for none.
+    pub language: String,
+    pub cues: Vec<CueConfig>,
+}
+
+impl CueStreamConfig {
+    pub fn new(name: impl Into<String>) -> CueStreamConfig {
+        CueStreamConfig { name: name.into(), language: String::new(), cues: Vec::new() }
+    }
+
+    pub fn language(mut self, language: impl Into<String>) -> CueStreamConfig {
+        self.language = language.into();
+        self
+    }
+
+    pub fn cue(mut self, cue: CueConfig) -> CueStreamConfig {
+        self.cues.push(cue);
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EncoderConfig {
     pub width: u32,
@@ -109,8 +161,8 @@ pub struct EncoderConfig {
     pub variants: Vec<VariantConfig>,
     pub keyint: u32,
     pub skip_threshold: u8,
-    /// Marker times in seconds and names.
-    pub markers: Vec<(f64, String)>,
+    /// Cue streams; empty ones are left out of the file.
+    pub cue_streams: Vec<CueStreamConfig>,
     /// Whether the alpha channel is meaningful (sets the stream's alpha flag).
     pub alpha: bool,
     /// Worker threads; 0 uses `std::thread::available_parallelism`.
@@ -128,7 +180,7 @@ impl EncoderConfig {
             variants: Vec::new(),
             keyint: 60,
             skip_threshold: 3,
-            markers: Vec::new(),
+            cue_streams: Vec::new(),
             alpha: false,
             threads: 0,
         }
@@ -149,8 +201,22 @@ impl EncoderConfig {
         self
     }
 
-    pub fn marker(mut self, seconds: f64, name: impl Into<String>) -> EncoderConfig {
-        self.markers.push((seconds, name.into()));
+    /// Adds an instantaneous cue to the stream named `cues`, creating it if needed.
+    pub fn cue(self, seconds: f64, kind: impl Into<String>) -> EncoderConfig {
+        self.cue_with(CueConfig::new(seconds, kind))
+    }
+
+    /// Adds a cue to the stream named `cues`, creating it if needed.
+    pub fn cue_with(mut self, cue: CueConfig) -> EncoderConfig {
+        match self.cue_streams.iter_mut().find(|s| s.name == "cues" && s.language.is_empty()) {
+            Some(s) => s.cues.push(cue),
+            None => self.cue_streams.push(CueStreamConfig::new("cues").cue(cue)),
+        }
+        self
+    }
+
+    pub fn cue_stream(mut self, stream: CueStreamConfig) -> EncoderConfig {
+        self.cue_streams.push(stream);
         self
     }
 
@@ -208,10 +274,9 @@ pub struct Encoder<W: Write + Seek> {
     threads: usize,
     variants: Vec<Variant>,
     time_base: TimeBase,
-    /// Markers as (microseconds, name), sorted.
-    markers: Vec<(u64, String)>,
-    next_marker: usize,
-    marker_stream: u16,
+    /// Cues as (start in microseconds, stream, cue), sorted by start.
+    cues: Vec<(u64, u16, Cue)>,
+    next_cue: usize,
     frame: u64,
 }
 
@@ -229,17 +294,6 @@ impl<W: Write + Seek> Encoder<W> {
         }
         if c.keyint == 0 {
             return Err(Error::Config("keyint must be at least 1".into()));
-        }
-        let mut markers = Vec::with_capacity(c.markers.len());
-        for (secs, name) in &c.markers {
-            if !secs.is_finite() || *secs < 0.0 {
-                return Err(Error::Config(format!("marker {name:?} has invalid time {secs}")));
-            }
-            markers.push(((secs * 1e6).round() as u64, name.clone()));
-        }
-        markers.sort_by_key(|m| m.0);
-        if let Some(w) = markers.windows(2).find(|w| w[0].0 == w[1].0) {
-            return Err(Error::Config(format!("markers {:?} and {:?} share a time", w[0].1, w[1].1)));
         }
 
         let threads = match c.threads {
@@ -291,12 +345,28 @@ impl<W: Write + Seek> Encoder<W> {
                 stats: VariantStats { format: Some(format), ..Default::default() },
             });
         }
-        let marker_stream = streams.len() as u16;
-        if !markers.is_empty() {
-            streams.push(StreamInfo::markers(1));
+        let mut cues = Vec::new();
+        let mut scratch = Vec::new();
+        for cs in c.cue_streams.iter().filter(|s| !s.cues.is_empty()) {
+            let stream = streams.len() as u16;
+            streams.push(StreamInfo::cues(cs.name.clone(), cs.language.clone()));
+            for cc in &cs.cues {
+                let micros = |secs: f64, what: &str| {
+                    if secs.is_finite() && secs >= 0.0 {
+                        Ok((secs * 1e6).round() as u64)
+                    } else {
+                        Err(Error::Config(format!("cue {:?} has invalid {what} {secs}", cc.kind)))
+                    }
+                };
+                let cue = Cue { duration: micros(cc.duration, "duration")?, kind: cc.kind.clone(), fields: cc.fields.clone() };
+                scratch.clear();
+                cue.encode(&mut scratch)?;
+                cues.push((micros(cc.time, "time")?, stream, cue));
+            }
         }
+        cues.sort_by_key(|(at, _, _)| *at);
         let writer = Writer::new(out, streams)?;
-        Ok(Encoder { writer, config, threads, variants, time_base, markers, next_marker: 0, marker_stream, frame: 0 })
+        Ok(Encoder { writer, config, threads, variants, time_base, cues, next_cue: 0, frame: 0 })
     }
 
     /// Encodes one frame: `width * height * 4` bytes of sRGB RGBA8, rows top to bottom.
@@ -306,7 +376,7 @@ impl<W: Write + Seek> Encoder<W> {
             return Err(Error::Config(format!("frame has {} bytes, expected {}", rgba.len(), w * h * 4)));
         }
         let pts = self.frame;
-        self.write_markers_until(self.time_base.to_micros(pts))?;
+        self.write_cues_until(self.time_base.to_micros(pts))?;
 
         let keyframe = pts.is_multiple_of(self.config.keyint as u64);
         for v in &mut self.variants {
@@ -330,13 +400,11 @@ impl<W: Write + Seek> Encoder<W> {
         Ok(())
     }
 
-    /// Writes the remaining markers and the index, and returns the output and statistics.
+    /// Writes the remaining cues and the index, and returns the output and statistics.
     pub fn finish(mut self) -> Result<(W, Stats)> {
-        self.write_markers_until(u64::MAX)?;
-        let mut duration_us = self.time_base.to_micros(self.frame);
-        if let Some(last) = self.markers.last() {
-            duration_us = duration_us.max(last.0);
-        }
+        self.write_cues_until(u64::MAX)?;
+        let frames_end = self.time_base.to_micros(self.frame);
+        let duration_us = self.cues.iter().map(|(at, _, c)| at.saturating_add(c.duration)).fold(frames_end, u64::max);
         let out = self.writer.finish(duration_us)?;
         let stats = Stats {
             frames: self.frame,
@@ -346,13 +414,13 @@ impl<W: Write + Seek> Encoder<W> {
         Ok((out, stats))
     }
 
-    fn write_markers_until(&mut self, time_us: u64) -> Result<()> {
-        while let Some((at, name)) = self.markers.get(self.next_marker) {
+    fn write_cues_until(&mut self, time_us: u64) -> Result<()> {
+        while let Some((at, stream, cue)) = self.cues.get(self.next_cue) {
             if *at > time_us {
                 break;
             }
-            self.writer.write_chunk(self.marker_stream, *at, true, name.as_bytes(), None)?;
-            self.next_marker += 1;
+            self.writer.write_cue(*stream, *at, cue)?;
+            self.next_cue += 1;
         }
         Ok(())
     }

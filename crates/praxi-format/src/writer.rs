@@ -1,6 +1,7 @@
 use crate::{
-    CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, Compression, Error, HEADER_SIZE, IndexEntry, MAGIC,
-    Result, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, VERSION_MAJOR, VERSION_MINOR,
+    CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_LANGUAGE_SIZE, CUE_NAME_SIZE, Compression, Cue,
+    Error, HEADER_SIZE, IndexEntry, MAGIC, Result, STREAM_ENTRY_SIZE, StreamInfo, StreamParams,
+    VERSION_MAJOR, VERSION_MINOR,
 };
 use std::io::{Seek, SeekFrom, Write};
 
@@ -10,11 +11,12 @@ pub struct Writer<W: Write + Seek> {
     streams: Vec<StreamInfo>,
     offset: u64,
     index: Vec<IndexEntry>,
-    /// Last pts per stream, to enforce strictly increasing pts.
+    /// Last pts per stream, to enforce pts order within a stream.
     last_pts: Vec<Option<u64>>,
     /// Last chunk time in microseconds, to enforce file order.
     last_time_us: u64,
     scratch: Vec<u8>,
+    cue_payload: Vec<u8>,
 }
 
 impl<W: Write + Seek> Writer<W> {
@@ -31,6 +33,12 @@ impl<W: Write + Seek> Writer<W> {
             {
                 return Err(Error::Invalid(format!("stream {i}: zero frame size")));
             }
+            if let StreamParams::Cues(c) = &s.params {
+                let fits = |t: &str, max: usize| t.len() <= max && !t.contains('\0');
+                if !fits(&c.name, CUE_NAME_SIZE) || !fits(&c.language, CUE_LANGUAGE_SIZE) {
+                    return Err(Error::Invalid(format!("stream {i}: cue stream name or language too long")));
+                }
+            }
         }
         inner.seek(SeekFrom::Start(0))?;
         inner.write_all(&[0u8; HEADER_SIZE as usize])?;
@@ -46,6 +54,7 @@ impl<W: Write + Seek> Writer<W> {
             last_pts: vec![None; n],
             last_time_us: 0,
             scratch: Vec::new(),
+            cue_payload: Vec::new(),
         })
     }
 
@@ -58,9 +67,39 @@ impl<W: Write + Seek> Writer<W> {
         self.offset
     }
 
-    /// Writes one chunk. `compression = Some(c)` forces `c`; `None` uses LZ4 only when it
-    /// makes the payload smaller.
+    /// Writes one chunk of a video stream. `compression = Some(c)` forces `c`; `None` uses
+    /// LZ4 only when it makes the payload smaller. Cue streams take [`Writer::write_cue`].
     pub fn write_chunk(
+        &mut self,
+        stream: u16,
+        pts: u64,
+        keyframe: bool,
+        payload: &[u8],
+        compression: Option<Compression>,
+    ) -> Result<()> {
+        if let Some(StreamParams::Cues(_)) = self.streams.get(stream as usize).map(|s| &s.params) {
+            return Err(Error::Invalid(format!("stream {stream} is a cue stream, use write_cue")));
+        }
+        self.write_raw(stream, pts, keyframe, payload, compression)
+    }
+
+    /// Writes one cue starting at `pts` to a cue stream.
+    pub fn write_cue(&mut self, stream: u16, pts: u64, cue: &Cue) -> Result<()> {
+        if !matches!(self.streams.get(stream as usize).map(|s| &s.params), Some(StreamParams::Cues(_))) {
+            return Err(Error::Invalid(format!("stream {stream} is not a cue stream")));
+        }
+        let mut payload = std::mem::take(&mut self.cue_payload);
+        payload.clear();
+        let result = cue.encode(&mut payload).and_then(|()| self.write_raw(stream, pts, true, &payload, None));
+        self.cue_payload = payload;
+        result?;
+        if let StreamParams::Cues(c) = &mut self.streams[stream as usize].params {
+            c.max_duration = c.max_duration.max(cue.duration);
+        }
+        Ok(())
+    }
+
+    fn write_raw(
         &mut self,
         stream: u16,
         pts: u64,
@@ -71,10 +110,11 @@ impl<W: Write + Seek> Writer<W> {
         let Some(info) = self.streams.get(stream as usize) else {
             return Err(Error::Invalid(format!("unknown stream {stream}")));
         };
+        let is_cue = matches!(info.params, StreamParams::Cues(_));
         if let Some(last) = self.last_pts[stream as usize]
-            && pts <= last
+            && (pts < last || (pts == last && !is_cue))
         {
-            return Err(Error::Invalid(format!("stream {stream}: pts {pts} not after {last}")));
+            return Err(Error::Invalid(format!("stream {stream}: pts {pts} after {last} breaks stream order")));
         }
         let time_us = info.time_base.to_micros(pts);
         if time_us < self.last_time_us {
@@ -111,7 +151,7 @@ impl<W: Write + Seek> Writer<W> {
         self.inner.write_all(&h)?;
         self.inner.write_all(stored)?;
 
-        if keyframe && matches!(info.params, StreamParams::Video(_)) {
+        if is_cue || (keyframe && matches!(info.params, StreamParams::Video(_))) {
             self.index.push(IndexEntry { stream, pts, offset: self.offset });
         }
         self.offset += CHUNK_HEADER_SIZE + stored.len() as u64;
@@ -167,6 +207,11 @@ fn encode_stream(s: &StreamInfo) -> [u8; STREAM_ENTRY_SIZE as usize] {
         b[28] = bw as u8;
         b[29] = bh as u8;
         b[30] = v.format.block_bytes() as u8;
+    }
+    if let StreamParams::Cues(c) = &s.params {
+        b[16..24].copy_from_slice(&c.max_duration.to_le_bytes());
+        b[24..24 + c.language.len()].copy_from_slice(c.language.as_bytes());
+        b[32..32 + c.name.len()].copy_from_slice(c.name.as_bytes());
     }
     b
 }

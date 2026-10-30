@@ -1,6 +1,6 @@
-use praxi::format::Reader;
+use praxi::format::{Cue, Reader, StreamParams};
 use praxi::{Capabilities, Event, Player, TextureFormat};
-use praxi_encoder::{Encoder, EncoderConfig, Stats, VariantConfig};
+use praxi_encoder::{CueConfig, CueStreamConfig, Encoder, EncoderConfig, Stats, Value, VariantConfig};
 use std::io::Cursor;
 use std::time::Duration;
 
@@ -57,19 +57,37 @@ fn play_all(file: Vec<u8>, format: TextureFormat) -> (Vec<Vec<u8>>, Vec<Event>) 
 }
 
 #[test]
-fn writes_streams_markers_and_deltas() {
-    let (file, stats) = encode(config().keyint(4).skip_threshold(0).marker(0.05, "m1").marker(1.0, "end"));
+fn writes_streams_cues_and_deltas() {
+    let subtitles = CueStreamConfig::new("subtitles")
+        .language("en")
+        .cue(CueConfig::new(0.2, "subtitle").duration(0.15).field("text", "Hi").field("line", 2i64));
+    let config = config()
+        .keyint(4)
+        .skip_threshold(0)
+        .cue_with(CueConfig::new(1.0, "end").duration(0.5))
+        .cue(0.05, "m1")
+        .cue_stream(subtitles);
+    let (file, stats) = encode(config);
     assert_eq!(stats.frames, 6);
-    assert_eq!(stats.duration_us, 1_000_000, "raised to the last marker");
+    assert_eq!(stats.duration_us, 1_500_000, "raised to the last cue end");
 
     let mut r = Reader::new(Cursor::new(file)).unwrap();
     let streams = r.streams().to_vec();
-    assert_eq!(streams.len(), 3);
+    assert_eq!(streams.len(), 4);
     let bc7 = streams[0].video_params().unwrap();
     assert_eq!((bc7.format, bc7.width, bc7.height, bc7.block_count()), (TextureFormat::Bc7, W, H, 5 * 3));
     assert!(bc7.srgb() && !bc7.alpha());
     assert_eq!(streams[1].video_params().unwrap().format, TextureFormat::Astc6x6);
-    assert_eq!([streams[0].chunk_count, streams[1].chunk_count, streams[2].chunk_count], [6, 6, 2]);
+    let counts: Vec<u32> = streams.iter().map(|s| s.chunk_count).collect();
+    assert_eq!(counts, [6, 6, 2, 1]);
+    let cue_names: Vec<(&str, &str, u64)> = streams[2..]
+        .iter()
+        .map(|s| match &s.params {
+            StreamParams::Cues(c) => (c.name.as_str(), c.language.as_str(), c.max_duration),
+            p => panic!("not a cue stream: {p:?}"),
+        })
+        .collect();
+    assert_eq!(cue_names, [("cues", "", 500_000), ("subtitles", "en", 150_000)]);
 
     let mut chunks = Vec::new();
     let mut payload = Vec::new();
@@ -86,19 +104,33 @@ fn writes_streams_markers_and_deltas() {
     let changed: u32 = bc7_chunks[3].1[..bc7.mask_size()].iter().map(|b| b.count_ones()).sum();
     assert!(changed > 0 && changed < 15, "frame 3 updates only the changed square ({changed} blocks)");
 
-    let markers: Vec<(u64, &[u8])> = chunks.iter().filter(|(c, _)| c.stream == 2).map(|(c, p)| (c.pts, p.as_slice())).collect();
-    assert_eq!(markers, [(50_000, b"m1".as_slice()), (1_000_000, b"end".as_slice())]);
+    let cues: Vec<(u16, u64, Cue)> =
+        chunks.iter().filter(|(c, _)| c.stream >= 2).map(|(c, p)| (c.stream, c.pts, Cue::decode(p).unwrap())).collect();
+    let subtitle = Cue {
+        duration: 150_000,
+        kind: "subtitle".into(),
+        fields: vec![("text".into(), Value::from("Hi")), ("line".into(), Value::Int(2))],
+    };
+    assert_eq!(
+        cues,
+        [
+            (2, 50_000, Cue::new("m1")),
+            (3, 200_000, subtitle),
+            (2, 1_000_000, Cue { duration: 500_000, ..Cue::new("end") }),
+        ],
+        "cues sorted by time across streams"
+    );
     assert!(stats.variants[0].skipped_blocks > 0);
 }
 
 #[test]
 fn player_reconstructs_keyframe_encoding() {
     for format in [TextureFormat::Bc7, TextureFormat::Astc6x6] {
-        let (deltas, events) = play_all(encode(config().keyint(4).skip_threshold(0).marker(0.25, "m")).0, format);
+        let (deltas, events) = play_all(encode(config().keyint(4).skip_threshold(0).cue(0.25, "m")).0, format);
         let (keys, _) = play_all(encode(config().keyint(1)).0, format);
         assert_eq!(deltas.len(), 6);
         assert_eq!(deltas, keys, "{format}: delta reconstruction matches all-keyframe encoding");
-        assert!(events.contains(&Event::Marker { name: "m".into(), time: Duration::from_millis(250) }));
+        assert!(events.iter().any(|e| matches!(e, Event::Cue(c) if c.kind == "m" && c.time == Duration::from_millis(250))));
     }
 }
 
@@ -108,7 +140,10 @@ fn rejects_bad_config() {
         EncoderConfig::new(0, 4, 30, 1).variant(VariantConfig::bc7()),
         EncoderConfig::new(4, 4, 30, 1),
         EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::astc(5)),
-        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).marker(1.0, "a").marker(1.0, "b"),
+        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue(-1.0, "a"),
+        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue(1.0, ""),
+        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue_with(CueConfig::new(1.0, "a").duration(f64::NAN)),
+        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue_stream(CueStreamConfig::new("x".repeat(40)).cue(CueConfig::new(0.0, "a"))),
     ];
     for config in bad {
         assert!(Encoder::new(Cursor::new(Vec::new()), config).is_err());

@@ -1,8 +1,8 @@
 //! `praxi` command line tool (`docs/features/encoder.md`).
 
 use clap::{Parser, Subcommand, ValueEnum};
-use praxi_encoder::{Encoder, EncoderConfig, Quality, VariantConfig};
-use praxi_format::{Reader, StreamParams};
+use praxi_encoder::{CueConfig, Encoder, EncoderConfig, Quality, VariantConfig};
+use praxi_format::{Cue, Reader, StreamParams, Value};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read};
 use std::path::{Path, PathBuf};
@@ -48,9 +48,9 @@ struct EncodeArgs {
     /// Temporal skip threshold.
     #[arg(long, default_value_t = 3)]
     skip_threshold: u8,
-    /// Marker as TIME=NAME, TIME in seconds (repeatable).
-    #[arg(long = "marker", value_parser = parse_marker)]
-    markers: Vec<(f64, String)>,
+    /// Cue as TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]], times in seconds (repeatable).
+    #[arg(long = "cue", value_parser = parse_cue)]
+    cues: Vec<CueConfig>,
     /// Encode only the first N frames.
     #[arg(long)]
     frames: Option<u64>,
@@ -71,13 +71,24 @@ enum QualityArg {
     Thorough,
 }
 
-fn parse_marker(s: &str) -> Result<(f64, String), String> {
-    let (time, name) = s.split_once('=').ok_or("expected TIME=NAME")?;
-    let time: f64 = time.trim().parse().map_err(|e| format!("bad time {time:?}: {e}"))?;
-    if name.is_empty() {
-        return Err("empty marker name".into());
+/// Parses `TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]` (`docs/features/cues.md`).
+fn parse_cue(s: &str) -> Result<CueConfig, String> {
+    let (times, rest) = s.split_once('=').ok_or("expected TIME[+DURATION]=TYPE")?;
+    let seconds = |t: &str| t.trim().parse::<f64>().map_err(|e| format!("bad time {t:?}: {e}"));
+    let (time, duration) = match times.split_once('+') {
+        Some((t, d)) => (seconds(t)?, seconds(d)?),
+        None => (seconds(times)?, 0.0),
+    };
+    let (kind, fields) = rest.split_once(':').unwrap_or((rest, ""));
+    if kind.is_empty() {
+        return Err("empty cue type".into());
     }
-    Ok((time, name.to_string()))
+    let mut cue = CueConfig::new(time, kind).duration(duration);
+    for field in fields.split(';').filter(|f| !f.is_empty()) {
+        let (key, value) = field.split_once('=').ok_or_else(|| format!("expected KEY=VALUE, got {field:?}"))?;
+        cue = cue.field(key, value);
+    }
+    Ok(cue)
 }
 
 type AnyResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -156,8 +167,8 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
         };
         config = config.variant(variant.quality(quality));
     }
-    for (time, name) in &args.markers {
-        config = config.marker(*time, name.clone());
+    for cue in args.cues {
+        config = config.cue_with(cue);
     }
     eprintln!(
         "{}: {}x{} @ {}/{} fps{}",
@@ -237,7 +248,12 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
                 if v.srgb() { " sRGB" } else { "" },
                 if v.alpha() { " alpha" } else { "" }
             ),
-            StreamParams::Markers => "markers".to_string(),
+            StreamParams::Cues(c) => format!(
+                "cues {:?}{}  max duration {}",
+                c.name,
+                if c.language.is_empty() { String::new() } else { format!(" ({})", c.language) },
+                c.max_duration
+            ),
             StreamParams::Unknown(kind) => format!("unknown kind {kind}"),
         };
         println!(
@@ -248,7 +264,7 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
     if chunks {
         let mut payload = Vec::new();
         while let Some(c) = r.next_chunk()? {
-            let marker = r.streams()[c.stream as usize].params == StreamParams::Markers;
+            let is_cue = r.streams()[c.stream as usize].cue_params().is_some();
             print!(
                 "{:>10}  stream {}  pts {:>8}  {}  {:?}  {} -> {}",
                 c.offset,
@@ -259,12 +275,27 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
                 c.stored_size,
                 c.raw_size
             );
-            if marker {
+            if is_cue {
                 r.read_payload(&c, &mut payload)?;
-                print!("  {:?}", String::from_utf8_lossy(&payload));
+                print!("  {}", describe_cue(&Cue::decode(&payload)?));
             }
             println!();
         }
     }
     Ok(())
+}
+
+fn describe_cue(cue: &Cue) -> String {
+    let mut out = format!("{} +{}", cue.kind, cue.duration);
+    for (key, value) in &cue.fields {
+        let value = match value {
+            Value::String(s) => format!("{s:?}"),
+            Value::Int(v) => v.to_string(),
+            Value::Float(v) => v.to_string(),
+            Value::Bool(v) => v.to_string(),
+            Value::Bytes(b) => format!("<{} bytes>", b.len()),
+        };
+        out.push_str(&format!(" {key}={value}"));
+    }
+    out
 }
