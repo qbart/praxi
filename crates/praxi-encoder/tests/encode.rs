@@ -59,8 +59,7 @@ fn play_all(file: Vec<u8>, format: TextureFormat) -> (Vec<Vec<u8>>, Vec<Event>) 
 #[test]
 fn writes_streams_cues_and_deltas() {
     let subtitles = CueStreamConfig::new("subtitles")
-        .language("en")
-        .cue(CueConfig::new(0.2, "subtitle").duration(0.15).field("text", "Hi").field("line", 2i64));
+        .cue(CueConfig::new(0.2, "subtitle").duration(0.15).field("text", "Hi").field("lang", "en").field("line", 2i64));
     let config = config()
         .keyint(4)
         .skip_threshold(0)
@@ -80,14 +79,14 @@ fn writes_streams_cues_and_deltas() {
     assert_eq!(streams[1].video_params().unwrap().format, TextureFormat::Astc6x6);
     let counts: Vec<u32> = streams.iter().map(|s| s.chunk_count).collect();
     assert_eq!(counts, [6, 6, 2, 1]);
-    let cue_names: Vec<(&str, &str, u64)> = streams[2..]
+    let cue_names: Vec<(&str, u64)> = streams[2..]
         .iter()
         .map(|s| match &s.params {
-            StreamParams::Cues(c) => (c.name.as_str(), c.language.as_str(), c.max_duration),
+            StreamParams::Cues(c) => (c.name.as_str(), c.max_duration),
             p => panic!("not a cue stream: {p:?}"),
         })
         .collect();
-    assert_eq!(cue_names, [("cues", "", 500_000), ("subtitles", "en", 150_000)]);
+    assert_eq!(cue_names, [("cues", 500_000), ("subtitles", 150_000)]);
 
     let mut chunks = Vec::new();
     let mut payload = Vec::new();
@@ -109,7 +108,7 @@ fn writes_streams_cues_and_deltas() {
     let subtitle = Cue {
         duration: 150_000,
         kind: "subtitle".into(),
-        fields: vec![("text".into(), Value::from("Hi")), ("line".into(), Value::Int(2))],
+        fields: vec![("text".into(), Value::from("Hi")), ("lang".into(), Value::from("en")), ("line".into(), Value::Int(2))],
     };
     assert_eq!(
         cues,

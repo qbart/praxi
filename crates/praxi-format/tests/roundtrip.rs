@@ -13,7 +13,7 @@ fn video(format: TextureFormat) -> StreamInfo {
 }
 
 fn sample_file() -> Vec<u8> {
-    let streams = vec![video(TextureFormat::Bc7), video(TextureFormat::Astc6x6), StreamInfo::cues("subtitles", "pt-BR")];
+    let streams = vec![video(TextureFormat::Bc7), video(TextureFormat::Astc6x6), StreamInfo::cues("subtitles")];
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     let compressible = vec![7u8; 96];
     let noise: Vec<u8> = (0..32u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8).collect();
@@ -51,7 +51,7 @@ fn roundtrip() {
     assert_eq!(r.streams()[2].chunk_count, 2);
     assert_eq!(
         r.streams()[2].params,
-        StreamParams::Cues(CueParams { max_duration: 40_000, language: "pt-BR".into(), name: "subtitles".into() })
+        StreamParams::Cues(CueParams { max_duration: 40_000, name: "subtitles".into() })
     );
     let v = r.streams()[1].video_params().unwrap();
     assert_eq!((v.width, v.height, v.format, v.srgb(), v.alpha()), (10, 6, TextureFormat::Astc6x6, true, false));
@@ -95,7 +95,7 @@ fn rejects_bad_magic_and_version() {
 
     let mut file = sample_file();
     file[8] = 1;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 2 })));
+    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 3 })));
 
     let mut file = sample_file();
     file[10] = 1;
@@ -124,7 +124,7 @@ fn rejects_corrupt_lz4() {
 
 #[test]
 fn writer_enforces_order() {
-    let streams = vec![video(TextureFormat::Bc7), StreamInfo::cues("cues", "")];
+    let streams = vec![video(TextureFormat::Bc7), StreamInfo::cues("cues")];
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     w.write_chunk(0, 3, true, &[0; 16], None).unwrap();
     assert!(matches!(w.write_chunk(0, 3, false, &[0; 16], None), Err(Error::Invalid(_))));
@@ -138,7 +138,7 @@ fn writer_enforces_order() {
     assert!(matches!(w.write_cue(1, 300_000, &dup), Err(Error::Invalid(_))));
     assert!(matches!(w.write_cue(1, 300_000, &Cue::new("")), Err(Error::Invalid(_))));
 
-    let long_name = StreamInfo::cues("x".repeat(33), "");
+    let long_name = StreamInfo::cues("x".repeat(33));
     assert!(matches!(Writer::new(Cursor::new(Vec::new()), vec![long_name]), Err(Error::Invalid(_))));
 }
 

@@ -248,12 +248,7 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
                 if v.srgb() { " sRGB" } else { "" },
                 if v.alpha() { " alpha" } else { "" }
             ),
-            StreamParams::Cues(c) => format!(
-                "cues {:?}{}  max duration {}",
-                c.name,
-                if c.language.is_empty() { String::new() } else { format!(" ({})", c.language) },
-                c.max_duration
-            ),
+            StreamParams::Cues(c) => format!("cues {:?}  max duration {}", c.name, c.max_duration),
             StreamParams::Unknown(kind) => format!("unknown kind {kind}"),
         };
         println!(

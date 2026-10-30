@@ -13,7 +13,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 2;
+pub const VERSION_MINOR: u16 = 3;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;
@@ -199,13 +199,10 @@ impl VideoParams {
 pub struct CueParams {
     /// Largest cue duration in the stream's time base. Filled in by the writer.
     pub max_duration: u64,
-    /// BCP 47 tag, at most 8 bytes; empty for none.
-    pub language: String,
     /// At most 32 bytes.
     pub name: String,
 }
 
-pub const CUE_LANGUAGE_SIZE: usize = 8;
 pub const CUE_NAME_SIZE: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,12 +258,12 @@ impl StreamInfo {
     }
 
     /// A cue stream with a microsecond time base.
-    pub fn cues(name: impl Into<String>, language: impl Into<String>) -> StreamInfo {
+    pub fn cues(name: impl Into<String>) -> StreamInfo {
         StreamInfo {
             group: 0,
             time_base: TimeBase::MICROS,
             chunk_count: 0,
-            params: StreamParams::Cues(CueParams { max_duration: 0, language: language.into(), name: name.into() }),
+            params: StreamParams::Cues(CueParams { max_duration: 0, name: name.into() }),
         }
     }
 

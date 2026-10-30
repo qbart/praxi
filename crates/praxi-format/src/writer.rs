@@ -1,5 +1,5 @@
 use crate::{
-    CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_LANGUAGE_SIZE, CUE_NAME_SIZE, Compression, Cue,
+    CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, Compression, Cue,
     Error, HEADER_SIZE, IndexEntry, MAGIC, Result, STREAM_ENTRY_SIZE, StreamInfo, StreamParams,
     VERSION_MAJOR, VERSION_MINOR,
 };
@@ -34,9 +34,8 @@ impl<W: Write + Seek> Writer<W> {
                 return Err(Error::Invalid(format!("stream {i}: zero frame size")));
             }
             if let StreamParams::Cues(c) = &s.params {
-                let fits = |t: &str, max: usize| t.len() <= max && !t.contains('\0');
-                if !fits(&c.name, CUE_NAME_SIZE) || !fits(&c.language, CUE_LANGUAGE_SIZE) {
-                    return Err(Error::Invalid(format!("stream {i}: cue stream name or language too long")));
+                if c.name.len() > CUE_NAME_SIZE || c.name.contains('\0') {
+                    return Err(Error::Invalid(format!("stream {i}: cue stream name too long or has a zero byte")));
                 }
             }
         }
@@ -210,8 +209,7 @@ fn encode_stream(s: &StreamInfo) -> [u8; STREAM_ENTRY_SIZE as usize] {
     }
     if let StreamParams::Cues(c) = &s.params {
         b[16..24].copy_from_slice(&c.max_duration.to_le_bytes());
-        b[24..24 + c.language.len()].copy_from_slice(c.language.as_bytes());
-        b[32..32 + c.name.len()].copy_from_slice(c.name.as_bytes());
+        b[24..24 + c.name.len()].copy_from_slice(c.name.as_bytes());
     }
     b
 }

@@ -23,20 +23,20 @@ fn astc_frame(n: u8) -> Vec<u8> {
 }
 
 fn subtitle(text: &str, ms: u64) -> Cue {
-    Cue { duration: ms * 1000, kind: "subtitle".into(), fields: vec![("text".into(), Value::from(text))] }
+    Cue { duration: ms * 1000, kind: "subtitle".into(), fields: vec![("text".into(), Value::from(text)), ("lang".into(), Value::from("en"))] }
 }
 
 /// 8x4 video at 10 fps, 5 frames, 500 ms. Group 0 in BC1 (keyframes 0 and 3) and ASTC 4x4
 /// (all keyframes). Cue stream 2 "cues": `a` at 150 ms, `b` at 420 ms, `long` at 450 ms
-/// lasting past the end. Cue stream 3 "subtitles" (en): `hello` 120-320 ms, `world` 250-350 ms.
+/// lasting past the end. Cue stream 3 "subtitles" (lang en): `hello` 120-320 ms, `world` 250-350 ms.
 fn sample_file() -> Vec<u8> {
     let params = |format| VideoParams { width: 8, height: 4, format, color_flags: COLOR_FLAG_SRGB };
     let tb = TimeBase::new(1, 10);
     let streams = vec![
         StreamInfo::video(0, tb, params(TextureFormat::Bc1)),
         StreamInfo::video(0, tb, params(TextureFormat::Astc4x4)),
-        StreamInfo::cues("cues", ""),
-        StreamInfo::cues("subtitles", "en"),
+        StreamInfo::cues("cues"),
+        StreamInfo::cues("subtitles"),
     ];
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     let bc1_payloads: [(bool, Vec<u8>); 5] = [
@@ -236,8 +236,8 @@ fn cue_streams_can_be_disabled() {
     assert_eq!(
         p.cue_streams(),
         [
-            CueStreamInfo { stream: 2, name: "cues".into(), language: "".into() },
-            CueStreamInfo { stream: 3, name: "subtitles".into(), language: "en".into() },
+            CueStreamInfo { stream: 2, name: "cues".into() },
+            CueStreamInfo { stream: 3, name: "subtitles".into() },
         ]
     );
     p.play();

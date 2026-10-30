@@ -106,8 +106,6 @@ impl CueEvent {
 pub struct CueStreamInfo {
     pub stream: u16,
     pub name: String,
-    /// BCP 47 tag; empty for none.
-    pub language: String,
 }
 
 /// A started cue with a non-zero duration.
@@ -273,7 +271,7 @@ impl<R: Read + Seek> Player<R> {
         let mut cue_enabled = vec![false; streams.len()];
         for (i, s) in streams.iter().enumerate() {
             if let Some(c) = s.cue_params() {
-                cue_streams.push(CueStreamInfo { stream: i as u16, name: c.name.clone(), language: c.language.clone() });
+                cue_streams.push(CueStreamInfo { stream: i as u16, name: c.name.clone() });
                 cue_enabled[i] = true;
             }
         }

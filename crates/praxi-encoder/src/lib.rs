@@ -131,19 +131,12 @@ impl CueConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CueStreamConfig {
     pub name: String,
-    /// BCP 47 tag; empty for none.
-    pub language: String,
     pub cues: Vec<CueConfig>,
 }
 
 impl CueStreamConfig {
     pub fn new(name: impl Into<String>) -> CueStreamConfig {
-        CueStreamConfig { name: name.into(), language: String::new(), cues: Vec::new() }
-    }
-
-    pub fn language(mut self, language: impl Into<String>) -> CueStreamConfig {
-        self.language = language.into();
-        self
+        CueStreamConfig { name: name.into(), cues: Vec::new() }
     }
 
     pub fn cue(mut self, cue: CueConfig) -> CueStreamConfig {
@@ -208,7 +201,7 @@ impl EncoderConfig {
 
     /// Adds a cue to the stream named `cues`, creating it if needed.
     pub fn cue_with(mut self, cue: CueConfig) -> EncoderConfig {
-        match self.cue_streams.iter_mut().find(|s| s.name == "cues" && s.language.is_empty()) {
+        match self.cue_streams.iter_mut().find(|s| s.name == "cues") {
             Some(s) => s.cues.push(cue),
             None => self.cue_streams.push(CueStreamConfig::new("cues").cue(cue)),
         }
@@ -349,7 +342,7 @@ impl<W: Write + Seek> Encoder<W> {
         let mut scratch = Vec::new();
         for cs in c.cue_streams.iter().filter(|s| !s.cues.is_empty()) {
             let stream = streams.len() as u16;
-            streams.push(StreamInfo::cues(cs.name.clone(), cs.language.clone()));
+            streams.push(StreamInfo::cues(cs.name.clone()));
             for cc in &cs.cues {
                 let micros = |secs: f64, what: &str| {
                     if secs.is_finite() && secs >= 0.0 {

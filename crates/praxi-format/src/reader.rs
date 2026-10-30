@@ -1,6 +1,6 @@
 use crate::{
     CHUNK_HEADER_SIZE, ChunkHeader, Compression, Error, HEADER_SIZE, Header, INDEX_ENTRY_SIZE,
-    IndexEntry, MAGIC, Result, CUE_LANGUAGE_SIZE, CUE_NAME_SIZE, CueParams, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
+    IndexEntry, MAGIC, Result, CUE_NAME_SIZE, CueParams, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
     TimeBase, VERSION_MAJOR, VideoParams, corrupt, le_u16, le_u32, le_u64,
 };
 use std::io::{Read, Seek, SeekFrom};
@@ -187,8 +187,7 @@ fn decode_stream(i: usize, b: &[u8]) -> Result<StreamInfo> {
         }
         3 => StreamParams::Cues(CueParams {
             max_duration: le_u64(b, 16),
-            language: padded_text(i, &b[24..24 + CUE_LANGUAGE_SIZE])?,
-            name: padded_text(i, &b[32..32 + CUE_NAME_SIZE])?,
+            name: padded_text(i, &b[24..24 + CUE_NAME_SIZE])?,
         }),
         kind => StreamParams::Unknown(kind),
     };
