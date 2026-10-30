@@ -1,5 +1,9 @@
 //! Encoder for praxi video files (`docs/features/encoder.md`, `docs/features/video-codec.md`).
 
+mod decode;
+
+pub use decode::decode_frame;
+
 use ktx::astcenc::{
     self, AstcencContext, AstcencImage, AstcencImageData, AstcencOutput, AstcencProfile,
     AstcencSwizzle,

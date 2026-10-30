@@ -177,6 +177,8 @@ name = "praxi-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "ktx-rs",
+ "praxi",
  "praxi-encoder",
  "praxi-format",
 ]

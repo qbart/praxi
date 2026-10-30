@@ -2,7 +2,8 @@
 
 use clap::{Parser, Subcommand, ValueEnum};
 use praxi_encoder::{CueConfig, Encoder, EncoderConfig, Quality, VariantConfig};
-use praxi_format::{Cue, Reader, StreamParams, Value};
+use praxi::{Capabilities, Player};
+use praxi_format::{Cue, Reader, StreamParams, TextureFormat, Value};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read};
 use std::path::{Path, PathBuf};
@@ -20,6 +21,8 @@ struct Cli {
 enum Cmd {
     /// Encode a video (anything ffmpeg decodes) into a .praxi file.
     Encode(EncodeArgs),
+    /// Decode one frame on the CPU and write it as a PNG.
+    Frame(FrameArgs),
     /// Print the header and stream table of a .praxi file.
     Info {
         file: PathBuf,
@@ -54,6 +57,51 @@ struct EncodeArgs {
     /// Encode only the first N frames.
     #[arg(long)]
     frames: Option<u64>,
+}
+
+#[derive(clap::Args)]
+struct FrameArgs {
+    file: PathBuf,
+    #[arg(short, long)]
+    output: PathBuf,
+    /// Time of the frame in seconds.
+    #[arg(long, default_value_t = 0.0)]
+    at: f64,
+    /// Variant to decode (default: each group's first variant).
+    #[arg(long, value_enum)]
+    format: Option<FormatArg>,
+    /// Track (group) index.
+    #[arg(long, default_value_t = 0)]
+    track: usize,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum FormatArg {
+    Bc1,
+    Bc3,
+    Bc4,
+    Bc5,
+    Bc7,
+    Astc4x4,
+    Astc5x5,
+    Astc6x6,
+    Astc8x8,
+}
+
+impl FormatArg {
+    fn format(self) -> TextureFormat {
+        match self {
+            FormatArg::Bc1 => TextureFormat::Bc1,
+            FormatArg::Bc3 => TextureFormat::Bc3,
+            FormatArg::Bc4 => TextureFormat::Bc4,
+            FormatArg::Bc5 => TextureFormat::Bc5,
+            FormatArg::Bc7 => TextureFormat::Bc7,
+            FormatArg::Astc4x4 => TextureFormat::Astc4x4,
+            FormatArg::Astc5x5 => TextureFormat::Astc5x5,
+            FormatArg::Astc6x6 => TextureFormat::Astc6x6,
+            FormatArg::Astc8x8 => TextureFormat::Astc8x8,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -97,6 +145,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Cmd::Encode(args) => encode(args),
+        Cmd::Frame(args) => frame(args),
         Cmd::Info { file, chunks } => info(&file, chunks),
     };
     match result {
@@ -230,6 +279,49 @@ fn read_frame(r: &mut impl Read, buf: &mut [u8]) -> AnyResult<bool> {
         }
     }
     Ok(true)
+}
+
+fn frame(args: FrameArgs) -> AnyResult<()> {
+    if !args.at.is_finite() || args.at < 0.0 {
+        return Err(format!("invalid time {}", args.at).into());
+    }
+    let caps = match args.format {
+        Some(f) => Capabilities::new([f.format()]),
+        None => {
+            // Each group's first variant in stream order.
+            let reader = Reader::new(BufReader::new(File::open(&args.file)?))?;
+            let mut first: Vec<(u16, TextureFormat)> = Vec::new();
+            for s in reader.streams() {
+                if let Some(v) = s.video_params()
+                    && !first.iter().any(|(g, _)| *g == s.group)
+                {
+                    first.push((s.group, v.format));
+                }
+            }
+            Capabilities::new(first.into_iter().map(|(_, f)| f))
+        }
+    };
+    let mut player = Player::open(BufReader::new(File::open(&args.file)?), &caps)?;
+    let tracks = player.tracks().len();
+    if args.track >= tracks {
+        return Err(format!("track {} out of range, the file has {tracks}", args.track).into());
+    }
+    player.seek(std::time::Duration::from_secs_f64(args.at))?;
+    let params = player.tracks()[args.track].params;
+    let frame = player.video_frame(args.track).ok_or("no frame at that time")?;
+    let rgba = praxi_encoder::decode_frame(&params, frame.data)?;
+    let png = ktx::lodepng::encode(&rgba, params.width, params.height, &mut ktx::lodepng::State::new())
+        .map_err(|code| format!("PNG encoding failed: {}", ktx::lodepng::lodepng_error_text(code)))?;
+    std::fs::write(&args.output, png)?;
+    println!(
+        "{}: frame at {:.3} s, {} {}x{}",
+        args.output.display(),
+        frame.time.as_secs_f64(),
+        params.format,
+        params.width,
+        params.height
+    );
+    Ok(())
 }
 
 fn info(path: &Path, chunks: bool) -> AnyResult<()> {

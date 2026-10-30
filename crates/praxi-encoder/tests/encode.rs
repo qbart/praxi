@@ -148,3 +148,32 @@ fn rejects_bad_config() {
         assert!(Encoder::new(Cursor::new(Vec::new()), config).is_err());
     }
 }
+
+#[test]
+fn decodes_frames_close_to_source() {
+    let source = frames();
+    for (format, min_psnr) in [(TextureFormat::Bc7, 35.0), (TextureFormat::Astc4x4, 35.0), (TextureFormat::Astc6x6, 25.0)] {
+        let variant = match format {
+            TextureFormat::Bc7 => VariantConfig::bc7(),
+            TextureFormat::Astc4x4 => VariantConfig::astc(4),
+            _ => VariantConfig::astc(6),
+        };
+        let (file, _) = encode(EncoderConfig::new(W, H, 10, 1).variant(variant));
+        let mut p = Player::open(Cursor::new(file), &Capabilities::new([format])).unwrap();
+        p.seek(Duration::from_millis(300)).unwrap();
+        let params = p.tracks()[0].params;
+        let rgba = praxi_encoder::decode_frame(&params, p.video_frame(0).unwrap().data).unwrap();
+        assert_eq!(rgba.len(), (W * H * 4) as usize, "{format}: padding cropped");
+        let se: f64 = rgba.iter().zip(&source[3]).map(|(a, b)| (*a as f64 - *b as f64).powi(2)).sum();
+        let psnr = 10.0 * (255.0f64.powi(2) / (se / rgba.len() as f64)).log10();
+        assert!(psnr > min_psnr, "{format}: PSNR {psnr:.1} dB");
+    }
+}
+
+#[test]
+fn decode_rejects_unsupported_formats() {
+    let params = praxi::VideoParams { width: 4, height: 4, format: TextureFormat::Bc3, color_flags: 0 };
+    assert!(praxi_encoder::decode_frame(&params, &[0; 16]).is_err());
+    let params = praxi::VideoParams { format: TextureFormat::Bc7, ..params };
+    assert!(praxi_encoder::decode_frame(&params, &[0; 8]).is_err(), "wrong data size");
+}

@@ -12,6 +12,7 @@ Requires `ffmpeg` and `ffprobe` on `PATH` for encoding.
 make build
 ./target/release/praxi encode input.mp4 -o intro.praxi --variant bc7 --variant astc6x6 --cue 2.5=explosion
 ./target/release/praxi info intro.praxi
+./target/release/praxi frame intro.praxi --at 2.5 -o frame.png
 ```
 
 Playback from Rust:

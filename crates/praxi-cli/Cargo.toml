@@ -9,6 +9,8 @@ name = "praxi"
 path = "src/main.rs"
 
 [dependencies]
+praxi.workspace = true
 praxi-format.workspace = true
+ktx-rs.workspace = true
 praxi-encoder.workspace = true
 clap.workspace = true

@@ -31,6 +31,9 @@ It prints per-variant statistics: bytes, MB/s, skipped blocks, keyframes.
 
 `praxi info <FILE>` prints the header and stream table; `--chunks` also lists every chunk.
 
+`praxi frame <FILE>` writes one decoded frame as a PNG; see
+[frame-export.md](frame-export.md).
+
 ## Library
 
 ```rust
