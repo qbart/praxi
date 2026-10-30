@@ -182,9 +182,12 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
 
     let out = BufWriter::new(File::create(&args.output)?);
     let mut encoder = Encoder::new(out, config)?;
-    let mut ffmpeg = Command::new("ffmpeg")
-        .args(["-v", "error", "-i"])
-        .arg(&args.input)
+    let mut ffmpeg = Command::new("ffmpeg");
+    ffmpeg.args(["-v", "error", "-i"]).arg(&args.input);
+    if let Some(n) = args.frames {
+        ffmpeg.args(["-frames:v", &n.to_string()]);
+    }
+    let mut ffmpeg = ffmpeg
         .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
         .stdout(Stdio::piped())
         .spawn()
@@ -193,17 +196,14 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
     let mut frame = vec![0u8; p.width as usize * p.height as usize * 4];
     let started = Instant::now();
     let mut count = 0u64;
-    while args.frames.is_none_or(|n| count < n) {
-        if !read_frame(&mut stdout, &mut frame)? {
-            break;
-        }
+    while read_frame(&mut stdout, &mut frame)? {
         encoder.push_frame(&frame)?;
         count += 1;
         eprint!("\rframe {count}");
     }
     drop(stdout);
     let status = ffmpeg.wait()?;
-    if args.frames.is_none() && !status.success() {
+    if !status.success() {
         return Err(format!("ffmpeg exited with {status}").into());
     }
     let (_, stats) = encoder.finish()?;
