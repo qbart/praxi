@@ -33,10 +33,10 @@ impl<W: Write + Seek> Writer<W> {
             {
                 return Err(Error::Invalid(format!("stream {i}: zero frame size")));
             }
-            if let StreamParams::Cues(c) = &s.params {
-                if c.name.len() > CUE_NAME_SIZE || c.name.contains('\0') {
-                    return Err(Error::Invalid(format!("stream {i}: cue stream name too long or has a zero byte")));
-                }
+            if let StreamParams::Cues(c) = &s.params
+                && (c.name.len() > CUE_NAME_SIZE || c.name.contains('\0'))
+            {
+                return Err(Error::Invalid(format!("stream {i}: cue stream name too long or has a zero byte")));
             }
         }
         inner.seek(SeekFrom::Start(0))?;
