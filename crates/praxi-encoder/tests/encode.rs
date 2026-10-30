@@ -58,14 +58,14 @@ fn play_all(file: Vec<u8>, format: TextureFormat) -> (Vec<Vec<u8>>, Vec<Event>) 
 
 #[test]
 fn writes_streams_cues_and_deltas() {
-    let subtitles = CueStreamConfig::new("subtitles")
-        .cue(CueConfig::new(0.2, "subtitle").duration(0.15).field("text", "Hi").field("lang", "en").field("line", 2i64));
+    let gameplay = CueStreamConfig::new("gameplay")
+        .cue(CueConfig::new(0.2, "camera.shake").duration(0.15).field("axis", "x").field("level", 2i64));
     let config = config()
         .keyint(4)
         .skip_threshold(0)
         .cue_with(CueConfig::new(1.0, "end").duration(0.5))
         .cue(0.05, "m1")
-        .cue_stream(subtitles);
+        .cue_stream(gameplay);
     let (file, stats) = encode(config);
     assert_eq!(stats.frames, 6);
     assert_eq!(stats.duration_us, 1_500_000, "raised to the last cue end");
@@ -86,7 +86,7 @@ fn writes_streams_cues_and_deltas() {
             p => panic!("not a cue stream: {p:?}"),
         })
         .collect();
-    assert_eq!(cue_names, [("cues", 500_000), ("subtitles", 150_000)]);
+    assert_eq!(cue_names, [("cues", 500_000), ("gameplay", 150_000)]);
 
     let mut chunks = Vec::new();
     let mut payload = Vec::new();
@@ -105,16 +105,16 @@ fn writes_streams_cues_and_deltas() {
 
     let cues: Vec<(u16, u64, Cue)> =
         chunks.iter().filter(|(c, _)| c.stream >= 2).map(|(c, p)| (c.stream, c.pts, Cue::decode(p).unwrap())).collect();
-    let subtitle = Cue {
+    let shake = Cue {
         duration: 150_000,
-        kind: "subtitle".into(),
-        fields: vec![("text".into(), Value::from("Hi")), ("lang".into(), Value::from("en")), ("line".into(), Value::Int(2))],
+        kind: "camera.shake".into(),
+        fields: vec![("axis".into(), Value::from("x")), ("level".into(), Value::Int(2))],
     };
     assert_eq!(
         cues,
         [
             (2, 50_000, Cue::new("m1")),
-            (3, 200_000, subtitle),
+            (3, 200_000, shake),
             (2, 1_000_000, Cue { duration: 500_000, ..Cue::new("end") }),
         ],
         "cues sorted by time across streams"

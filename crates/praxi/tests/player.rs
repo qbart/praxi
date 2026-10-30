@@ -22,13 +22,13 @@ fn astc_frame(n: u8) -> Vec<u8> {
     vec![200 + n; 32]
 }
 
-fn subtitle(text: &str, ms: u64) -> Cue {
-    Cue { duration: ms * 1000, kind: "subtitle".into(), fields: vec![("text".into(), Value::from(text)), ("lang".into(), Value::from("en"))] }
+fn flash(color: &str, ms: u64) -> Cue {
+    Cue { duration: ms * 1000, kind: "light.flash".into(), fields: vec![("color".into(), Value::from(color))] }
 }
 
 /// 8x4 video at 10 fps, 5 frames, 500 ms. Group 0 in BC1 (keyframes 0 and 3) and ASTC 4x4
 /// (all keyframes). Cue stream 2 "cues": `a` at 150 ms, `b` at 420 ms, `long` at 450 ms
-/// lasting past the end. Cue stream 3 "subtitles" (lang en): `hello` 120-320 ms, `world` 250-350 ms.
+/// lasting past the end. Cue stream 3 "gameplay": flashes `red` 120-320 ms and `blue` 250-350 ms.
 fn sample_file() -> Vec<u8> {
     let params = |format| VideoParams { width: 8, height: 4, format, color_flags: COLOR_FLAG_SRGB };
     let tb = TimeBase::new(1, 10);
@@ -36,7 +36,7 @@ fn sample_file() -> Vec<u8> {
         StreamInfo::video(0, tb, params(TextureFormat::Bc1)),
         StreamInfo::video(0, tb, params(TextureFormat::Astc4x4)),
         StreamInfo::cues("cues"),
-        StreamInfo::cues("subtitles"),
+        StreamInfo::cues("gameplay"),
     ];
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     let bc1_payloads: [(bool, Vec<u8>); 5] = [
@@ -49,10 +49,10 @@ fn sample_file() -> Vec<u8> {
     for (n, (key, payload)) in bc1_payloads.iter().enumerate() {
         match n {
             2 => {
-                w.write_cue(3, 120_000, &subtitle("hello", 200)).unwrap();
+                w.write_cue(3, 120_000, &flash("red", 200)).unwrap();
                 w.write_cue(2, 150_000, &Cue::new("a")).unwrap();
             }
-            3 => w.write_cue(3, 250_000, &subtitle("world", 100)).unwrap(),
+            3 => w.write_cue(3, 250_000, &flash("blue", 100)).unwrap(),
             _ => {}
         }
         let pts = n as u64;
@@ -85,7 +85,7 @@ impl Log {
                 Event::Looped => "looped".into(),
                 Event::Finished => "finished".into(),
                 Event::Cue(cue) => {
-                    let name = cue.get_str("text").unwrap_or(&cue.kind).to_string();
+                    let name = cue.get_str("color").unwrap_or(&cue.kind).to_string();
                     self.names.insert(cue.id, name.clone());
                     format!("cue {name}@{}", cue.time.as_millis())
                 }
@@ -139,7 +139,7 @@ fn plays_frames_and_emits_events() {
     }
     assert_eq!(
         seen,
-        ["cue hello@120", "cue a@150", "cue world@250", "end hello", "end world", "cue b@420", "cue long@450"]
+        ["cue red@120", "cue a@150", "cue blue@250", "end red", "end blue", "cue b@420", "cue long@450"]
     );
     assert!(!p.is_finished());
 
@@ -166,8 +166,8 @@ fn cue_event_carries_fields() {
             _ => None,
         })
         .unwrap();
-    assert_eq!((cue.kind.as_str(), cue.stream, cue.time, cue.duration), ("subtitle", 3, 120 * MS, 200 * MS));
-    assert_eq!(cue.get("text"), Some(&Value::from("hello")));
+    assert_eq!((cue.kind.as_str(), cue.stream, cue.time, cue.duration), ("light.flash", 3, 120 * MS, 200 * MS));
+    assert_eq!(cue.get("color"), Some(&Value::from("red")));
 }
 
 #[test]
@@ -194,10 +194,10 @@ fn loops_with_carry_over() {
     p.advance(480 * MS).unwrap();
     assert_eq!(
         log.take(&mut p),
-        ["started", "cue hello@120", "cue a@150", "cue world@250", "end hello", "end world", "cue b@420", "cue long@450"]
+        ["started", "cue red@120", "cue a@150", "cue blue@250", "end red", "end blue", "cue b@420", "cue long@450"]
     );
     p.advance(140 * MS).unwrap();
-    assert_eq!(log.take(&mut p), ["end long", "looped", "cue hello@120"]);
+    assert_eq!(log.take(&mut p), ["end long", "looped", "cue red@120"]);
     assert_eq!(p.position(), 120 * MS);
     assert_eq!(p.video_frame(0).unwrap().data, bc1_frame(1));
     assert!(p.is_playing());
@@ -212,14 +212,14 @@ fn seeks_from_preceding_keyframe() {
     assert_eq!(log.take(&mut p), ["seeked@350"], "no cue is active at 350 ms");
 
     p.seek(300 * MS).unwrap();
-    assert_eq!(log.take(&mut p), ["seeked@300", "cue hello@120", "cue world@250"], "active cues restart");
+    assert_eq!(log.take(&mut p), ["seeked@300", "cue red@120", "cue blue@250"], "active cues restart");
     p.seek(250 * MS).unwrap();
     assert_eq!(p.video_frame(0).unwrap().data, bc1_frame(2), "deltas replayed from keyframe 0");
-    assert_eq!(log.take(&mut p), ["end hello", "end world", "seeked@250", "cue hello@120", "cue world@250"]);
+    assert_eq!(log.take(&mut p), ["end red", "end blue", "seeked@250", "cue red@120", "cue blue@250"]);
 
     p.play();
     p.advance(200 * MS).unwrap();
-    assert_eq!(log.take(&mut p), ["started", "end hello", "end world", "cue b@420", "cue long@450"]);
+    assert_eq!(log.take(&mut p), ["started", "end red", "end blue", "cue b@420", "cue long@450"]);
     assert_eq!(p.video_frame(0).unwrap().data, bc1_frame(4));
 
     let mut p = open(&[TextureFormat::Astc4x4]);
@@ -237,14 +237,14 @@ fn cue_streams_can_be_disabled() {
         p.cue_streams(),
         [
             CueStreamInfo { stream: 2, name: "cues".into() },
-            CueStreamInfo { stream: 3, name: "subtitles".into() },
+            CueStreamInfo { stream: 3, name: "gameplay".into() },
         ]
     );
     p.play();
     p.advance(130 * MS).unwrap();
-    assert_eq!(log.take(&mut p), ["started", "cue hello@120"]);
+    assert_eq!(log.take(&mut p), ["started", "cue red@120"]);
     p.set_cue_stream_enabled(3, false);
-    assert_eq!(log.take(&mut p), ["end hello"], "disabling ends active cues");
+    assert_eq!(log.take(&mut p), ["end red"], "disabling ends active cues");
     p.set_cue_stream_enabled(0, false);
     p.advance(300 * MS).unwrap();
     assert_eq!(log.take(&mut p), ["cue a@150", "cue b@420"]);

@@ -13,7 +13,7 @@ fn video(format: TextureFormat) -> StreamInfo {
 }
 
 fn sample_file() -> Vec<u8> {
-    let streams = vec![video(TextureFormat::Bc7), video(TextureFormat::Astc6x6), StreamInfo::cues("subtitles")];
+    let streams = vec![video(TextureFormat::Bc7), video(TextureFormat::Astc6x6), StreamInfo::cues("gameplay")];
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     let compressible = vec![7u8; 96];
     let noise: Vec<u8> = (0..32u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8).collect();
@@ -22,20 +22,20 @@ fn sample_file() -> Vec<u8> {
     w.write_chunk(1, 0, true, &noise, None).unwrap();
     w.write_chunk(0, 1, false, &noise, Some(Compression::Lz4)).unwrap();
     w.write_chunk(1, 1, false, &compressible, Some(Compression::None)).unwrap();
-    w.write_cue(2, 50_000, &subtitle()).unwrap();
+    w.write_cue(2, 50_000, &sample_cue()).unwrap();
     w.write_chunk(0, 2, true, &compressible, None).unwrap();
     w.finish(100_000).unwrap().into_inner()
 }
 
-fn subtitle() -> Cue {
+fn sample_cue() -> Cue {
     Cue {
         duration: 40_000,
-        kind: "subtitle".into(),
+        kind: "camera.shake".into(),
         fields: vec![
-            ("text".into(), "Olá\nmundo".into()),
-            ("line".into(), Value::Int(-3)),
-            ("size".into(), Value::Float(1.5)),
-            ("italic".into(), Value::Bool(true)),
+            ("label".into(), "Olá\nmundo".into()),
+            ("offset".into(), Value::Int(-3)),
+            ("strength".into(), Value::Float(1.5)),
+            ("repeat".into(), Value::Bool(true)),
             ("blob".into(), Value::Bytes(vec![0, 255])),
         ],
     }
@@ -51,7 +51,7 @@ fn roundtrip() {
     assert_eq!(r.streams()[2].chunk_count, 2);
     assert_eq!(
         r.streams()[2].params,
-        StreamParams::Cues(CueParams { max_duration: 40_000, name: "subtitles".into() })
+        StreamParams::Cues(CueParams { max_duration: 40_000, name: "gameplay".into() })
     );
     let v = r.streams()[1].video_params().unwrap();
     assert_eq!((v.width, v.height, v.format, v.srgb(), v.alpha()), (10, 6, TextureFormat::Astc6x6, true, false));
@@ -67,9 +67,9 @@ fn roundtrip() {
     assert_eq!(order, [(2, 0), (0, 0), (1, 0), (0, 1), (1, 1), (2, 50_000), (0, 2)]);
     assert_eq!(Cue::decode(&chunks[0].1).unwrap(), Cue::new("start"));
     let sub = Cue::decode(&chunks[5].1).unwrap();
-    assert_eq!(sub, subtitle());
-    assert_eq!(sub.get_str("text"), Some("Olá\nmundo"));
-    assert_eq!(sub.get("line"), Some(&Value::Int(-3)));
+    assert_eq!(sub, sample_cue());
+    assert_eq!(sub.get_str("label"), Some("Olá\nmundo"));
+    assert_eq!(sub.get("offset"), Some(&Value::Int(-3)));
     assert_eq!(chunks[1].1, vec![7u8; 96]);
     assert_eq!(chunks[1].0.compression, Compression::Lz4, "auto picks LZ4 when smaller");
     assert_eq!(chunks[2].0.compression, Compression::None, "auto stores incompressible data");
@@ -145,7 +145,7 @@ fn writer_enforces_order() {
 #[test]
 fn rejects_bad_cue_payloads() {
     let mut good = Vec::new();
-    subtitle().encode(&mut good).unwrap();
+    sample_cue().encode(&mut good).unwrap();
     for cut in 0..good.len() {
         assert!(Cue::decode(&good[..cut]).is_err(), "truncated at {cut}");
     }
