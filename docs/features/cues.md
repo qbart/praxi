@@ -16,11 +16,10 @@ A cue has:
 - **fields**: an ordered list of key/value pairs with unique keys. Values are typed:
   string, integer (i64), float (f64), bool or bytes.
 
-Cues live in **cue streams**. A file can have any number of them, each with:
-
-- **name**: free text, at most 32 bytes, for example `cues`, `subtitles`, `director`.
-- **language**: optional BCP 47 tag, at most 8 bytes, for example `en`, `pl`, `pt-BR`.
-  Used to pick a subtitle language.
+Cues live in **cue streams**. A file can have any number of them. A stream only has a
+**name** (free text, at most 32 bytes, for example `cues`, `subtitles`, `director`) used to
+group cues; streams carry no other meaning. Anything specific to a kind of cue, such as a
+subtitle's language, is a field of the cue.
 
 Cues in one stream may overlap and may share a start time.
 
@@ -28,9 +27,8 @@ The byte layout is in [PRAXI.md](../spec/PRAXI.md#cue-payload).
 
 ## Player behaviour
 
-- `cue_streams()` lists the cue streams (stream number, name, language). All are enabled
-  when the file is opened; `set_cue_stream_enabled(stream, bool)` turns one on or off, for
-  example to show only the subtitle language the player picked.
+- `cue_streams()` lists the cue streams (stream number and name). All are enabled when the
+  file is opened; `set_cue_stream_enabled(stream, bool)` turns one on or off.
 - When the clock reaches a cue's start, the player emits `Event::Cue` with an `id`, the
   stream, time, duration, type and fields.
 - When the clock reaches the end of a cue with a non-zero duration, the player emits
@@ -49,14 +47,16 @@ The byte layout is in [PRAXI.md](../spec/PRAXI.md#cue-payload).
 
 ### Subtitles
 
-- One cue stream per language, named `subtitles`, with the language set.
+- Subtitles go in a cue stream named `subtitles`. All languages may share it.
 - Cue type `subtitle`, duration set to how long the text is shown.
 - Fields:
   - `text` (string, required): the text, lines separated by `\n`. No markup.
+  - `lang` (string, required): BCP 47 language tag, for example `en`, `pl`, `pt-BR`.
   - `speaker` (string, optional): who is speaking.
   - `position` (string, optional): `bottom` (default) or `top`.
 
-The engine shows `text` on `Cue` and hides it on `CueEnd` with the same `id`.
+The engine shows `text` on `Cue` when `lang` is the language the player picked, and hides
+it on `CueEnd` with the same `id`.
 
 ### Markers
 
@@ -68,6 +68,6 @@ An instantaneous cue with no fields, whose type names the moment (`explosion`, `
   stream named `cues`. Values given on the command line are strings. See
   [encoder.md](encoder.md).
 - Encoder library: any number of cue streams, typed field values.
-- Planned: `--subtitles FILE.srt[:LANG]` to convert SRT files into subtitle cue streams,
+- Planned: `--subtitles FILE.srt:LANG` to convert SRT files into subtitle cues,
   and a cue editor that rewrites the cue streams of an existing file without re-encoding
   video.

@@ -1,6 +1,6 @@
 # PRAXI file format
 
-Version 0.2. File extension `.praxi`.
+Version 0.3. File extension `.praxi`.
 
 ## Conventions
 
@@ -29,7 +29,7 @@ Version 0.2. File extension `.praxi`.
 |---|---|---|---|
 | 0 | 8 | `magic` | `89 50 52 58 0D 0A 1A 0A` (`\x89PRX\r\n\x1a\n`) |
 | 8 | 2 | `version_major` | `0`. Readers reject other values. |
-| 10 | 2 | `version_minor` | `2`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
+| 10 | 2 | `version_minor` | `3`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
 | 12 | 4 | `flags` | Reserved, `0`. |
 | 16 | 2 | `stream_count` | Number of entries in the stream table, at least 1. |
 | 18 | 2 | | Reserved. |
@@ -78,10 +78,8 @@ Derived values:
 | Offset | Size | Field | Description |
 |---|---|---|---|
 | 16 | 8 | `max_duration` | Largest cue `duration` in the stream, in the stream's time base. Used for seeking. |
-| 24 | 8 | `language` | BCP 47 language tag, UTF-8, zero padded. All zero when the stream has no language. |
-| 32 | 32 | `name` | Stream name, UTF-8, zero padded. |
-
-Text fields hold no zero bytes; readers stop at the first zero byte.
+| 24 | 32 | `name` | Stream name, UTF-8, zero padded. Holds no zero bytes; readers stop at the first zero byte. |
+| 56 | 8 | | Reserved. |
 
 ### Audio parameters (`kind = 2`)
 
@@ -217,3 +215,4 @@ time lies in `[t - max_duration, t]` and keep those ending after `t`.
 - 0.1: initial version.
 - 0.2: marker streams replaced by cue streams (stream parameters, payload, index entries);
   cue streams allow equal pts.
+- 0.3: cue streams lose the `language` parameter; `name` moves to offset 24.
