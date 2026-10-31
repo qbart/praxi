@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Game state: the frame index each video's texture holds, and which video is on screen.
     let mut textures: Vec<Option<u64>> = vec![None; paths.len()];
     let mut showing = 0;
-    let (mut frames, mut upload_time) = (0u32, Duration::ZERO);
+    let (mut frames, mut waited) = (0u32, Duration::ZERO);
     let mut frames_without_picture = 0;
     let mut done = false;
     let mut last = Instant::now();
@@ -64,12 +64,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Start decoding this frame, then handle the previous frame's results meanwhile.
         to_worker.send(ToWorker::Advance(dt))?;
         loop {
-            match from_worker.recv()? {
+            let t = Instant::now();
+            let message = from_worker.recv()?;
+            waited += t.elapsed();
+            match message {
                 ToGame::Frame { video, index, data } => {
-                    let t = Instant::now();
                     // A real engine uploads `data` to video `video`'s texture here.
                     textures[video] = Some(index);
-                    upload_time += t.elapsed();
                     let _ = recycle.send(data);
                 }
                 ToGame::Event { video, event } => {
@@ -96,7 +97,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     worker.join().expect("worker thread")?;
 
     println!("{frames} game frames, {frames_without_picture} without a picture on screen");
-    println!("game thread upload handling: {:.3} ms per frame", upload_time.as_secs_f64() * 1e3 / frames as f64);
+    // Near zero: the previous frame's decode finished during this frame's sleep.
+    println!("game thread waited for the worker {:.3} ms per frame", waited.as_secs_f64() * 1e3 / frames as f64);
     Ok(())
 }
 
