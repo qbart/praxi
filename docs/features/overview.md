@@ -42,6 +42,7 @@ Cargo workspace under `crates/`:
 | `praxi` | Runtime player: variant selection, frame reconstruction, clock, events | `praxi-format` |
 | `praxi-encoder` | Encoder library: RGBA frames to `.praxi` | `ktx-rs`, `praxi-format` |
 | `praxi-cli` | `praxi` command line tool (encode via ffmpeg, inspect files) | `praxi-encoder`, `clap` |
+| `praxi-viewer` | GPU viewer: plays files in a window, screenshots ([viewer.md](viewer.md)) | `praxi`, `wgpu`, `winit`, `cpal` |
 
 The runtime (`praxi`, `praxi-format`) does not depend on `ktx-rs`. Only the encoder does,
 with default features off (no Vulkan loader). See [video-codec.md](video-codec.md) and
@@ -65,7 +66,7 @@ LZ4 decompression took 0.05-0.5 ms per frame. PSNR is per frame before temporal 
 ## Milestones
 
 1. **M0** Container format, encoder (BC7, ASTC), player with events. Specs in this folder.
-2. **M1** Frame viewer (wgpu) for visual checks; size, PSNR and decode-time benchmarks in CI.
+2. **M1** Frame viewer (wgpu) for visual checks ([viewer.md](viewer.md)); size, PSNR and decode-time benchmarks in CI.
 3. **M2** Multi-channel audio streams and A/V sync. Done: PCM tracks with layout variants,
    game-clock sync ([audio.md](audio.md)). Open: audio-master clock, compressed audio.
 4. **M3** Better compression: motion copy, zstd, codebook frame types.
