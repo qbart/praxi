@@ -1,6 +1,6 @@
 # PRAXI file format
 
-Version 0.6. File extension `.praxi`.
+Version 0.7. File extension `.praxi`.
 
 ## Conventions
 
@@ -29,7 +29,7 @@ Version 0.6. File extension `.praxi`.
 |---|---|---|---|
 | 0 | 8 | `magic` | `89 50 52 58 0D 0A 1A 0A` (`\x89PRX\r\n\x1a\n`) |
 | 8 | 2 | `version_major` | `0`. Readers reject other values. |
-| 10 | 2 | `version_minor` | `6`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
+| 10 | 2 | `version_minor` | `7`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
 | 12 | 4 | `flags` | Reserved, `0`. |
 | 16 | 2 | `stream_count` | Number of entries in the stream table, at least 1. |
 | 18 | 2 | | Reserved. |
@@ -87,7 +87,7 @@ Derived values:
 |---|---|---|---|
 | 16 | 4 | `sample_rate` | Sample frames per second, at least 1. The time base must be `1 / sample_rate` (`timebase_num = 1`, `timebase_den = sample_rate`), so a pts counts sample frames. |
 | 20 | 2 | `channels` | Channels per frame, at least 1. |
-| 22 | 2 | `sample_format` | `1` signed 16-bit integer (`s16`), `2` 32-bit float (`f32`). Readers reject other values. |
+| 22 | 2 | `sample_format` | `1` signed 16-bit integer (`s16`), `2` 32-bit float (`f32`), `3` ADPCM (`adpcm`, see [ADPCM payload](#adpcm-payload)). Readers reject other values. |
 | 24 | 4 | `channel_mask` | Speakers fed by the channels, WAVE speaker bits (below). Either `0` (unspecified, channels in stored order) or exactly `channels` bits set; channels are interleaved in increasing bit order. |
 | 28 | 4 | `preload_us` | How far ahead of their time chunks are stored, in microseconds. See [Ordering](#ordering). |
 | 32 | 32 | `name` | Track name, UTF-8, zero padded. Holds no zero bytes; readers stop at the first zero byte. |
@@ -236,16 +236,62 @@ by byte with its residual: `block = previous block ^ residual`.
 
 ## Audio payload
 
-Every audio chunk has the keyframe flag set. The decompressed payload is `frames * channels`
-samples, interleaved frame by frame (all channels of frame 0, then frame 1, ...), each sample
-in `sample_format`:
+Every audio chunk has the keyframe flag set and decodes on its own. It covers frames `pts`
+to `pts + frames - 1`. Frames not covered by any chunk are silence.
+
+For `s16` and `f32`, the decompressed payload is `frames * channels` samples, interleaved
+frame by frame (all channels of frame 0, then frame 1, ...), each sample in
+`sample_format`:
 
 - `s16`: little-endian two's complement; `v` maps to `v / 32768`.
 - `f32`: little-endian IEEE 754 binary32, nominally in `[-1, 1]`.
 
 `raw_size` is a non-zero multiple of `channels * bytes_per_sample`; `frames` follows from it.
-The chunk covers frames `pts` to `pts + frames - 1`. Frames not covered by any chunk are
-silence.
+
+### ADPCM payload
+
+`adpcm` codes each channel at 4.5 bits per sample: blocks of 16 samples, each with one of
+16 fixed second-order predictors and a power-of-two step for the 4-bit prediction residuals.
+The decompressed payload is:
+
+| Size | Field | Description |
+|---|---|---|
+| 4 | `frames` | Sample frames in the chunk, at least 1. |
+| `4 * channels` | `history` | Per channel, in channel order: `h1` then `h2`, two `i16` (two's complement) that seed the predictor, standing for the two samples before frame 0, `h1` the later one. Writers store the decoded values of the stream's two preceding samples (`0` before the first chunk), so consecutive chunks decode like one stream. |
+| `9 * channels * ceil(frames / 16)` | `blocks` | Block `b` holds frames `16 * b` to `16 * b + 15`: 9 bytes per channel, in channel order. |
+
+The 9 bytes of a channel's block:
+
+| Size | Field | Description |
+|---|---|---|
+| 1 | `header` | High nibble: `predictor`, an index into the table below. Low nibble: `shift`, `0` to `12`. Readers reject other shifts. |
+| 8 | `residuals` | 16 residuals of 4 bits, two's complement (`-8` to `7`). Byte `i` holds the residual of sample `2i` in its low nibble and of sample `2i + 1` in its high nibble. In the last block, residuals past `frames` are zero and ignored. |
+
+`raw_size` equals `4 + 4 * channels + 9 * channels * ceil(frames / 16)`.
+
+Each channel decodes its samples in order, starting from its `h1` and `h2`, in 32-bit signed
+integer arithmetic (no intermediate value overflows):
+
+```
+p  = (c1[predictor] * h1 + c2[predictor] * h2 + 1024) >> 11    # arithmetic shift: floor
+s  = clamp(p + residual * 2^shift, -32768, 32767)
+h2 = h1
+h1 = s
+```
+
+The decoded sample `s` maps to `s / 32768`. The predictor table (`c1`, `c2`, in units of
+`1/2048`):
+
+| Index | `c1` | `c2` | Index | `c1` | `c2` |
+|---|---|---|---|---|---|
+| 0 | 0 | 0 | 8 | 3197 | -1231 |
+| 1 | 2048 | 0 | 9 | 2889 | -962 |
+| 2 | -1024 | 0 | 10 | 2870 | -1719 |
+| 3 | 4076 | -2041 | 11 | 2513 | -593 |
+| 4 | 3944 | -1951 | 12 | 2022 | -1855 |
+| 5 | 3817 | -1825 | 13 | 2006 | -99 |
+| 6 | 3637 | -1686 | 14 | 1545 | 333 |
+| 7 | 3434 | -1473 | 15 | 497 | -1376 |
 
 ## Cue payload
 
@@ -320,3 +366,4 @@ time lies in `[t - max_duration, t]` and keep those ending after `t`.
 - 0.5: compression `2`, LZ4 over byte planes, for video chunks.
 - 0.6: delta frames store residuals (XOR with the previous block) instead of blocks;
   compression `2` stores the prefix and each plane as a raw, LZ4 or Huffman section.
+- 0.7: audio sample format `3`, ADPCM.

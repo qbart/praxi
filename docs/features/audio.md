@@ -6,13 +6,54 @@ engine's own mixer; praxi does not mix, resample or talk to audio devices.
 
 ## Codec
 
-Audio is stored as **PCM**, interleaved, 16-bit integer (`s16`, default) or 32-bit float
-(`f32`). Chunks are LZ4 compressed when that makes them smaller (silence, quiet passages).
+Each audio stream has one sample format:
 
-PCM is a deliberate choice: 48 kHz stereo `s16` is 0.19 MB/s and 5.1 is 0.58 MB/s, under 2%
-of the smallest video variant (ASTC 8x8, about 26 MB/s for 1080p60), and decoding costs
-nothing beyond a copy. A compressed codec (ADPCM, Opus) may follow if audio-only files
-become a use case.
+| Format | Bits per sample | 48 kHz stereo | 48 kHz 5.1 | Decode |
+|---|---|---|---|---|
+| `s16` (default) | 16 | 0.19 MB/s | 0.58 MB/s | conversion to float |
+| `f32` | 32 | 0.38 MB/s | 1.15 MB/s | copy |
+| `adpcm` | 4.5 | 0.054 MB/s | 0.16 MB/s | one prediction per sample |
+
+PCM (`s16`, `f32`) chunks are LZ4 compressed when that makes them smaller (silence, quiet
+passages). PCM is the default because it is exact and costs nothing to decode, and its size
+hardly matters next to video: stereo `s16` is about 1% of the smallest 1080p60 variant
+(ASTC 8x8, 18 MB/s). `adpcm` is for files where audio does weigh: many voice languages,
+7.1 variants, small or low-rate video, audio-only files.
+
+### ADPCM
+
+`adpcm` is praxi's own adaptive differential PCM, designed for decode cost close to PCM:
+
+- Each channel is cut into blocks of 16 samples. A block stores one header byte (one of 16
+  fixed second-order predictors, and a power-of-two step) and 16 residuals of 4 bits: 9
+  bytes for 16 samples, 4.5 bits per sample, 3.6 times smaller than `s16`.
+- Decoding a sample is one prediction from the two previous samples, one shift, one add and
+  a clamp; no tables beyond the 16 predictors, no state across chunks.
+- Each chunk stores the two decoded samples before it as predictor history, so chunks
+  decode on their own (seeking and looping work as with PCM) and consecutive chunks decode
+  exactly like one continuous stream.
+- The encoder rounds to 16 bits, then tries every predictor and step for each block while
+  decoding as it goes (so errors do not build up) and keeps the pair with the least squared
+  error. The predictor table comes from k-means over per-block least-squares
+  second-order predictors of music, speech and sound effects.
+- The predictor table and byte layout are in
+  [PRAXI.md](../spec/PRAXI.md#adpcm-payload).
+
+Signal-to-noise ratio against the 16-bit source, measured on local test sounds converted
+to 48 kHz stereo, next to ffmpeg's IMA (`adpcm_ima_wav`) and Microsoft (`adpcm_ms`) ADPCM
+at about 4 bits per sample:
+
+| Source | `adpcm` | IMA ADPCM | MS ADPCM |
+|---|---|---|---|
+| Piano rag (60 s) | 52.3 dB | 40.7 dB | 39.8 dB |
+| Pop song (17 s) | 49.0 dB | 33.6 dB | 32.7 dB |
+| Speech (1.4 s) | 44.8 dB | 32.5 dB | 31.9 dB |
+| Synth effect (3 s) | 53.5 dB | 42.8 dB | 45.0 dB |
+| Noisy footsteps (2.5 s) | 33.4 dB | 27.2 dB | 26.4 dB |
+
+Noise-like sounds compress worst, as with any predictive codec; keep them in `s16` when
+the noise floor matters. Perceptual codecs (Opus, Vorbis) are smaller at equal quality but
+cost far more to decode and have no pure-Rust encoder fit for praxi.
 
 ## Model
 
@@ -30,7 +71,7 @@ become a use case.
     Channels are interleaved in increasing bit order, which is also ffmpeg's order. A mask
     of `0` means the layout is unspecified (for example ambisonics) and channels are used
     in stored order.
-  - **sample format**: `s16` or `f32`.
+  - **sample format**: `s16`, `f32` or `adpcm`.
   - **preload**: how far ahead of its time an audio chunk is stored in the file (default
     250 ms). See [Interleaving](#interleaving).
 - Audio time stamps count sample frames: the time base is `1 / sample_rate`, and a chunk's
@@ -168,7 +209,8 @@ let config = EncoderConfig::new(1920, 1080, 60, 1)
   reader (what `ffmpeg -f f32le` writes). The encoder pulls samples from readers as it needs
   them, so long tracks never sit in memory.
 - `.format(SampleFormat::F32)` stores floats; the default `S16` rounds and clamps to
-  `[-1, 1]`.
+  `[-1, 1]`; `Adpcm` rounds and clamps the same way, then encodes
+  ([ADPCM](#adpcm)).
 - `.channel_mask(mask)`: speaker bits, `0` (default) for unspecified. The mask must have
   `channels` bits set when non-zero.
 - `.group(g)`: tracks with the same name are put in the same group automatically, so they
@@ -191,7 +233,7 @@ praxi encode input.mp4 -o intro.praxi --no-audio
 | `--no-audio` | | Leave audio out. |
 | `--audio-layout <L>` (repeatable) | source layout | Adds a variant downmixed (or upmixed) by ffmpeg to an ffmpeg layout name: `mono`, `stereo`, `2.1`, `3.0`, `quad`, `5.0`, `5.1`, `6.1`, `7.1`, ... |
 | `--audio-rate <HZ>` | source rate | Resample to this rate. |
-| `--audio-format <F>` | `s16` | `s16` or `f32`. |
+| `--audio-format <F>` | `s16` | `s16`, `f32` or `adpcm`. |
 | `--audio-name <NAME>` | `main` | Track name. |
 
 The CLI takes the first audio stream of the input (`ffprobe -select_streams a:0`). Each

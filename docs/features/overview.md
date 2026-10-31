@@ -22,7 +22,7 @@ upload: no YUV conversion and no per-pixel CPU work. Frames stay compressed in V
 - **Multi-stream playback.** Several players, and several tracks in one file, can play at
   the same time.
 - **Engine agnostic.** The player hands out raw block data; uploading it is the engine's job.
-- **Multi-channel audio.** Any number of PCM audio tracks in any channel layout, with
+- **Multi-channel audio.** Any number of PCM or ADPCM audio tracks in any channel layout, with
   layout variants, handed to the engine's mixer from any thread and kept in sync with the
   video (see [audio.md](audio.md)).
 
@@ -78,7 +78,7 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
    Done: GPU viewer with screenshots ([viewer.md](viewer.md)), `praxi bench` with a CI
    baseline check ([benchmarks.md](benchmarks.md)).
 3. **M2** Multi-channel audio streams and A/V sync. Done: PCM tracks with layout variants,
-   game-clock sync and an audio-master clock ([audio.md](audio.md)). Open: compressed audio.
+   game-clock sync, an audio-master clock and ADPCM ([audio.md](audio.md)).
 4. **M3** Better compression: motion copy, zstd, codebook frame types. Done: byte planes
    with per-plane LZ4 or Huffman, XOR residuals in delta frames
    ([video-codec.md](video-codec.md#compression)). Measured and set aside: zstd, block
