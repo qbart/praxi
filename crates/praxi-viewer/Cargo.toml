@@ -1,0 +1,18 @@
+[package]
+name = "praxi-viewer"
+description = "GPU viewer for praxi files"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["audio"]
+audio = ["dep:cpal"]
+
+[dependencies]
+praxi.workspace = true
+clap.workspace = true
+wgpu = "30"
+winit = "0.30"
+pollster = "0.4"
+png = "0.18"
+cpal = { version = "0.18", optional = true }
