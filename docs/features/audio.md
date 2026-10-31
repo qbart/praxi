@@ -116,7 +116,7 @@ Planned: an audio-master mode where the clock follows the samples read from one 
 | `play()` | Reads start returning samples. |
 | `pause()` | Reads return 0; queued samples are kept and continue on resume. |
 | `seek(t)` | Queues are cleared and refilled from `t`: each track decodes from the last chunk starting at or before `t`, dropping frames before `t`. |
-| Looping | Seamless: the start of the file follows the end in the same queue. If the audio is shorter than `duration`, silence fills the gap; if longer, the excess is cut. |
+| Looping | Seamless: the start of the file follows the end in the same queue. Within `preload` of the end, the player already queues the next pass's first chunks (those due by then in the next pass's timeline), so reads ahead of the clock do not run dry at the loop point. If the audio is shorter than `duration`, silence fills the gap; if longer, the excess is cut. |
 | Finished | Reads return 0 and queues are cleared. |
 
 ## Encoder
