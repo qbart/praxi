@@ -22,12 +22,15 @@ praxi info intro.praxi
 | `--skip-threshold <T>` | `3` | Temporal skip threshold, see [video-codec.md](video-codec.md) |
 | `--cue <SPEC>` (repeatable) | | Cue `TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]`, times in seconds, string values ([cues.md](cues.md)) |
 | `--frames <N>` | all | Encode only the first `N` frames |
+| `--no-audio`, `--audio-layout`, `--audio-rate`, `--audio-format`, `--audio-name` | | Audio options, see [audio.md](audio.md#cli) |
 
 The CLI runs `ffprobe` for width, height and frame rate, and `ffmpeg` to decode frames as
 raw RGBA (`-f rawvideo -pix_fmt rgba`), so alpha is kept when the source has it. Both must be
-on `PATH`. All variants become streams of group 0.
+on `PATH`. All variants become streams of group 0. The first audio stream of the input is
+encoded too, through a separate `ffmpeg` process per audio variant.
 
-It prints per-variant statistics: bytes, MB/s, skipped blocks, keyframes.
+It prints per-variant statistics: bytes, MB/s, skipped blocks, keyframes, and bytes and
+MB/s per audio stream.
 
 `praxi info <FILE>` prints the header and stream table; `--chunks` also lists every chunk.
 
@@ -51,15 +54,19 @@ for frame in frames {
 let (_file, stats) = encoder.finish()?;
 ```
 
-Frames are encoded on all CPU cores (`std::thread::available_parallelism`).
+Frames are encoded on all CPU cores (`std::thread::available_parallelism`). Audio tracks
+are added with `EncoderConfig::audio` ([audio.md](audio.md#encoder)).
 
 ## Output
 
 - One video stream per variant, group 0, time base `fps_den / fps_num`, frame `n` at pts `n`.
+- One audio stream per audio track config, time base `1 / sample_rate`, chunks of
+  `audio_chunk` frames from pts 0, in groups by name ([audio.md](audio.md#encoder)).
 - One cue stream per non-empty cue stream config, time base 1/1000000 (microseconds).
   `cue()` adds to the stream named `cues`. Cues are sorted by time; cues
   with equal times keep their order.
-- Chunks are written in time order: the cues due at or before a frame come first, then
-  the frame's chunks in variant order. Cues after the last frame are written at the end.
+- Chunks are written in decode-time order: the cues and audio chunks due at or before a
+  frame come first (cues first on ties), then the frame's chunks in variant order. What is
+  due after the last frame is written at the end.
 - Header duration is `frame_count * fps_den / fps_num` seconds, raised to the latest cue
-  end if a cue ends beyond it.
+  end or audio end beyond it.

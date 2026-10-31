@@ -20,7 +20,9 @@ upload: no YUV conversion and no per-pixel CPU work. Frames stay compressed in V
 - **Multi-stream playback.** Several players, and several tracks in one file, can play at
   the same time.
 - **Engine agnostic.** The player hands out raw block data; uploading it is the engine's job.
-- **Multi-channel audio.** Planned (milestone M2), see [Milestones](#milestones).
+- **Multi-channel audio.** Any number of PCM audio tracks in any channel layout, with
+  layout variants, handed to the engine's mixer from any thread and kept in sync with the
+  video (see [audio.md](audio.md)).
 
 ## Non-goals
 
