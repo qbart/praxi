@@ -16,6 +16,17 @@ make build
 ./target/release/praxi frame intro.praxi --at 2.5 -o frame.png
 ```
 
+Edit cues after encoding, without re-encoding video ([cue-editing.md](docs/features/cue-editing.md)):
+
+```sh
+./target/release/praxi cues export intro.praxi -o intro.cues.json
+./target/release/praxi cues srt subtitles.en.srt --field lang=en -o subs.en.json
+./target/release/praxi cues import intro.praxi intro.cues.json subs.en.json -o intro.praxi
+```
+
+Use `--audio-format adpcm` for audio 3.6 times smaller than 16-bit PCM
+([audio.md](docs/features/audio.md#adpcm)).
+
 Watch a file on the GPU (Space pauses, arrows seek, L loops, M mutes, Q quits):
 
 ```sh
