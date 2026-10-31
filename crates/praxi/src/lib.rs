@@ -20,6 +20,21 @@ pub use praxi_format::{self as format, AudioParams, SampleFormat, TextureFormat,
 /// Default for [`Player::set_audio_sync_tolerance`].
 pub const DEFAULT_AUDIO_SYNC_TOLERANCE: Duration = Duration::from_millis(60);
 
+/// Time over which `Clock::Audio` corrects the clock toward the heard position, in
+/// microseconds: each `advance(dt)` removes `dt / 500 ms` of the error.
+const AUDIO_CLOCK_SMOOTHING_US: u64 = 500_000;
+
+/// What drives the player clock (`docs/features/audio.md#audio-master-clock`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Clock {
+    /// The clock advances by the `dt` given to `advance`; audio follows it.
+    #[default]
+    Game,
+    /// `advance(dt)` steers the clock toward what audio track `track` has played: its read
+    /// position minus the engine's output `latency`.
+    Audio { track: usize, latency: Duration },
+}
+
 #[derive(Debug)]
 pub enum Error {
     Format(praxi_format::Error),
@@ -280,6 +295,7 @@ pub struct Player<R: Read + Seek> {
     active_cues: Vec<ActiveCue>,
     index: Vec<IndexEntry>,
     clock_us: u64,
+    clock: Clock,
     duration_us: u64,
     state: State,
     looping: bool,
@@ -371,6 +387,7 @@ impl<R: Read + Seek> Player<R> {
             active_cues: Vec::new(),
             index,
             clock_us: 0,
+            clock: Clock::Game,
             duration_us,
             state: State::Stopped,
             looping: false,
@@ -488,12 +505,22 @@ impl<R: Read + Seek> Player<R> {
         Duration::from_micros(self.duration_us)
     }
 
-    /// Moves the clock forward by `dt` when playing and decodes every chunk that became due.
+    /// Sets what drives the clock; takes effect at the next `advance`.
+    pub fn set_clock(&mut self, clock: Clock) {
+        self.clock = clock;
+    }
+
+    pub fn clock(&self) -> Clock {
+        self.clock
+    }
+
+    /// Moves the clock forward by `dt` when playing (steered toward the master audio track
+    /// with [`Clock::Audio`]) and decodes every chunk that became due.
     pub fn advance(&mut self, dt: Duration) -> Result<()> {
         if self.state != State::Playing {
             return Ok(());
         }
-        self.clock_us = self.clock_us.saturating_add(dt.as_micros().min(u64::MAX as u128) as u64);
+        self.clock_us = self.next_clock(dt.as_micros().min(u64::MAX as u128) as u64);
         loop {
             self.process_due(true)?;
             if !(self.at_end && self.clock_us >= self.duration_us) {
@@ -697,6 +724,32 @@ impl<R: Read + Seek> Player<R> {
         }
         a.output.lock().push(at, &self.payload, p.format);
         Ok(())
+    }
+
+    /// The clock after `advance(dt)`, before chunks are processed.
+    fn next_clock(&self, dt_us: u64) -> u64 {
+        let predicted = self.clock_us.saturating_add(dt_us);
+        let Clock::Audio { track, latency } = self.clock else {
+            return predicted;
+        };
+        let Some(a) = self.audio.get(track).filter(|a| a.enabled) else {
+            return predicted;
+        };
+        // Output frames, in i128 so the subtractions cannot overflow.
+        let rate = a.info.params.sample_rate as i128;
+        let latency_frames = latency.as_micros() as i128 * rate / 1_000_000;
+        let heard = a.output.lock().read_position() as i128 - latency_frames;
+        let err_us = (heard - (a.base_frame + a.frames(predicted)) as i128) * 1_000_000 / rate;
+        let tolerance = self.audio_tolerance_us as i128;
+        let next = if err_us > tolerance {
+            predicted as i128 + err_us
+        } else if err_us < -tolerance {
+            predicted as i128
+        } else {
+            let weight = dt_us.min(AUDIO_CLOCK_SMOOTHING_US) as i128;
+            predicted as i128 + err_us * weight / AUDIO_CLOCK_SMOOTHING_US as i128
+        };
+        next.clamp(self.clock_us as i128, u64::MAX as i128) as u64
     }
 
     /// Hands the clock and transport state to the audio outputs.

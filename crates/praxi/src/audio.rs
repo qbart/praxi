@@ -36,6 +36,8 @@ pub(crate) struct Queue {
     preload_us: u64,
     /// Output frame of the first queued sample.
     start: u64,
+    /// Output frame after the last one returned by `read` (or skipped by it).
+    read_pos: u64,
     /// Whether reads return samples: the player is playing and the track is enabled.
     pub(crate) open: bool,
     /// Player clock in output frames.
@@ -55,6 +57,7 @@ impl AudioOutput {
             sample_rate: params.sample_rate,
             preload_us: params.preload_us as u64,
             start: 0,
+            read_pos: 0,
             open: false,
             clock: 0,
             tolerance: 0,
@@ -109,6 +112,7 @@ impl AudioOutput {
             *o = s;
         }
         q.start += (n / ch) as u64;
+        q.read_pos = q.start;
         n
     }
 }
@@ -129,6 +133,11 @@ impl Queue {
         self.keep = us_to_frames(self.preload_us + tolerance_us + QUEUE_SLACK_US, self.sample_rate);
     }
 
+    /// Output frame after the last frame read (the master position of `Clock::Audio`).
+    pub(crate) fn read_position(&self) -> u64 {
+        self.read_pos
+    }
+
     /// Output frame after the last queued sample.
     fn end(&self) -> u64 {
         self.start + (self.samples.len() / self.channels) as u64
@@ -138,6 +147,7 @@ impl Queue {
     pub(crate) fn reset(&mut self, at: u64) {
         self.samples.clear();
         self.start = at;
+        self.read_pos = at;
     }
 
     /// Drops `frames` frames from the front, moving the read position even past the end.
