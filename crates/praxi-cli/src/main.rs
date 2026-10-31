@@ -11,6 +11,7 @@ use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::Instant;
 
 mod bench;
+mod cues;
 
 #[derive(Parser)]
 #[command(name = "praxi", version, about = "praxi video codec for games")]
@@ -27,6 +28,11 @@ enum Cmd {
     Frame(FrameArgs),
     /// Measure size, quality and decode time of an encode (docs/features/benchmarks.md).
     Bench(bench::BenchArgs),
+    /// Edit cues through cue sheets (docs/features/cue-editing.md).
+    Cues {
+        #[command(subcommand)]
+        command: cues::CuesCmd,
+    },
     /// Print the header and stream table of a .praxi file.
     Info {
         file: PathBuf,
@@ -198,6 +204,7 @@ fn main() -> ExitCode {
         Cmd::Encode(args) => encode(args),
         Cmd::Frame(args) => frame(args),
         Cmd::Bench(args) => bench::bench(args),
+        Cmd::Cues { command } => cues::run(command),
         Cmd::Info { file, chunks } => info(&file, chunks),
     };
     match result {

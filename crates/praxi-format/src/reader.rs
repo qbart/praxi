@@ -163,6 +163,15 @@ impl<R: Read + Seek> Reader<R> {
         Ok(())
     }
 
+    /// Reads the stored (possibly compressed) bytes of `chunk` into `out`, for copying the
+    /// chunk with [`crate::Writer::copy_chunk`].
+    pub fn read_stored(&mut self, chunk: &ChunkHeader, out: &mut Vec<u8>) -> Result<()> {
+        self.inner.seek(SeekFrom::Start(chunk.offset + CHUNK_HEADER_SIZE))?;
+        out.resize(chunk.stored_size as usize, 0);
+        self.inner.read_exact(out)?;
+        Ok(())
+    }
+
     /// Reads the index.
     pub fn read_index(&mut self) -> Result<Vec<IndexEntry>> {
         let count = self.header.index_count as usize;

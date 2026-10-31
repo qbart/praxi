@@ -1,5 +1,5 @@
 use crate::{
-    AUDIO_NAME_SIZE, CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, Compression, Cue,
+    AUDIO_NAME_SIZE, CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, ChunkHeader, Compression, Cue,
     Error, HEADER_SIZE, IndexEntry, MAGIC, Result, STREAM_ENTRY_SIZE, StreamInfo, StreamParams,
     VERSION_MAJOR, VERSION_MINOR, planes::encode_sections, to_planes,
 };
@@ -163,24 +163,11 @@ impl<W: Write + Seek> Writer<W> {
         payload: &[u8],
         compression: Option<Compression>,
     ) -> Result<()> {
-        let Some(info) = self.streams.get(stream as usize) else {
-            return Err(Error::Invalid(format!("unknown stream {stream}")));
-        };
-        let is_cue = matches!(info.params, StreamParams::Cues(_));
-        let is_audio = matches!(info.params, StreamParams::Audio(_));
-        let is_video = matches!(info.params, StreamParams::Video(_));
-        if let Some(last) = self.last_pts[stream as usize]
-            && (pts < last || (pts == last && !is_cue))
-        {
-            return Err(Error::Invalid(format!("stream {stream}: pts {pts} after {last} breaks stream order")));
-        }
-        let time_us = info.decode_time_us(pts);
-        if time_us < self.last_time_us {
-            return Err(Error::Invalid(format!("stream {stream}: chunk due at {time_us} us written out of order")));
-        }
+        let time_us = self.check_order(stream, pts)?;
         if payload.len() > u32::MAX as usize {
             return Err(Error::Invalid("payload too large".into()));
         }
+        let info = &self.streams[stream as usize];
 
         // (prefix, block bytes) when the payload can take the byte-plane form.
         let plane_layout = match &info.params {
@@ -228,24 +215,84 @@ impl<W: Write + Seek> Writer<W> {
                 best
             }
         };
-        let stored: &[u8] = match compression {
-            Compression::None => payload,
-            Compression::Lz4 => &self.scratch,
-            Compression::Planes => &self.planes_stored,
+        // Take the buffer out while `emit` borrows the writer; it goes back to be reused.
+        let buffer = match compression {
+            Compression::None => None,
+            Compression::Lz4 => Some(std::mem::take(&mut self.scratch)),
+            Compression::Planes => Some(std::mem::take(&mut self.planes_stored)),
         };
-
+        let stored = buffer.as_deref().unwrap_or(payload);
         let flags = if keyframe { CHUNK_FLAG_KEYFRAME } else { 0 };
+        let result = self.emit(stream, pts, time_us, flags, compression, stored, payload.len() as u32);
+        match (compression, buffer) {
+            (Compression::Lz4, Some(b)) => self.scratch = b,
+            (Compression::Planes, Some(b)) => self.planes_stored = b,
+            _ => {}
+        }
+        result
+    }
+
+    /// Copies a chunk of a video, audio or unknown stream in its stored form, as read by
+    /// [`crate::Reader::read_stored`] from a file with the same stream at `chunk.stream`.
+    /// Only the stream and decode-time order are checked; the payload is trusted.
+    pub fn copy_chunk(&mut self, chunk: &ChunkHeader, stored: &[u8]) -> Result<()> {
+        if let Some(StreamParams::Cues(_)) = self.streams.get(chunk.stream as usize).map(|s| &s.params) {
+            return Err(Error::Invalid(format!("stream {} is a cue stream, use write_cue", chunk.stream)));
+        }
+        if stored.len() != chunk.stored_size as usize {
+            return Err(Error::Invalid(format!("{} stored bytes for a chunk of {}", stored.len(), chunk.stored_size)));
+        }
+        let time_us = self.check_order(chunk.stream, chunk.pts)?;
+        self.emit(chunk.stream, chunk.pts, time_us, chunk.flags, chunk.compression, stored, chunk.raw_size)
+    }
+
+    /// Checks that a chunk of `stream` at `pts` may come next; returns its decode time.
+    fn check_order(&self, stream: u16, pts: u64) -> Result<u64> {
+        let Some(info) = self.streams.get(stream as usize) else {
+            return Err(Error::Invalid(format!("unknown stream {stream}")));
+        };
+        let is_cue = matches!(info.params, StreamParams::Cues(_));
+        if let Some(last) = self.last_pts[stream as usize]
+            && (pts < last || (pts == last && !is_cue))
+        {
+            return Err(Error::Invalid(format!("stream {stream}: pts {pts} after {last} breaks stream order")));
+        }
+        let time_us = info.decode_time_us(pts);
+        if time_us < self.last_time_us {
+            return Err(Error::Invalid(format!("stream {stream}: chunk due at {time_us} us written out of order")));
+        }
+        Ok(time_us)
+    }
+
+    /// Writes a chunk header and its stored bytes and records the chunk.
+    #[allow(clippy::too_many_arguments)]
+    fn emit(
+        &mut self,
+        stream: u16,
+        pts: u64,
+        time_us: u64,
+        flags: u8,
+        compression: Compression,
+        stored: &[u8],
+        raw_size: u32,
+    ) -> Result<()> {
         let mut h = [0u8; CHUNK_HEADER_SIZE as usize];
         h[0..2].copy_from_slice(&stream.to_le_bytes());
         h[2] = flags;
         h[3] = compression.id();
         h[4..8].copy_from_slice(&(stored.len() as u32).to_le_bytes());
-        h[8..12].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        h[8..12].copy_from_slice(&raw_size.to_le_bytes());
         h[16..24].copy_from_slice(&pts.to_le_bytes());
         self.inner.write_all(&h)?;
         self.inner.write_all(stored)?;
 
-        if is_cue || is_audio || (keyframe && is_video) {
+        let keyframe = flags & CHUNK_FLAG_KEYFRAME != 0;
+        let indexed = match self.streams[stream as usize].params {
+            StreamParams::Video(_) => keyframe,
+            StreamParams::Audio(_) | StreamParams::Cues(_) => true,
+            StreamParams::Unknown(_) => false,
+        };
+        if indexed {
             self.index.push(IndexEntry { stream, pts, offset: self.offset });
         }
         self.offset += CHUNK_HEADER_SIZE + stored.len() as u64;

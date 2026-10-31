@@ -5,11 +5,13 @@ mod cue;
 mod huffman;
 mod planes;
 mod reader;
+mod remux;
 mod writer;
 
 pub use cue::{Cue, Value};
 pub use planes::{from_planes, to_planes};
 pub use reader::Reader;
+pub use remux::{CueTrack, TimedCue, read_cues, replace_cues};
 pub use writer::{DEFAULT_PLANE_MIN_SAVING, Writer};
 
 use std::fmt;
