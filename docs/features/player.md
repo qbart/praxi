@@ -79,7 +79,8 @@ Clock time starts at 0. A chunk with timestamp `pts` in a stream with time base 
 is due at `pts * num / den` seconds; audio chunks are due `preload` earlier
 ([audio.md](audio.md#interleaving)). The end of the file is `duration` from the header.
 When a loop wraps, the remaining `dt` carries over into the next pass, so long frames do not
-drift.
+drift. The clock counts whole microseconds; the sub-microsecond rest of each `dt` carries
+over to the next `advance`, so no game frame rate drifts and tiny steps add up.
 
 ## Errors
 
