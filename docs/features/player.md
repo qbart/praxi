@@ -10,7 +10,7 @@ allocate per frame after start-up.
 let caps = Capabilities::new([TextureFormat::Bc7, TextureFormat::Astc6x6]);
 let mut player = Player::open(File::open("intro.praxi")?, &caps)?;
 player.set_looping(false);
-player.play();
+player.play()?;
 
 // every game frame
 player.advance(dt)?;
@@ -35,7 +35,10 @@ for track in 0..player.tracks().len() {
 - `Player::open(reader, &caps)` reads the header and stream table and selects one variant
   per group ([texture-variants.md](texture-variants.md)). The reader needs `Read + Seek`.
 - `tracks()` lists the selected video streams, one per group, in group order.
-- `play()`, `pause()`, `is_playing()`, `is_finished()`.
+- `play()`: start or resume playback and decode every chunk due at the current clock, so
+  the first frame, the first audio and cues at that time are ready before the next
+  `advance`. Returns an error when decoding fails (the player is playing anyway).
+- `pause()`, `is_playing()`, `is_finished()`.
 - `set_looping(bool)`: on reaching the end, restart from the beginning instead of finishing.
 - `seek(time)`: jump to `time`. Decodes from the preceding keyframe of each track.
   Instantaneous cues at or before `time` are not emitted; cues active at `time` are
@@ -70,7 +73,8 @@ for track in 0..player.tracks().len() {
 | `Looped` | Looping playback reached the end and restarted. |
 | `Finished` | Non-looping playback reached the end. The last frame stays available. |
 
-Events are queued in the order they happen within one `advance` call. Cues and their
+Events are queued in the order they happen within one `advance` call; `play()` queues
+`Started` or `Resumed` before the cues of the chunks it decodes. Cues and their
 ordering rules are described in [cues.md](cues.md).
 
 ## Timing

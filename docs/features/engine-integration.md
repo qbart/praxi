@@ -50,7 +50,8 @@ The player is `Send`: it can live on the game thread or on a worker.
 - **Preroll**: open the next video while the current scene still runs, `seek` it to the
   start (this decodes the first frame) and upload its first frame. When the scene changes,
   call `play()`: the first frame is already on screen, and no frame shows black while
-  the file is opened.
+  the file is opened. Without preroll, `play()` itself decodes the first frame and the
+  first audio, so they are ready in the same game frame, but that frame pays the decode.
 - **Fades**: draw the video over the game scene with an opacity that ramps up, and back
   down after `Finished` (the last frame stays available). With alpha video, the game shows
   through where the video is transparent.

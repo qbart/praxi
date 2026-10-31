@@ -30,7 +30,7 @@ let caps = praxi::Capabilities::new([praxi::TextureFormat::Bc7]).max_audio_chann
 let mut player = praxi::Player::open(std::fs::File::open("intro.praxi")?, &caps)?;
 let audio = player.audio_output(0).unwrap(); // Send + Sync: read it from the audio callback
 // audio callback: let n = audio.read(buf); buf[n..].fill(0.0);
-player.play();
+player.play()?;
 // every game frame:
 player.advance(dt)?;
 while let Some(event) = player.poll_event() { /* Started, Cue, CueEnd, Finished, ... */ }

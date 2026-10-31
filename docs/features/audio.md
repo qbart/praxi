@@ -73,7 +73,7 @@ engine_mixer.add_stream(music.sample_rate(), music.channels(), move |buf: &mut [
     let n = music.read(buf);
     buf[n..].fill(0.0);
 });
-player.play();
+player.play()?;
 // game loop: player.advance(dt)?;
 ```
 
@@ -148,7 +148,7 @@ player.set_clock(Clock::Audio { track: 0, latency: Duration::from_millis(20) });
 
 | Action | Audio outputs |
 |---|---|
-| `play()` | Reads start returning samples. |
+| `play()` | Reads start returning samples; the chunks due at the clock are queued at once. |
 | `pause()` | Reads return 0; queued samples are kept and continue on resume. |
 | `seek(t)` | Queues are cleared and refilled from `t`: each track decodes from the last chunk starting at or before `t`, dropping frames before `t`. |
 | Looping | Seamless: the start of the file follows the end in the same queue. Within `preload` of the end, the player already queues the next pass's first chunks (those due by then in the next pass's timeline), so reads ahead of the clock do not run dry at the loop point. If the audio is shorter than `duration`, silence fills the gap; if longer, the excess is cut. |
