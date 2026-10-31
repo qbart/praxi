@@ -35,7 +35,10 @@ The player is `Send`: it can live on the game thread or on a worker.
 
 - **Game thread** (simplest): call `advance` in the frame loop. Decoding a 1080p frame
   costs 0.6-1.5 ms depending on variant and encoder settings
-  ([video-codec.md](video-codec.md#decode-cost-and-writer-policy)).
+  ([video-codec.md](video-codec.md#decode-cost-and-writer-policy)), measured back to back.
+  On a core that sleeps between frames, power management makes it slower: `game_loop` on
+  the BC7 sample takes 2.5 ms per `advance` when it sleeps until the next 60 Hz frame and
+  1.5-1.7 ms when it busy-waits instead.
 - **Worker thread**: the worker owns the player, advances it on its own clock (or the game
   clock sent over a channel) and passes decoded frames back in recycled buffers. The game
   thread only uploads. The `decode_thread` example shows this.

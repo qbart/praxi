@@ -250,3 +250,20 @@ fn cue_streams_can_be_disabled() {
     p.advance(300 * MS).unwrap();
     assert_eq!(log.take(&mut p), ["cue a@150", "cue b@420"]);
 }
+
+#[test]
+fn sub_microsecond_steps_add_up() {
+    let mut p = open(&[TextureFormat::Bc1]);
+    p.play();
+    // 144 Hz: 6944.44 us per frame; truncating each step would lose 0.44 us a frame.
+    let frame = Duration::from_nanos(6_944_444);
+    for _ in 0..36 {
+        p.advance(frame).unwrap();
+    }
+    assert_eq!(p.position(), Duration::from_micros(249_999), "36 frames of 6944.444 us");
+    // Steps below a microsecond still move the clock.
+    for _ in 0..2000 {
+        p.advance(Duration::from_nanos(500)).unwrap();
+    }
+    assert_eq!(p.position(), Duration::from_micros(250_999));
+}
