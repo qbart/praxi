@@ -16,6 +16,13 @@ make build
 ./target/release/praxi frame intro.praxi --at 2.5 -o frame.png
 ```
 
+Watch a file on the GPU (Space pauses, arrows seek, L loops, M mutes, Q quits):
+
+```sh
+./target/release/praxi-viewer intro.praxi
+./target/release/praxi-viewer intro.praxi --screenshot frame.png --at 2.5
+```
+
 Playback from Rust:
 
 ```rust

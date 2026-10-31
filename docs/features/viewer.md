@@ -105,5 +105,7 @@ spent in `advance` and in uploads, per presented frame.
   track 0's size) and written as an 8-bit RGBA PNG.
 - There is no checkerboard: track 0 is written as-is, alpha included, and later tracks
   are blended over it (color `src_alpha, 1 - src_alpha`, alpha `1, 1 - src_alpha`).
+- Outside the video rectangle (when `--size` has another aspect ratio) pixels are
+  transparent black.
 - At the video size, the PNG matches `praxi frame` up to differences between the GPU's
   and the CPU's block decoders.

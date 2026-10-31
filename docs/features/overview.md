@@ -66,7 +66,8 @@ LZ4 decompression took 0.05-0.5 ms per frame. PSNR is per frame before temporal 
 ## Milestones
 
 1. **M0** Container format, encoder (BC7, ASTC), player with events. Specs in this folder.
-2. **M1** Frame viewer (wgpu) for visual checks ([viewer.md](viewer.md)); size, PSNR and decode-time benchmarks in CI.
+2. **M1** Frame viewer (wgpu) for visual checks; size, PSNR and decode-time benchmarks in CI.
+   Done: GPU viewer with screenshots ([viewer.md](viewer.md)). Open: benchmarks in CI.
 3. **M2** Multi-channel audio streams and A/V sync. Done: PCM tracks with layout variants,
    game-clock sync ([audio.md](audio.md)). Open: audio-master clock, compressed audio.
 4. **M3** Better compression: motion copy, zstd, codebook frame types.
