@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "input": "big_buck_bunny_1080_10s.mp4",
+  "width": 1920,
+  "height": 1080,
+  "fps_num": 60,
+  "fps_den": 1,
+  "frames": 180,
+  "settings": {
+    "quality": "fast",
+    "rdo": 0.0,
+    "keyint": 60,
+    "skip_threshold": 3
+  },
+  "encode_seconds": 26.751679513,
+  "variants": [
+    {
+      "format": "bc7",
+      "bytes": 263194248,
+      "mb_per_s": 87.73141600000001,
+      "skipped_pct": 30.254809670781892,
+      "keyframes": 3,
+      "psnr_db": 41.00435421197286,
+      "psnr_min_db": 40.08761577212432,
+      "decode_ms": {
+        "mean": 0.25555504999999995,
+        "p95": 0.39180600000000004,
+        "max": 0.629123
+      }
+    },
+    {
+      "format": "astc6x6",
+      "bytes": 130927936,
+      "mb_per_s": 43.64264533333333,
+      "skipped_pct": 21.845331790123456,
+      "keyframes": 3,
+      "psnr_db": 37.36588253233501,
+      "psnr_min_db": 36.30551756178456,
+      "decode_ms": {
+        "mean": 0.10522096111111111,
+        "p95": 0.11208,
+        "max": 0.140574
+      }
+    },
+    {
+      "format": "astc8x8",
+      "bytes": 77003973,
+      "mb_per_s": 25.667991,
+      "skipped_pct": 18.173336762688614,
+      "keyframes": 3,
+      "psnr_db": 33.969052960377255,
+      "psnr_min_db": 33.2010323435738,
+      "decode_ms": {
+        "mean": 0.08362151111111112,
+        "p95": 0.118743,
+        "max": 0.188845
+      }
+    }
+  ]
+}
