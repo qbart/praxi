@@ -95,7 +95,7 @@ fn rejects_bad_magic_and_version() {
 
     let mut file = sample_file();
     file[8] = 1;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 4 })));
+    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 5 })));
 
     let mut file = sample_file();
     file[10] = 1;
@@ -238,4 +238,79 @@ fn rejects_bad_audio_streams() {
     let mut file = w.finish(2_000).unwrap().into_inner();
     file[48 + 22] = 9;
     assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::Corrupt(_))));
+}
+
+/// BC7 blocks whose byte 0 is the same everywhere and whose other bytes are noise, like
+/// real encoder output.
+fn structured_blocks(n: usize, seed: u32) -> Vec<u8> {
+    let mut x = seed.wrapping_mul(2654435761) | 1;
+    let mut out = Vec::new();
+    for _ in 0..n {
+        out.extend_from_slice(&[0x40]);
+        for _ in 1..16 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            out.push(x as u8);
+        }
+    }
+    out
+}
+
+fn chunk_offsets(file: &[u8]) -> Vec<praxi_format::ChunkHeader> {
+    let mut r = Reader::new(Cursor::new(file.to_vec())).unwrap();
+    let mut chunks = Vec::new();
+    while let Some(c) = r.next_chunk().unwrap() {
+        chunks.push(c);
+    }
+    chunks
+}
+
+#[test]
+fn byte_planes() {
+    // 64x32 BC7: 16x8 = 128 blocks, mask of 16 bytes.
+    let params = VideoParams { width: 64, height: 32, format: TextureFormat::Bc7, color_flags: COLOR_FLAG_SRGB };
+    let streams = vec![StreamInfo::video(0, TimeBase::new(1, 30), params), StreamInfo::cues("c")];
+    let key = structured_blocks(128, 1);
+    let mut delta = vec![0u8; 16];
+    delta[0] = 0b1000_0101;
+    delta[15] = 0x80;
+    delta.extend(structured_blocks(4, 2));
+    let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
+    w.write_cue(1, 0, &Cue::new("start")).unwrap();
+    w.write_chunk(0, 0, true, &key, None).unwrap();
+    w.write_chunk(0, 1, false, &delta, Some(Compression::Lz4Planes)).unwrap();
+    let err = w.write_chunk(0, 2, false, &delta[..30], Some(Compression::Lz4Planes));
+    assert!(matches!(err, Err(Error::Invalid(_))), "not whole blocks after the mask: {err:?}");
+    let file = w.finish(100_000).unwrap().into_inner();
+
+    let mut r = Reader::new(Cursor::new(file.clone())).unwrap();
+    let mut payload = Vec::new();
+    r.next_chunk().unwrap().unwrap();
+    let c = r.next_chunk().unwrap().unwrap();
+    assert_eq!(c.compression, Compression::Lz4Planes, "auto picks byte planes for structured blocks");
+    assert!(c.stored_size < c.raw_size);
+    r.read_payload(&c, &mut payload).unwrap();
+    assert_eq!(payload, key);
+    let c = r.next_chunk().unwrap().unwrap();
+    assert_eq!(c.compression, Compression::Lz4Planes, "forced");
+    r.read_payload(&c, &mut payload).unwrap();
+    assert_eq!(payload, delta, "the mask stays in front");
+
+    let chunks = chunk_offsets(&file);
+    // Byte planes in a cue stream.
+    let mut bad = file.clone();
+    bad[chunks[0].offset as usize + 3] = 2;
+    assert!(matches!(chunk_offsets_result(&bad), Err(Error::Corrupt(_))));
+    // A raw size that is not the mask plus whole blocks.
+    let mut bad = file.clone();
+    let at = chunks[2].offset as usize + 8;
+    bad[at..at + 4].copy_from_slice(&(delta.len() as u32 + 1).to_le_bytes());
+    assert!(matches!(chunk_offsets_result(&bad), Err(Error::Corrupt(_))));
+}
+
+fn chunk_offsets_result(file: &[u8]) -> Result<(), Error> {
+    let mut r = Reader::new(Cursor::new(file.to_vec()))?;
+    while r.next_chunk()?.is_some() {}
+    Ok(())
 }
