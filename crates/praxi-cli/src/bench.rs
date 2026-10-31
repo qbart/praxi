@@ -97,6 +97,7 @@ impl Drop for Encoded {
 }
 
 pub fn bench(args: BenchArgs) -> AnyResult<()> {
+    let baseline = args.baseline.as_deref().map(read_results).transpose()?;
     let p = probe(&args.input)?;
     let frame_bytes = p.width as usize * p.height as usize * 4;
     let encoded = Encoded {
@@ -217,11 +218,8 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
     };
     print_results(&results);
 
-    let regressions = match &args.baseline {
-        Some(path) => {
-            let baseline = read_results(path)?;
-            compare(&baseline, &results, args.max_size_increase, args.max_psnr_drop)?
-        }
+    let regressions = match &baseline {
+        Some(baseline) => compare(baseline, &results, args.max_size_increase, args.max_psnr_drop)?,
         None => Vec::new(),
     };
     if let Some(path) = &args.json {
