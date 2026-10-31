@@ -8,7 +8,7 @@ const TABLE_SIZE: usize = 1 << MAX_LEN;
 const STREAMS: usize = 4;
 /// Code lengths and the sizes of streams 0 to 2.
 const HEADER_SIZE: usize = 128 + 12;
-/// Symbols decoded per refill: a refill leaves at least 56 bits, 5 codes use at most 55.
+/// Table lookups per refill: a refill leaves at least 56 bits, 5 lookups use at most 55.
 const PER_REFILL: usize = 5;
 
 /// Appends the Huffman section of `data` to `out`.
@@ -79,37 +79,32 @@ pub fn decode(src: &[u8], out: &mut [u8]) -> Result<(), &'static str> {
     }
     let mut readers = streams.map(BitReader::new);
 
-    // Interleaved loop while every stream has 8 readable bytes and every run 5 symbols left.
+    // Interleaved loop while every stream has 8 readable bytes and every run room for 5
+    // pairs. Run 3 is the shortest.
     let lim = streams.iter().map(|s| s.len()).min().unwrap_or(0).checked_sub(8);
-    let [r0, r1, r2, r3] = &mut readers;
-    let [o0, o1, o2, o3] = &mut parts;
-    let mut done = 0;
-    if let Some(lim) = lim {
-        let fast = o3.len() / PER_REFILL;
-        let groups = o0.as_chunks_mut::<PER_REFILL>().0.iter_mut()
-            .zip(o1.as_chunks_mut::<PER_REFILL>().0)
-            .zip(o2.as_chunks_mut::<PER_REFILL>().0)
-            .zip(o3.as_chunks_mut::<PER_REFILL>().0)
-            .take(fast);
-        for (((c0, c1), c2), c3) in groups {
-            if r0.pos.max(r1.pos).max(r2.pos).max(r3.pos) > lim {
-                break;
-            }
+    let end = parts[STREAMS - 1].len().checked_sub(2 * PER_REFILL);
+    let mut written = [0; STREAMS];
+    if let (Some(lim), Some(end)) = (lim, end) {
+        let [o0, o1, o2, o3] = &mut parts;
+        // Local copies, so the reader state can stay in registers across output writes.
+        let [mut r0, mut r1, mut r2, mut r3] = readers;
+        let [mut w0, mut w1, mut w2, mut w3] = written;
+        while r0.pos.max(r1.pos).max(r2.pos).max(r3.pos) <= lim && w0.max(w1).max(w2).max(w3) <= end {
             r0.refill_fast();
             r1.refill_fast();
             r2.refill_fast();
             r3.refill_fast();
-            for i in 0..PER_REFILL {
-                c0[i] = r0.symbol(&table);
-                c1[i] = r1.symbol(&table);
-                c2[i] = r2.symbol(&table);
-                c3[i] = r3.symbol(&table);
+            for _ in 0..PER_REFILL {
+                w0 += r0.pair(&table, &mut o0[w0..w0 + 2]);
+                w1 += r1.pair(&table, &mut o1[w1..w1 + 2]);
+                w2 += r2.pair(&table, &mut o2[w2..w2 + 2]);
+                w3 += r3.pair(&table, &mut o3[w3..w3 + 2]);
             }
-            done += PER_REFILL;
         }
+        readers = [r0, r1, r2, r3];
+        written = [w0, w1, w2, w3];
     }
-    for (r, part) in readers.iter_mut().zip(parts) {
-        let start = done.min(part.len());
+    for ((r, part), start) in readers.iter_mut().zip(parts).zip(written) {
         for b in part[start..].iter_mut() {
             r.refill_slow();
             *b = r.symbol(&table);
@@ -121,6 +116,7 @@ pub fn decode(src: &[u8], out: &mut [u8]) -> Result<(), &'static str> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
 struct BitReader<'a> {
     src: &'a [u8],
     /// Bytes loaded into `acc` (past the end counts zero bytes).
@@ -155,13 +151,24 @@ impl<'a> BitReader<'a> {
         }
     }
 
+    /// Decodes one or two symbols into `out[0]` and `out[1]`; returns how many.
     #[inline(always)]
-    fn symbol(&mut self, table: &[u16; TABLE_SIZE]) -> u8 {
+    fn pair(&mut self, table: &Table, out: &mut [u8]) -> usize {
         let entry = table[(self.acc & (TABLE_SIZE as u64 - 1)) as usize];
-        let len = (entry & 15) as u32;
+        let len = entry >> 16 & 15;
         self.acc >>= len;
         self.bits -= len;
-        (entry >> 8) as u8
+        out.copy_from_slice(&(entry as u16).to_le_bytes());
+        (entry >> 24) as usize
+    }
+
+    #[inline(always)]
+    fn symbol(&mut self, table: &Table) -> u8 {
+        let entry = table[(self.acc & (TABLE_SIZE as u64 - 1)) as usize];
+        let len = entry >> 20 & 15;
+        self.acc >>= len;
+        self.bits -= len;
+        entry as u8
     }
 
     fn consumed_bits(&self) -> usize {
@@ -169,29 +176,48 @@ impl<'a> BitReader<'a> {
     }
 }
 
-/// Lookup table indexed by the next 11 stream bits: symbol << 8 | code length.
-fn decode_table(lens: &[u8; 256], empty: bool) -> Result<[u16; TABLE_SIZE], &'static str> {
+/// Decode table indexed by the next 11 stream bits. Each entry decodes the first code and,
+/// when it fits in the same 11 bits, the second: `symbol1 | symbol2 << 8 | bits << 16 |
+/// length1 << 20 | count << 24`.
+type Table = [u32; TABLE_SIZE];
+
+fn decode_table(lens: &[u8; 256], empty: bool) -> Result<Table, &'static str> {
     let used: Vec<u8> = (0..=255).filter(|&s| lens[s as usize] != 0).collect();
-    let mut table = [0u16; TABLE_SIZE];
+    // First the single-code table: symbol << 8 | length.
+    let mut single = [0u16; TABLE_SIZE];
     match used[..] {
-        [] if empty => return Ok(table),
+        [] if empty => return Ok([0; TABLE_SIZE]),
         [] => return Err("Huffman section without codes"),
-        [s] if lens[s as usize] == 1 => return Ok([(s as u16) << 8 | 1; TABLE_SIZE]),
-        _ => {}
-    }
-    if used.iter().any(|&s| lens[s as usize] as usize > MAX_LEN) {
-        return Err("Huffman code longer than 11 bits");
-    }
-    let kraft: usize = used.iter().map(|&s| TABLE_SIZE >> lens[s as usize]).sum();
-    if kraft != TABLE_SIZE {
-        return Err("Huffman code lengths do not form a complete code");
-    }
-    let codes = canonical_codes(lens);
-    for &s in &used {
-        let (code, len) = codes[s as usize];
-        for i in (code as usize..TABLE_SIZE).step_by(1 << len) {
-            table[i] = (s as u16) << 8 | len as u16;
+        [s] if lens[s as usize] == 1 => single = [(s as u16) << 8 | 1; TABLE_SIZE],
+        _ => {
+            if used.iter().any(|&s| lens[s as usize] as usize > MAX_LEN) {
+                return Err("Huffman code longer than 11 bits");
+            }
+            let kraft: usize = used.iter().map(|&s| TABLE_SIZE >> lens[s as usize]).sum();
+            if kraft != TABLE_SIZE {
+                return Err("Huffman code lengths do not form a complete code");
+            }
+            let codes = canonical_codes(lens);
+            for &s in &used {
+                let (code, len) = codes[s as usize];
+                for i in (code as usize..TABLE_SIZE).step_by(1 << len) {
+                    single[i] = (s as u16) << 8 | len as u16;
+                }
+            }
         }
+    }
+    // The bits after the first code index the single table again; its entry is valid when
+    // the second code fits in those bits.
+    let mut table = [0u32; TABLE_SIZE];
+    for (i, entry) in table.iter_mut().enumerate() {
+        let (first, len1) = ((single[i] >> 8) as u32, (single[i] & 15) as u32);
+        let next = single[i >> len1];
+        let (second, len2) = ((next >> 8) as u32, (next & 15) as u32);
+        *entry = if len1 + len2 <= MAX_LEN as u32 {
+            first | second << 8 | (len1 + len2) << 16 | len1 << 20 | 2 << 24
+        } else {
+            first | len1 << 16 | len1 << 20 | 1 << 24
+        };
     }
     Ok(table)
 }
