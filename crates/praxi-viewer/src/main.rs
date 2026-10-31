@@ -7,6 +7,8 @@ mod gpu;
 use clap::Parser;
 use gpu::{Rect, Renderer};
 use praxi::{Capabilities, Event, Player, TextureFormat, Value};
+#[cfg(feature = "audio")]
+use praxi::Clock;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -42,12 +44,21 @@ struct Args {
     /// Do not open an audio device.
     #[arg(long)]
     no_audio: bool,
+    /// Master clock: `audio` follows the audio output while audio plays, `game` the wall clock.
+    #[arg(long, value_enum, default_value_t = ClockArg::Audio)]
+    clock: ClockArg,
     /// Render the frame at --at to this PNG without a window and exit.
     #[arg(long)]
     screenshot: Option<PathBuf>,
     /// Screenshot size, WxH (default: track 0's size).
     #[arg(long, value_parser = parse_size)]
     size: Option<(u32, u32)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ClockArg {
+    Audio,
+    Game,
 }
 
 fn parse_format(s: &str) -> Result<TextureFormat, String> {
@@ -310,7 +321,10 @@ struct Viewer {
     name: String,
     muted: Arc<AtomicBool>,
     #[cfg(feature = "audio")]
-    _audio: Option<audio::Stream>,
+    audio: Option<audio::Stream>,
+    /// Whether audio track 0 drives the clock.
+    #[cfg(feature = "audio")]
+    audio_clock: bool,
     modifiers: ModifiersState,
     last: Instant,
     title_at: Instant,
@@ -366,6 +380,8 @@ impl Viewer {
         let muted = Arc::new(AtomicBool::new(false));
         #[cfg(feature = "audio")]
         let audio = device_audio.and_then(|device| start_audio(&device, &player, muted.clone()));
+        #[cfg(feature = "audio")]
+        let audio_clock = audio.is_some() && args.clock == ClockArg::Audio;
         if !args.paused {
             player.play();
         }
@@ -381,7 +397,9 @@ impl Viewer {
             name,
             muted,
             #[cfg(feature = "audio")]
-            _audio: audio,
+            audio,
+            #[cfg(feature = "audio")]
+            audio_clock,
             modifiers: ModifiersState::empty(),
             last: now,
             title_at: now,
@@ -436,6 +454,10 @@ impl Viewer {
         let now = Instant::now();
         let dt = now - self.last;
         self.last = now;
+        #[cfg(feature = "audio")]
+        if let Some(audio) = self.audio.as_ref().filter(|_| self.audio_clock) {
+            self.player.set_clock(Clock::Audio { track: 0, latency: audio.latency() });
+        }
         self.player.advance(dt)?;
         let advanced = Instant::now();
         self.drain_events();
