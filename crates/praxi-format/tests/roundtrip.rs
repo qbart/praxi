@@ -1,5 +1,5 @@
 use praxi_format::{
-    AudioParams, COLOR_FLAG_SRGB, Compression, Cue, CueParams, Error, Reader, SampleFormat,
+    AudioParams, COLOR_FLAG_SRGB, Compression, adpcm, Cue, CueParams, Error, Reader, SampleFormat,
     StreamInfo, StreamParams, TextureFormat, TimeBase, Value, VideoParams, Writer,
 };
 use std::io::Cursor;
@@ -95,7 +95,7 @@ fn rejects_bad_magic_and_version() {
 
     let mut file = sample_file();
     file[8] = 1;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 6 })));
+    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 7 })));
 
     let mut file = sample_file();
     file[10] = 1;
@@ -218,6 +218,39 @@ fn audio_roundtrip_and_decode_time_order() {
         order.push((c.stream, c.pts));
     }
     assert_eq!(order, [(1, 0), (1, 100), (1, 200), (0, 0), (1, 300), (0, 4), (1, 600)]);
+}
+
+#[test]
+fn adpcm_audio_chunks() {
+    let mut s = audio("music");
+    if let StreamParams::Audio(a) = &mut s.params {
+        a.format = SampleFormat::Adpcm;
+    }
+    let params = s.audio_params().unwrap().clone();
+    let mut w = Writer::new(Cursor::new(Vec::new()), vec![s]).unwrap();
+    let mut encoder = adpcm::Encoder::new(2);
+    let samples: Vec<i16> = (0..2 * 37).map(|i| (i * 300 - 9000) as i16).collect();
+    let mut payload = Vec::new();
+    encoder.encode(&samples, &mut payload);
+    assert_eq!(params.payload_frames(&payload), Some(37));
+    assert!(matches!(w.write_audio(0, 0, &payload[..payload.len() - 1]), Err(Error::Invalid(_))), "size");
+    w.write_audio(0, 0, &payload).unwrap();
+    assert!(matches!(w.write_audio(0, 36, &payload), Err(Error::Invalid(_))), "overlap: 37 frames");
+    w.write_audio(0, 37, &payload).unwrap();
+    let file = w.finish(74_000).unwrap().into_inner();
+
+    let mut r = Reader::new(Cursor::new(file)).unwrap();
+    let mut read = Vec::new();
+    let mut decoded = Vec::new();
+    while let Some(c) = r.next_chunk().unwrap() {
+        r.read_payload(&c, &mut read).unwrap();
+        assert_eq!(read, payload);
+        params.decode_payload(&read, &mut decoded).unwrap();
+        assert_eq!(decoded.len(), 2 * 37);
+    }
+    read[4] ^= 0xFF; // history only: still valid
+    params.decode_payload(&read, &mut decoded).unwrap();
+    assert!(params.decode_payload(&read[..20], &mut decoded).is_err());
 }
 
 #[test]
