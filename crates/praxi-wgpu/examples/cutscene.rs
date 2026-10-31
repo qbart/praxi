@@ -7,7 +7,7 @@
 //! ```
 //!
 //! Space starts the cutscene, Escape skips it (or quits during gameplay). `light.flash`
-//! cues flash the game scene in their `color` field. `--auto` starts at once and quits
+//! cues flash the screen in their `color` field. `--auto` starts at once and quits
 //! after the fade-out.
 
 use praxi::{Event, Player};
@@ -24,7 +24,8 @@ use winit::window::{Window, WindowId};
 
 const FADE: Duration = Duration::from_millis(500);
 
-/// The stand-in for gameplay: moving diagonal stripes, plus a flash color on top.
+/// The stand-in for gameplay (moving diagonal stripes) and a screen flash drawn over
+/// everything.
 const GAME_SHADER: &str = r#"
 struct Scene {
     time: f32,
@@ -43,9 +44,12 @@ fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let stripe = 0.5 + 0.5 * sin((pos.x + pos.y) * 0.02 - scene.time * 3.0);
-    let base = mix(vec3<f32>(0.05, 0.1, 0.2), vec3<f32>(0.1, 0.35, 0.3), stripe);
-    let flash = vec3<f32>(scene.flash_color, scene.flash_blue);
-    return vec4<f32>(mix(base, flash, scene.flash), 1.0);
+    return vec4<f32>(mix(vec3<f32>(0.05, 0.1, 0.2), vec3<f32>(0.1, 0.35, 0.3), stripe), 1.0);
+}
+
+@fragment
+fn fs_flash() -> @location(0) vec4<f32> {
+    return vec4<f32>(scene.flash_color, scene.flash_blue, scene.flash);
 }
 "#;
 
@@ -67,8 +71,10 @@ struct Game {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     scene_pipeline: wgpu::RenderPipeline,
+    flash_pipeline: wgpu::RenderPipeline,
     scene_uniform: wgpu::Buffer,
     scene_bind_group: wgpu::BindGroup,
+    flash_bind_group: wgpu::BindGroup,
     player: FilePlayer,
     video: VideoRenderer,
     phase: Phase,
@@ -119,33 +125,41 @@ impl Game {
             label: Some("scene"),
             source: wgpu::ShaderSource::Wgsl(GAME_SHADER.into()),
         });
-        let scene_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scene"),
-            layout: None,
-            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleStrip, ..Default::default() },
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(config.format.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = |fragment, blend| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(fragment),
+                layout: None,
+                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+                primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleStrip, ..Default::default() },
+                depth_stencil: None,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fragment),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format: config.format, blend, write_mask: wgpu::ColorWrites::ALL })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let scene_pipeline = pipeline("fs", None);
+        let flash_pipeline = pipeline("fs_flash", Some(wgpu::BlendState::ALPHA_BLENDING));
         let scene_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scene"),
             size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scene"),
-            layout: &scene_pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: scene_uniform.as_entire_binding() }],
-        });
+        // Each pipeline has its own derived layout, so each gets its own bind group.
+        let bind_group = |pipeline: &wgpu::RenderPipeline| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("scene"),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[wgpu::BindGroupEntry { binding: 0, resource: scene_uniform.as_entire_binding() }],
+            })
+        };
+        let (scene_bind_group, flash_bind_group) = (bind_group(&scene_pipeline), bind_group(&flash_pipeline));
 
         let now = Instant::now();
         let mut game = Game {
@@ -155,8 +169,10 @@ impl Game {
             queue,
             config,
             scene_pipeline,
+            flash_pipeline,
             scene_uniform,
             scene_bind_group,
+            flash_bind_group,
             player,
             video,
             phase: Phase::Gameplay,
@@ -259,13 +275,20 @@ impl Game {
                 })],
                 ..Default::default()
             });
-            // The game scene first, then the video blended over it.
+            // The game scene first, then the video blended over it, then the flash.
             pass.set_pipeline(&self.scene_pipeline);
             pass.set_bind_group(0, &self.scene_bind_group, &[]);
             pass.draw(0..4, 0..1);
             if opacity > 0.0 {
                 let video = self.player.tracks()[0].params;
                 self.video.draw(&mut pass, Rect::fit(video.width, video.height, self.config.width, self.config.height));
+            }
+            if flash.1 > 0.0 {
+                // `VideoRenderer::draw` set the viewport to the video rectangle.
+                pass.set_viewport(0.0, 0.0, self.config.width as f32, self.config.height as f32, 0.0, 1.0);
+                pass.set_pipeline(&self.flash_pipeline);
+                pass.set_bind_group(0, &self.flash_bind_group, &[]);
+                pass.draw(0..4, 0..1);
             }
         }
         self.queue.submit([encoder.finish()]);
