@@ -1,16 +1,30 @@
 # Video codec
 
 A praxi video frame is a grid of GPU texture blocks. Decoding never touches pixels: it
-decompresses LZ4 (when used) and copies blocks into the current frame buffer, which the
-engine uploads as a compressed texture.
+decompresses the chunk (LZ4 or Huffman, when used) and writes blocks into the current frame
+buffer, which the engine uploads as a compressed texture.
 
 ## Frame types
 
 - **Keyframe**: every block of the frame. Decodable on its own; seeking starts here.
-- **Delta frame**: a bitmask with one bit per block plus the blocks whose bit is set. Blocks
-  whose bit is clear keep their value from the previous frame of the same stream.
+- **Delta frame**: a bitmask with one bit per block plus a *residual* for every block whose
+  bit is set. Blocks whose bit is clear keep their value from the previous frame of the
+  same stream.
 
 The byte layout is in [PRAXI.md](../spec/PRAXI.md#video-payload).
+
+### Residuals
+
+A changed block is not stored as is: its residual is the new block XORed byte by byte with
+the block at the same position in the previous frame, and the decoder XORs the residual
+into its frame buffer. The encoder takes the previous block from what the decoder shows
+(after temporal skip), so both sides stay in step.
+
+A block that changes usually keeps its mode, partition and the high bits of its endpoints,
+so most residual bytes are zero or small. That does little for LZ4 but a lot for an entropy
+coder: in byte planes of BC7 output, the endpoint bytes drop from about 7.6 to 4.3-5.0 bits
+of order-0 entropy per byte, the index bytes from 7.5 to 6.7. XOR costs the same as the copy
+it replaces.
 
 ## Temporal skip
 
@@ -32,42 +46,65 @@ decodes from the preceding keyframe, so `keyint` bounds the seek cost.
 
 ## Compression
 
-Each chunk is stored in one of these forms (LZ4 is the block format of `lz4_flex`):
+Each chunk is stored in one of these forms:
 
 - **raw**;
-- **LZ4**;
-- **LZ4 over byte planes** (video chunks only): the blocks are transposed so that byte 0 of
-  every block comes first, then byte 1 of every block, and so on, and the result is LZ4
-  compressed. A delta frame's mask stays in front, untouched.
+- **LZ4** (the block format of `lz4_flex`);
+- **byte planes** (video chunks only): the blocks are transposed so that byte 0 of every
+  block comes first, then byte 1 of every block, and so on. The mask of a delta frame and
+  each of these planes are then stored as separate *sections*, each one raw, LZ4 or
+  Huffman coded, whichever the writer picks for that section.
 
-Interleaved BC7/ASTC blocks are close to incompressible for LZ4, but a few byte positions
-of each block (mode, partition and similar header bits) take few distinct values across a
-frame. In byte planes those become long runs. On Big Buck Bunny 1080p (`make bench` input):
+Interleaved BC7/ASTC blocks are close to incompressible, but each byte position of a block
+has its own statistics: mode and partition bytes take few distinct values across a frame,
+and residual bytes (see [Residuals](#residuals)) are skewed toward zero. In byte planes
+these become runs that LZ4 finds, or skewed byte distributions that an order-0 Huffman code
+compresses. On Big Buck Bunny 1080p (`make bench` input, 180 frames), percent of the
+uncompressed payload:
 
-| Variant | LZ4 | LZ4 over byte planes |
-|---|---|---|
-| BC7 | 100.0% | 88.0% |
-| BC7, RDO lambda 1 | 91.4% | 88.0% |
-| ASTC 6x6 | 100.0% | 95.1% |
-| ASTC 8x8 | 99.9% | 94.7% |
+| Variant | LZ4 | LZ4 over byte planes | byte planes, residuals, best section codec |
+|---|---|---|---|
+| BC7 | 100.0% | 88.0% | 63.2% |
+| ASTC 6x6 | 100.0% | 95.0% | 78.0% |
+| ASTC 8x8 | 99.9% | 94.7% | 71.5% |
 
-(percent of the uncompressed payload). The reader turns planes back into blocks while
-reading the chunk, so the player and the engine see the usual block layout. It transposes
-8x8 byte tiles held in `u64`s, in safe portable Rust.
+Most BC7 planes end up Huffman coded; the mode plane and the two near-constant planes
+(bytes 6 and 7) are smaller as LZ4 runs, since Huffman needs at least one bit per byte.
 
-Byte planes cost decode time: LZ4 has to run over the whole chunk (most of the cost is in
-the few low-entropy planes), and the planes have to be transposed back. On the same input,
-mean decode time per 1080p frame rises from 0.25 to 0.45 ms for BC7 (for 12% less data)
-and from 0.11 to 0.19 ms for ASTC 6x6 (for 5% less). So the writer picks:
+### Huffman sections
+
+An order-0 canonical Huffman code per section, at most 11 bits per code, with the symbols
+split into 4 streams decoded in an interleaved loop (four independent bit readers, refilled
+64 bits at a time, five symbols per refill; one 2048-entry lookup per symbol). The code
+lengths are stored with the section (128 bytes), so every chunk decodes on its own. Byte
+layout in [PRAXI.md](../spec/PRAXI.md#byte-plane-form).
+
+Measured alternatives: 8 streams were slower than 4 (register pressure), a 4096-entry
+table decoding two symbols per lookup was slower because building it costs more than it
+saves on 1 MB chunks, and rANS would only beat Huffman on the skewed planes that LZ4
+already handles (Huffman sizes are within 1% of the order-0 entropy on the rest).
+
+### Decode cost and writer policy
+
+The reader turns sections back into planes and planes back into blocks while reading the
+chunk (8x8 byte tiles transposed in `u64`s), so the player and the engine see the usual
+block layout. All of it is safe portable Rust.
+
+Huffman decodes at about 1.4 GB/s of output on the development machine (Ryzen AI 9 HX 370),
+against several GB/s for LZ4 on incompressible data. A Huffman BC7 1080p frame takes about
+1.1 ms to entropy-decode against 0.3 ms for LZ4 over planes. Smaller files trade against
+decode time, so the writer only moves to a slower form when it pays:
 
 1. raw or LZ4, whichever is smaller (LZ4 only when smaller than raw);
-2. byte planes instead, when they are smaller than that by at least the encoder's
-   `plane_min_saving` percent (default 8).
+2. within byte planes, each section takes raw or LZ4, whichever is smaller, or Huffman when
+   that is smaller still by at least `plane_min_saving` percent (default 8);
+3. byte planes instead of step 1 when their total is smaller than step 1 by at least
+   `plane_min_saving` percent.
 
-With the default, BC7 chunks (12% saving) use byte planes and ASTC chunks (about 5%) do
-not. `plane_min_saving = 0` always takes the smallest form; `100` never uses byte planes.
-`Writer::write_chunk` with `compression: None` applies this rule, with the threshold set by
-`Writer::set_plane_min_saving` (default 8).
+With the default, residual planes (15-40% saving) are Huffman coded, while the noisy index
+planes of keyframes (about 5%) stay raw. `plane_min_saving = 0` always takes the smallest
+form; `100` never uses byte planes. `Writer::write_chunk` with `compression: None` applies
+this rule, with the threshold set by `Writer::set_plane_min_saving` (default 8).
 
 ### Rejected for now
 
@@ -81,8 +118,8 @@ Measured on the same input, 180 frames, and not worth their cost for camera foot
   blocks have such a source within the skip threshold. Copies must be block aligned, and
   camera motion rarely is. It may still pay off for 2D or UI content that scrolls in
   whole blocks.
-- **Entropy coding of byte planes** is the next step: the order-0 entropy of the planes is
-  78% (BC7) and 85-88% (ASTC) of the raw size, against 88% and 95% for LZ4 over planes.
+- **Context modeling** (a plane's code chosen by byte 0 of the same block): no gain on BC7,
+  3.5-4.5% of raw on ASTC (with residuals), for one code table per context.
 
 ## Encoding paths
 

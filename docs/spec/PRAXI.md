@@ -1,6 +1,6 @@
 # PRAXI file format
 
-Version 0.5. File extension `.praxi`.
+Version 0.6. File extension `.praxi`.
 
 ## Conventions
 
@@ -29,7 +29,7 @@ Version 0.5. File extension `.praxi`.
 |---|---|---|---|
 | 0 | 8 | `magic` | `89 50 52 58 0D 0A 1A 0A` (`\x89PRX\r\n\x1a\n`) |
 | 8 | 2 | `version_major` | `0`. Readers reject other values. |
-| 10 | 2 | `version_minor` | `4`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
+| 10 | 2 | `version_minor` | `6`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
 | 12 | 4 | `flags` | Reserved, `0`. |
 | 16 | 2 | `stream_count` | Number of entries in the stream table, at least 1. |
 | 18 | 2 | | Reserved. |
@@ -133,7 +133,7 @@ Chunks follow the stream table directly and run until `index_offset`. Each chunk
 |---|---|---|---|
 | 0 | 2 | `stream` | Stream number, less than `stream_count`. |
 | 2 | 1 | `flags` | Bit 0: keyframe. Other bits reserved. |
-| 3 | 1 | `compression` | `0` none, `1` LZ4 block, `2` LZ4 block over byte planes (video only). |
+| 3 | 1 | `compression` | `0` none, `1` LZ4 block, `2` byte planes (video only). |
 | 4 | 4 | `stored_size` | Payload size in the file. |
 | 8 | 4 | `raw_size` | Payload size after decompression. Equals `stored_size` when `compression = 0`. |
 | 12 | 4 | | Reserved. |
@@ -156,9 +156,8 @@ previous frame count`).
 - `0`: the payload is stored as is.
 - `1`: the payload is one LZ4 block (the LZ4 block format, without frame header or size
   prefix) that decompresses to exactly `raw_size` bytes.
-- `2`: like `1`, but the LZ4 block decompresses to the *byte-plane form* of the payload,
-  also exactly `raw_size` bytes. Only allowed in video streams; readers reject it in other
-  streams.
+- `2`: the payload is in *byte-plane form*, stored as sections (below). Only allowed in
+  video streams; readers reject it in other streams.
 
 #### Byte-plane form
 
@@ -166,17 +165,53 @@ A video payload (see [Video payload](#video-payload)) is a `prefix` followed by 
 blocks of `block_bytes` bytes each:
 
 - `prefix` is empty for keyframes and the `mask` (`ceil(block_count / 8)` bytes) for
-  delta frames. It is stored unchanged.
-- The blocks are stored as `block_bytes` planes of `n` bytes: plane `k` holds byte `k` of
-  every block, in block order. So byte `k` of block `b` is at `prefix_size + k * n + b`
-  instead of `prefix_size + b * block_bytes + k`.
+  delta frames.
+- `n = (raw_size - prefix_size) / block_bytes`, which must be a whole number; readers
+  reject the chunk otherwise.
+- Plane `k` (`0 <= k < block_bytes`) holds byte `k` of every block, in block order: `n`
+  bytes.
 
-`n = (raw_size - prefix_size) / block_bytes`, which must be a whole number. Within a block,
-some bytes (mode and partition bits) take few distinct values across a frame, while the
-rest look random. Grouping equal byte positions gives LZ4 long runs to find: on BC7 output
-this saves about 12% over plain LZ4, on ASTC about 5%.
+The stored payload is `block_bytes + 1` sections, one after another: the prefix, then
+planes `0` to `block_bytes - 1`. Each section is:
 
-## Video payload
+| Size | Field | Description |
+|---|---|---|
+| 1 | `codec` | `0` raw, `1` LZ4 block, `2` Huffman. Readers reject other values. |
+| 4 | `size` | Bytes of `data`. |
+| `size` | `data` | The section's bytes (`prefix_size` for the prefix, `n` for a plane), coded by `codec`. |
+
+- Raw: `size` equals the section length and `data` is the bytes.
+- LZ4: `data` is one LZ4 block that decompresses to exactly the section length.
+- Huffman: see below. An empty section (keyframe prefix, or `n = 0`) is written raw with
+  `size = 0`.
+
+The sections must fill `stored_size` exactly. The decoded payload is the prefix followed by
+the blocks, where byte `k` of block `b` is byte `b` of plane `k`; `raw_size` is
+`prefix_size + n * block_bytes`.
+
+#### Huffman section
+
+| Size | Field | Description |
+|---|---|---|
+| 128 | `lengths` | Code length of each byte value, 4 bits each: value `2i` in the low nibble of byte `i`, value `2i + 1` in the high nibble. `0`: the value does not occur. At most `11`. |
+| 12 | `stream_sizes` | Bytes of streams 0, 1 and 2, `u32` each. |
+| rest | `streams` | Streams 0 to 3, one after another. Stream 3 takes the remaining bytes. |
+
+The section's `len` bytes are split into 4 runs of `q = ceil(len / 4)` bytes (the last
+runs shorter or empty): stream `j` codes bytes `j * q` up to `min(len, (j + 1) * q)`.
+
+Codes are canonical: values sorted by code length, then by value, get consecutive codes
+starting from 0 at the shortest length, shifted left by one bit for each length step
+(as in DEFLATE). The lengths must form a complete code: the sum of `2^(11 - length)` over
+all used values equals `2^11`. As the one exception, a single used value has length `1`
+and code `0`.
+
+Within a stream, codes are written one after another, most significant code bit first,
+into the bits of the stream's bytes from least to most significant (byte 0 bit 0 first).
+Unused bits of the last byte are zero. A reader rejects a stream whose codes need more
+bits than the stream has.
+
+## Video payload## Video payload
 
 The decompressed payload of a video chunk is a keyframe or a delta frame, given by the
 chunk's keyframe flag. The first chunk of every video stream is a keyframe.
@@ -193,9 +228,10 @@ the native layout of the texture format, so the payload can be uploaded as is.
 | Size | Field | Description |
 |---|---|---|
 | `ceil(block_count / 8)` | `mask` | Bit `i` (byte `i / 8`, bit `i % 8`, least significant bit first) is set when block `i` is present. Bits past `block_count` are zero. |
-| `changed * block_bytes` | `blocks` | The present blocks, in increasing block order. `changed` is the number of set bits. |
+| `changed * block_bytes` | `residuals` | One residual per present block, in increasing block order. `changed` is the number of set bits. |
 
-The frame equals the previous frame of the same stream, with each present block replaced.
+The frame equals the previous frame of the same stream, with each present block XORed byte
+by byte with its residual: `block = previous block ^ residual`.
 `raw_size` equals `ceil(block_count / 8) + changed * block_bytes`.
 
 ## Audio payload
@@ -282,3 +318,5 @@ time lies in `[t - max_duration, t]` and keep those ending after `t`.
 - 0.4: audio streams (parameters, PCM payload, index entries); chunks are ordered by decode
   time, which stores audio `preload_us` ahead.
 - 0.5: compression `2`, LZ4 over byte planes, for video chunks.
+- 0.6: delta frames store residuals (XOR with the previous block) instead of blocks;
+  compression `2` stores the prefix and each plane as a raw, LZ4 or Huffman section.
