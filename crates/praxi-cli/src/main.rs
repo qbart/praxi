@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::Instant;
 
+mod bench;
+
 #[derive(Parser)]
 #[command(name = "praxi", version, about = "praxi video codec for games")]
 struct Cli {
@@ -23,6 +25,8 @@ enum Cmd {
     Encode(EncodeArgs),
     /// Decode one frame on the CPU and write it as a PNG.
     Frame(FrameArgs),
+    /// Measure size, quality and decode time of an encode (docs/features/benchmarks.md).
+    Bench(bench::BenchArgs),
     /// Print the header and stream table of a .praxi file.
     Info {
         file: PathBuf,
@@ -37,26 +41,11 @@ struct EncodeArgs {
     input: PathBuf,
     #[arg(short, long)]
     output: PathBuf,
-    /// Texture format variants to write (repeatable).
-    #[arg(long = "variant", value_enum, default_values_t = [VariantArg::Bc7])]
-    variants: Vec<VariantArg>,
-    #[arg(long, value_enum, default_value_t = QualityArg::Fast)]
-    quality: QualityArg,
-    /// UASTC RDO strength for bc7 (0 = off).
-    #[arg(long, default_value_t = 0.0)]
-    rdo: f32,
-    /// Frames between keyframes.
-    #[arg(long, default_value_t = 60)]
-    keyint: u32,
-    /// Temporal skip threshold.
-    #[arg(long, default_value_t = 3)]
-    skip_threshold: u8,
+    #[command(flatten)]
+    video: VideoOptions,
     /// Cue as TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]], times in seconds (repeatable).
     #[arg(long = "cue", value_parser = parse_cue)]
     cues: Vec<CueConfig>,
-    /// Encode only the first N frames.
-    #[arg(long)]
-    frames: Option<u64>,
     /// Leave audio out.
     #[arg(long)]
     no_audio: bool,
@@ -71,6 +60,28 @@ struct EncodeArgs {
     /// Audio track name.
     #[arg(long, default_value = "main")]
     audio_name: String,
+}
+
+/// Video encoding options shared by `encode` and `bench`.
+#[derive(clap::Args)]
+struct VideoOptions {
+    /// Texture format variants to write (repeatable).
+    #[arg(long = "variant", value_enum, default_values_t = [VariantArg::Bc7])]
+    variants: Vec<VariantArg>,
+    #[arg(long, value_enum, default_value_t = QualityArg::Fast)]
+    quality: QualityArg,
+    /// UASTC RDO strength for bc7 (0 = off).
+    #[arg(long, default_value_t = 0.0)]
+    rdo: f32,
+    /// Frames between keyframes.
+    #[arg(long, default_value_t = 60)]
+    keyint: u32,
+    /// Temporal skip threshold.
+    #[arg(long, default_value_t = 3)]
+    skip_threshold: u8,
+    /// Encode only the first N frames.
+    #[arg(long)]
+    frames: Option<u64>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -124,7 +135,7 @@ impl FormatArg {
     }
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum VariantArg {
     Bc7,
     Astc4x4,
@@ -132,11 +143,27 @@ enum VariantArg {
     Astc8x8,
 }
 
+impl VariantArg {
+    fn format(self) -> TextureFormat {
+        match self {
+            VariantArg::Bc7 => TextureFormat::Bc7,
+            VariantArg::Astc4x4 => TextureFormat::Astc4x4,
+            VariantArg::Astc6x6 => TextureFormat::Astc6x6,
+            VariantArg::Astc8x8 => TextureFormat::Astc8x8,
+        }
+    }
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum QualityArg {
     Fast,
     Medium,
     Thorough,
+}
+
+/// The name of a clap value, as typed on the command line.
+fn value_name(v: impl ValueEnum) -> String {
+    v.to_possible_value().map_or_else(String::new, |p| p.get_name().to_string())
 }
 
 /// Parses `TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]` (`docs/features/cues.md`).
@@ -166,6 +193,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Cmd::Encode(args) => encode(args),
         Cmd::Frame(args) => frame(args),
+        Cmd::Bench(args) => bench::bench(args),
         Cmd::Info { file, chunks } => info(&file, chunks),
     };
     match result {
@@ -308,33 +336,71 @@ fn pix_fmt_has_alpha(pix_fmt: &str) -> bool {
     ["yuva", "gbrap", "rgba", "bgra", "argb", "abgr", "ya8", "ya16", "pal8"].iter().any(|p| pix_fmt.starts_with(p))
 }
 
-fn encode(args: EncodeArgs) -> AnyResult<()> {
-    let p = probe(&args.input)?;
-    let quality = match args.quality {
+/// The encoder configuration for the video options, without audio and cues.
+fn video_config(p: &Probe, o: &VideoOptions) -> EncoderConfig {
+    let quality = match o.quality {
         QualityArg::Fast => Quality::Fast,
         QualityArg::Medium => Quality::Medium,
         QualityArg::Thorough => Quality::Thorough,
     };
     let mut config = EncoderConfig::new(p.width, p.height, p.fps_num, p.fps_den)
-        .keyint(args.keyint)
-        .skip_threshold(args.skip_threshold)
+        .keyint(o.keyint)
+        .skip_threshold(o.skip_threshold)
         .alpha(p.alpha);
-    for v in &args.variants {
+    for v in &o.variants {
         let variant = match v {
-            VariantArg::Bc7 => VariantConfig::bc7().rdo(args.rdo),
+            VariantArg::Bc7 => VariantConfig::bc7().rdo(o.rdo),
             VariantArg::Astc4x4 => VariantConfig::astc(4),
             VariantArg::Astc6x6 => VariantConfig::astc(6),
             VariantArg::Astc8x8 => VariantConfig::astc(8),
         };
         config = config.variant(variant.quality(quality));
     }
+    config
+}
+
+/// Starts an ffmpeg process decoding the video to RGBA frames on its stdout.
+fn spawn_video(input: &Path, frames: Option<u64>) -> AnyResult<Child> {
+    let mut ffmpeg = Command::new("ffmpeg");
+    ffmpeg.args(["-v", "error", "-nostdin", "-i"]).arg(input);
+    if let Some(n) = frames {
+        ffmpeg.args(["-frames:v", &n.to_string()]);
+    }
+    let child = ffmpeg
+        .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run ffmpeg: {e}"))?;
+    Ok(child)
+}
+
+/// Feeds every frame of `ffmpeg`'s stdout to `push`, then waits for ffmpeg. Returns the frame count.
+fn pump_frames(mut ffmpeg: Child, frame_bytes: usize, mut push: impl FnMut(&[u8]) -> AnyResult<()>) -> AnyResult<u64> {
+    let mut stdout = ffmpeg.stdout.take().ok_or("no ffmpeg stdout")?;
+    let mut frame = vec![0u8; frame_bytes];
+    let mut count = 0u64;
+    while read_frame(&mut stdout, &mut frame)? {
+        push(&frame)?;
+        count += 1;
+    }
+    drop(stdout);
+    let status = ffmpeg.wait()?;
+    if !status.success() {
+        return Err(format!("ffmpeg exited with {status}").into());
+    }
+    Ok(count)
+}
+
+fn encode(args: EncodeArgs) -> AnyResult<()> {
+    let p = probe(&args.input)?;
+    let mut config = video_config(&p, &args.video);
     for cue in &args.cues {
         config = config.cue_with(cue.clone());
     }
     let mut children = Vec::new();
     let audio = if args.no_audio { None } else { probe_audio(&args.input)? };
     if let Some(a) = &audio {
-        let seconds = args.frames.map(|n| n as f64 * p.fps_den as f64 / p.fps_num as f64);
+        let seconds = args.video.frames.map(|n| n as f64 * p.fps_den as f64 / p.fps_num as f64);
         let format = match args.audio_format {
             SampleFormatArg::S16 => SampleFormat::S16,
             SampleFormatArg::F32 => SampleFormat::F32,
@@ -374,30 +440,15 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
 
     let out = BufWriter::new(File::create(&args.output)?);
     let mut encoder = Encoder::new(out, config)?;
-    let mut ffmpeg = Command::new("ffmpeg");
-    ffmpeg.args(["-v", "error", "-nostdin", "-i"]).arg(&args.input);
-    if let Some(n) = args.frames {
-        ffmpeg.args(["-frames:v", &n.to_string()]);
-    }
-    let mut ffmpeg = ffmpeg
-        .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot run ffmpeg: {e}"))?;
-    let mut stdout = ffmpeg.stdout.take().ok_or("no ffmpeg stdout")?;
-    let mut frame = vec![0u8; p.width as usize * p.height as usize * 4];
+    let ffmpeg = spawn_video(&args.input, args.video.frames)?;
     let started = Instant::now();
     let mut count = 0u64;
-    while read_frame(&mut stdout, &mut frame)? {
-        encoder.push_frame(&frame)?;
+    pump_frames(ffmpeg, p.width as usize * p.height as usize * 4, |frame| {
+        encoder.push_frame(frame)?;
         count += 1;
         eprint!("\rframe {count}");
-    }
-    drop(stdout);
-    let status = ffmpeg.wait()?;
-    if !status.success() {
-        return Err(format!("ffmpeg exited with {status}").into());
-    }
+        Ok(())
+    })?;
     let (_, stats) = encoder.finish()?;
     for mut child in children {
         let status = child.wait()?;

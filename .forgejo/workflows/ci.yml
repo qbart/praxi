@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --exclude praxi-viewer --all-targets -- -D warnings
+          cargo clippy -p praxi-viewer --no-default-features --all-targets -- -D warnings
+      - name: Test
+        run: |
+          cargo test --workspace --exclude praxi-viewer
+          cargo test -p praxi-viewer --no-default-features
+
+  bench:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust and ffmpeg
+        run: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          apt-get update
+          apt-get install -y --no-install-recommends ffmpeg
+      - name: Benchmark
+        run: make bench
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: bench
+          path: target/bench.json
