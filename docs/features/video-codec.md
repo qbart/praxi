@@ -55,9 +55,10 @@ frame. In byte planes those become long runs. On Big Buck Bunny 1080p (`make ben
 reading the chunk, so the player and the engine see the usual block layout. It transposes
 8x8 byte tiles held in `u64`s, in safe portable Rust.
 
-Byte planes cost decode time: LZ4 has to run over the whole chunk, and the planes have to be
-transposed back. On the same input, mean decode time per 1080p frame rises from 0.25 to
-0.68 ms for BC7 and from 0.11 to 0.32 ms for ASTC 6x6. So the writer picks:
+Byte planes cost decode time: LZ4 has to run over the whole chunk (most of the cost is in
+the few low-entropy planes), and the planes have to be transposed back. On the same input,
+mean decode time per 1080p frame rises from 0.25 to 0.45 ms for BC7 (for 12% less data)
+and from 0.11 to 0.19 ms for ASTC 6x6 (for 5% less). So the writer picks:
 
 1. raw or LZ4, whichever is smaller (LZ4 only when smaller than raw);
 2. byte planes instead, when they are smaller than that by at least the encoder's
