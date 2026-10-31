@@ -174,10 +174,10 @@ mod tests {
         assert_eq!(decoded.len(), 3000);
         assert!(snr(&samples, &decoded) > 40.0, "snr {}", snr(&samples, &decoded));
 
-        // Chunks of odd sizes decode to exactly the same samples.
+        // Chunks on block boundaries decode to exactly the same samples.
         let mut enc = Encoder::new(3);
         let mut chunked = Vec::new();
-        for part in samples.chunks(3 * 333) {
+        for part in samples.chunks(3 * 336) {
             let mut payload = Vec::new();
             enc.encode(part, &mut payload);
             let mut out = Vec::new();
@@ -185,6 +185,24 @@ mod tests {
             chunked.extend(out);
         }
         assert_eq!(chunked, decoded);
+
+        // Chunks of any size start from the decoded end of the previous one.
+        let mut enc = Encoder::new(3);
+        let mut chunked: Vec<f32> = Vec::new();
+        for part in samples.chunks(3 * 333) {
+            let mut payload = Vec::new();
+            enc.encode(part, &mut payload);
+            let history: Vec<i16> = payload[4..16].chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+            let expected: Vec<i16> = match chunked.len() {
+                0 => vec![0; 6],
+                n => (0..3).flat_map(|c| [chunked[n - 3 + c], chunked[n - 6 + c]]).map(|v| (v * 32768.0) as i16).collect(),
+            };
+            assert_eq!(history, expected);
+            let mut out = Vec::new();
+            decode(&payload, 3, &mut out).unwrap();
+            chunked.extend(out);
+        }
+        assert!(snr(&samples, &chunked) > 40.0);
     }
 
     #[test]
