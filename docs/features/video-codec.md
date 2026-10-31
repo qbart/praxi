@@ -32,8 +32,7 @@ decodes from the preceding keyframe, so `keyint` bounds the seek cost.
 
 ## Compression
 
-Each chunk is stored in the smallest of these forms (LZ4 is the block format of
-`lz4_flex`):
+Each chunk is stored in one of these forms (LZ4 is the block format of `lz4_flex`):
 
 - **raw**;
 - **LZ4**;
@@ -53,8 +52,21 @@ frame. In byte planes those become long runs. On Big Buck Bunny 1080p (`make ben
 | ASTC 8x8 | 99.9% | 94.7% |
 
 (percent of the uncompressed payload). The reader turns planes back into blocks while
-reading the chunk, so the player and the engine see the usual block layout. Undoing the
-transpose costs one pass over the frame's block data.
+reading the chunk, so the player and the engine see the usual block layout. It transposes
+8x8 byte tiles held in `u64`s, in safe portable Rust.
+
+Byte planes cost decode time: LZ4 has to run over the whole chunk, and the planes have to be
+transposed back. On the same input, mean decode time per 1080p frame rises from 0.25 to
+0.68 ms for BC7 and from 0.11 to 0.32 ms for ASTC 6x6. So the writer picks:
+
+1. raw or LZ4, whichever is smaller (LZ4 only when smaller than raw);
+2. byte planes instead, when they are smaller than that by at least the encoder's
+   `plane_min_saving` percent (default 8).
+
+With the default, BC7 chunks (12% saving) use byte planes and ASTC chunks (about 5%) do
+not. `plane_min_saving = 0` always takes the smallest form; `100` never uses byte planes.
+`Writer::write_chunk` with `compression: None` applies this rule, with the threshold set by
+`Writer::set_plane_min_saving` (default 8).
 
 ### Rejected for now
 

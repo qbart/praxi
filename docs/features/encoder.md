@@ -20,6 +20,7 @@ praxi info intro.praxi
 | `--rdo <LAMBDA>` | `0` (off) | UASTC RDO strength for `bc7`; higher is smaller and lower quality |
 | `--keyint <N>` | `60` | Frames between keyframes |
 | `--skip-threshold <T>` | `3` | Temporal skip threshold, see [video-codec.md](video-codec.md) |
+| `--plane-min-saving <PCT>` | `8` | Use byte planes for a chunk only when they save at least this many percent, see [video-codec.md](video-codec.md#compression). `0`: always the smallest form; `100`: never byte planes. |
 | `--cue <SPEC>` (repeatable) | | Cue `TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]`, times in seconds, string values ([cues.md](cues.md)) |
 | `--frames <N>` | all | Encode only the first `N` frames |
 | `--no-audio`, `--audio-layout`, `--audio-rate`, `--audio-format`, `--audio-name` | | Audio options, see [audio.md](audio.md#cli) |
@@ -54,7 +55,8 @@ for frame in frames {
 let (_file, stats) = encoder.finish()?;
 ```
 
-Frames are encoded on all CPU cores (`std::thread::available_parallelism`). Audio tracks
+`EncoderConfig::plane_min_saving(percent)` (default 8) sets the byte-plane policy, like
+`--plane-min-saving`. Frames are encoded on all CPU cores (`std::thread::available_parallelism`). Audio tracks
 are added with `EncoderConfig::audio` ([audio.md](audio.md#encoder)).
 
 ## Output

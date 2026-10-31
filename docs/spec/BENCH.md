@@ -24,7 +24,8 @@ without changing the version; readers ignore unknown fields.
     "quality": "fast",
     "rdo": 0.0,
     "keyint": 60,
-    "skip_threshold": 3
+    "skip_threshold": 3,
+    "plane_min_saving": 8.0
   },
   "encode_seconds": 21.3,
   "variants": [
@@ -53,6 +54,7 @@ without changing the version; readers ignore unknown fields.
 | `settings.rdo` | number | UASTC RDO lambda for BC7 (`0` = off). |
 | `settings.keyint` | integer | Frames between keyframes. |
 | `settings.skip_threshold` | integer | Temporal skip threshold. |
+| `settings.plane_min_saving` | number | Byte-plane policy in percent (`--plane-min-saving`). Missing in older files, read as `0`. |
 | `encode_seconds` | number | Wall-clock encode time, all variants. |
 | `variants` | array | One object per variant, in `--variant` order. |
 
