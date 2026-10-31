@@ -200,7 +200,6 @@ fn play_audio(file: Vec<u8>, caps: Capabilities) -> (Player<Cursor<Vec<u8>>>, Ve
     let outputs: Vec<_> = (0..p.audio_tracks().len()).map(|t| p.audio_output(t).unwrap()).collect();
     let mut heard = vec![Vec::new(); outputs.len()];
     p.play().unwrap();
-    p.advance(Duration::ZERO).unwrap();
     while !p.is_finished() {
         for (out, h) in outputs.iter().zip(&mut heard) {
             let mut buf = [0.0; 4096];
@@ -263,6 +262,21 @@ fn encodes_audio_tracks() {
 
     let (_, heard) = play_audio(file, Capabilities::new([TextureFormat::Bc7]).max_audio_channels(1));
     assert_eq!(heard[1], tone(1, 1.0), "mono variant");
+}
+
+#[test]
+fn encodes_adpcm_audio() {
+    let config = config().audio(AudioTrackConfig::from_samples("music", 8000, 2, tone(2, 1.0)).format(SampleFormat::Adpcm));
+    let (file, stats) = encode(config);
+    // 10 chunks of 800 frames: 4 + 8 + 9 * 2 * 50 bytes each, unless LZ4 makes them smaller.
+    assert!(stats.audio[0].bytes <= 10 * (24 + 912), "{} bytes", stats.audio[0].bytes);
+    let (_, heard) = play_audio(file, Capabilities::new([TextureFormat::Bc7]));
+    let source: Vec<f32> = tone(2, 1.0).iter().map(|s| s.clamp(-1.0, 1.0)).collect();
+    assert_eq!(heard[0].len(), source.len());
+    let signal: f32 = source.iter().map(|s| s * s).sum();
+    let noise: f32 = heard[0].iter().zip(&source).map(|(a, b)| (a - b) * (a - b)).sum();
+    let snr = 10.0 * (signal / noise).log10();
+    assert!(snr > 40.0, "SNR {snr} dB");
 }
 
 #[test]
