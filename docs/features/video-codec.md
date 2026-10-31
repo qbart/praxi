@@ -114,7 +114,7 @@ writer only moves to a slower form when it pays:
 With the default, residual planes (15-40% saving) are Huffman coded, while the noisy index
 planes of keyframes (about 5%) stay raw. At 20, only the BC7 endpoint residual planes
 (about 40% saving) are Huffman coded and ASTC stays on LZ4. At 30 and above, no chunk uses
-byte planes; residuals alone still make LZ4 4% smaller than on plain blocks. Before this
+byte planes; residuals alone still make LZ4 3-7% smaller than on plain blocks. Before this
 change (format 0.5) the same input took BC7 77.2 MB/s at 0.45 ms, ASTC 6x6 43.6 MB/s at
 0.11 ms and ASTC 8x8 25.7 MB/s at 0.07 ms.
 
