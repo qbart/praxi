@@ -1,6 +1,8 @@
 use praxi::format::{Cue, Reader, StreamParams};
 use praxi::{Capabilities, Event, Player, TextureFormat};
-use praxi_encoder::{CueConfig, CueStreamConfig, Encoder, EncoderConfig, Stats, Value, VariantConfig};
+use praxi_encoder::{
+    AudioTrackConfig, CueConfig, CueStreamConfig, Encoder, EncoderConfig, SampleFormat, Stats, Value, VariantConfig,
+};
 use std::io::Cursor;
 use std::time::Duration;
 
@@ -178,4 +180,99 @@ fn decode_rejects_unsupported_formats() {
     assert!(praxi_encoder::decode_frame(&params, &[0; 16]).is_err());
     let params = praxi::VideoParams { format: TextureFormat::Bc7, ..params };
     assert!(praxi_encoder::decode_frame(&params, &[0; 8]).is_err(), "wrong data size");
+}
+
+/// `seconds` of interleaved audio at 8 kHz: a different sine per channel, past full scale
+/// at the peaks of channel 0 to exercise clamping.
+fn tone(channels: u16, seconds: f64) -> Vec<f32> {
+    let frames = (8000.0 * seconds) as usize;
+    (0..frames)
+        .flat_map(|i| (0..channels).map(move |c| (i as f32 * 0.01 * (c + 1) as f32).sin() * if c == 0 { 1.2 } else { 0.5 }))
+        .collect()
+}
+
+/// Plays `file` to the end, reading every audio track as it decodes.
+fn play_audio(file: Vec<u8>, caps: Capabilities) -> (Player<Cursor<Vec<u8>>>, Vec<Vec<f32>>) {
+    let mut p = Player::open(Cursor::new(file), &caps).unwrap();
+    let outputs: Vec<_> = (0..p.audio_tracks().len()).map(|t| p.audio_output(t).unwrap()).collect();
+    let mut heard = vec![Vec::new(); outputs.len()];
+    p.play();
+    p.advance(Duration::ZERO).unwrap();
+    while !p.is_finished() {
+        for (out, h) in outputs.iter().zip(&mut heard) {
+            let mut buf = [0.0; 4096];
+            let n = out.read(&mut buf);
+            h.extend_from_slice(&buf[..n]);
+        }
+        p.advance(Duration::from_millis(50)).unwrap();
+    }
+    (p, heard)
+}
+
+#[test]
+fn encodes_audio_tracks() {
+    let config = config()
+        .audio(AudioTrackConfig::from_samples("music", 8000, 2, tone(2, 1.0)).channel_mask(0x3))
+        .audio(AudioTrackConfig::from_samples("voice", 8000, 1, tone(1, 0.3)).group(0).format(SampleFormat::F32))
+        .audio(AudioTrackConfig::from_samples("music", 8000, 1, tone(1, 1.0)).format(SampleFormat::F32))
+        .cue(0.2, "m");
+    let (file, stats) = encode(config);
+    assert_eq!(stats.duration_us, 1_000_000, "audio outlasts the 600 ms of video");
+    let audio: Vec<_> = stats.audio.iter().map(|a| (a.name.as_str(), a.channels, a.frames, a.chunks)).collect();
+    assert_eq!(audio, [("music", 2, 8000, 10), ("voice", 1, 2400, 3), ("music", 1, 8000, 10)]);
+
+    let r = Reader::new(Cursor::new(file.clone())).unwrap();
+    let kinds: Vec<_> = r
+        .streams()
+        .iter()
+        .map(|s| match &s.params {
+            StreamParams::Video(_) => ("video".to_string(), s.group),
+            StreamParams::Audio(a) => (format!("{} {}ch {}", a.name, a.channels, a.format), s.group),
+            StreamParams::Cues(c) => (c.name.clone(), s.group),
+            StreamParams::Unknown(_) => ("?".to_string(), s.group),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("video".to_string(), 0),
+            ("video".to_string(), 0),
+            ("music 2ch s16".to_string(), 1),
+            ("voice 1ch f32".to_string(), 0),
+            ("music 1ch f32".to_string(), 1),
+            ("cues".to_string(), 0),
+        ],
+        "same names share a group; explicit group 0 pushes music to group 1"
+    );
+    let a = r.streams()[2].audio_params().unwrap();
+    assert_eq!((a.sample_rate, a.channel_mask, a.preload_us), (8000, 0x3, 250_000));
+
+    let (p, heard) = play_audio(file.clone(), Capabilities::new([TextureFormat::Bc7]));
+    let names: Vec<_> = p.audio_tracks().iter().map(|t| (t.params.name.as_str(), t.stream)).collect();
+    assert_eq!(names, [("voice", 3), ("music", 2)], "audio tracks in group order");
+    assert_eq!(heard[0], tone(1, 0.3), "f32 is stored exactly");
+    let source = tone(2, 1.0);
+    assert_eq!(heard[1].len(), source.len());
+    for (got, want) in heard[1].iter().zip(&source) {
+        // s16 tops out at 32767 / 32768.
+        assert!((got - want.clamp(-1.0, 32767.0 / 32768.0)).abs() <= 0.5 / 32768.0 + 1e-6, "s16 {got} vs {want}");
+    }
+
+    let (_, heard) = play_audio(file, Capabilities::new([TextureFormat::Bc7]).max_audio_channels(1));
+    assert_eq!(heard[1], tone(1, 1.0), "mono variant");
+}
+
+#[test]
+fn rejects_bad_audio_config() {
+    let base = || EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7());
+    let bad = [
+        base().audio(AudioTrackConfig::from_samples("a", 0, 2, vec![])),
+        base().audio(AudioTrackConfig::from_samples("a", 8000, 0, vec![])),
+        base().audio(AudioTrackConfig::from_samples("a", 8000, 2, vec![]).channel_mask(0x7)),
+        base().audio(AudioTrackConfig::from_samples("x".repeat(40), 8000, 2, vec![])),
+        base().audio(AudioTrackConfig::from_samples("a", 8000, 2, vec![])).audio_chunk(Duration::ZERO),
+    ];
+    for config in bad {
+        assert!(Encoder::new(Cursor::new(Vec::new()), config).is_err());
+    }
 }
