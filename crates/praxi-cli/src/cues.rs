@@ -397,7 +397,9 @@ mod tests {
         assert!(text.contains("\"time\": 1.000001"), "{text}");
         assert!(text.contains("\"f\": 3.0"), "{text}");
         assert!(text.contains("\"bytes\": \"00ff10\""), "{text}");
-        assert!(!text.contains("\"duration\": 0"), "zero durations are left out");
+        let json: Json = serde_json::from_str(&text).unwrap();
+        assert!(json["streams"][0]["cues"][0].get("duration").is_none(), "zero durations are left out");
+        assert!(json["streams"][0]["cues"][0].get("fields").is_none(), "no fields are left out");
         assert_eq!(parse_sheet(&text).unwrap(), tracks);
     }
 

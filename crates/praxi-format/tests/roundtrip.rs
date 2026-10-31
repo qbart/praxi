@@ -1,5 +1,5 @@
 use praxi_format::{
-    AudioParams, COLOR_FLAG_SRGB, Compression, adpcm, Cue, CueParams, Error, Reader, SampleFormat,
+    AudioParams, COLOR_FLAG_SRGB, ChunkHeader, Compression, CueTrack, TimedCue, adpcm, read_cues, replace_cues, Cue, CueParams, Error, Reader, SampleFormat,
     StreamInfo, StreamParams, TextureFormat, TimeBase, Value, VideoParams, Writer,
 };
 use std::io::Cursor;
@@ -365,4 +365,91 @@ fn chunk_offsets_result(file: &[u8]) -> Result<(), Error> {
     let mut r = Reader::new(Cursor::new(file.to_vec()))?;
     while r.next_chunk()?.is_some() {}
     Ok(())
+}
+
+/// Stored chunks of the non-cue streams: (stream, pts, flags, compression, raw size, bytes).
+fn stored_chunks(file: &[u8]) -> Vec<(u16, u64, u8, Compression, u32, Vec<u8>)> {
+    let mut r = Reader::new(Cursor::new(file.to_vec())).unwrap();
+    let mut out = Vec::new();
+    while let Some(c) = r.next_chunk().unwrap() {
+        if r.streams()[c.stream as usize].cue_params().is_none() {
+            let mut stored = Vec::new();
+            r.read_stored(&c, &mut stored).unwrap();
+            out.push((c.stream, c.pts, c.flags, c.compression, c.raw_size, stored));
+        }
+    }
+    out
+}
+
+#[test]
+fn replaces_cue_streams() {
+    // A cue stream between video and audio, so the audio stream moves from 2 to 1.
+    let streams = vec![video(TextureFormat::Bc7), StreamInfo::cues("old"), audio("music")];
+    let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
+    w.write_audio(2, 0, &[1; 400]).unwrap();
+    w.write_audio(2, 100, &[2; 400]).unwrap(); // due at 100 - 200 ms preload
+    w.write_chunk(0, 0, true, &[7; 64], None).unwrap();
+    w.write_cue(1, 10_000, &Cue { duration: 5_000, ..Cue::new("gone") }).unwrap();
+    w.write_chunk(0, 1, false, &[0; 4], None).unwrap();
+    w.write_chunk(0, 2, true, &[9; 64], None).unwrap();
+    let file = w.finish(100_000).unwrap().into_inner();
+
+    let mut r = Reader::new(Cursor::new(file.clone())).unwrap();
+    let old = read_cues(&mut r).unwrap();
+    assert_eq!(old, [CueTrack { name: "old".into(), cues: vec![TimedCue { time_us: 10_000, cue: Cue { duration: 5_000, ..Cue::new("gone") } }] }]);
+
+    let flash = |ms: u64| TimedCue { time_us: ms * 1000, cue: Cue { duration: 0, ..Cue::new("flash") } };
+    let tracks = vec![
+        CueTrack { name: "a".into(), cues: vec![flash(40), flash(0), flash(40)] },
+        CueTrack { name: "b".into(), cues: vec![TimedCue { time_us: 90_000, cue: Cue { duration: 60_000, ..Cue::new("long") } }] },
+    ];
+    let out = replace_cues(Reader::new(Cursor::new(file.clone())).unwrap(), Cursor::new(Vec::new()), &tracks).unwrap().into_inner();
+
+    let mut r = Reader::new(Cursor::new(out.clone())).unwrap();
+    let names: Vec<_> = r.streams().iter().map(|s| (s.params.kind(), s.chunk_count)).collect();
+    assert_eq!(names, [(1, 3), (2, 2), (3, 3), (3, 1)], "video, audio, then the new cue streams");
+    assert_eq!(r.header().duration_us, 150_000, "extended to the end of the long cue");
+    let mut sorted = tracks.clone();
+    sorted[0].cues.sort_by_key(|c| c.time_us);
+    assert_eq!(read_cues(&mut r).unwrap(), sorted);
+    let mut renumbered = stored_chunks(&file);
+    for c in &mut renumbered {
+        c.0 = if c.0 == 2 { 1 } else { c.0 };
+    }
+    let copied = stored_chunks(&out);
+    assert_eq!(copied, renumbered, "video and audio copied byte for byte, in order");
+    // Index: video keyframes, audio and cue chunks.
+    assert_eq!(r.read_index().unwrap().len(), 2 + 2 + 4);
+
+    // Decode-time order, cues first on ties.
+    let mut r = Reader::new(Cursor::new(out)).unwrap();
+    let mut order = Vec::new();
+    while let Some(c) = r.next_chunk().unwrap() {
+        order.push((c.stream, c.pts));
+    }
+    assert_eq!(order, [(2, 0), (1, 0), (1, 100), (0, 0), (0, 1), (2, 40_000), (2, 40_000), (0, 2), (3, 90_000)]);
+
+    // No tracks: no cue streams, duration kept.
+    let bare = replace_cues(Reader::new(Cursor::new(file)).unwrap(), Cursor::new(Vec::new()), &[]).unwrap().into_inner();
+    let r = Reader::new(Cursor::new(bare)).unwrap();
+    assert_eq!(r.streams().len(), 2);
+    assert_eq!(r.header().duration_us, 100_000);
+}
+
+#[test]
+fn copy_chunk_checks_stream_and_size() {
+    let streams = vec![video(TextureFormat::Bc7), StreamInfo::cues("c")];
+    let mut w = Writer::new(Cursor::new(Vec::new()), streams.clone()).unwrap();
+    w.write_chunk(0, 0, true, &[7; 64], None).unwrap();
+    let file = w.finish(0).unwrap().into_inner();
+    let mut r = Reader::new(Cursor::new(file)).unwrap();
+    let c = r.next_chunk().unwrap().unwrap();
+    let mut stored = Vec::new();
+    r.read_stored(&c, &mut stored).unwrap();
+
+    let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
+    assert!(matches!(w.copy_chunk(&c, &stored[1..]), Err(Error::Invalid(_))), "size");
+    assert!(matches!(w.copy_chunk(&ChunkHeader { stream: 1, ..c }, &stored), Err(Error::Invalid(_))), "cue stream");
+    w.copy_chunk(&c, &stored).unwrap();
+    assert!(matches!(w.copy_chunk(&c, &stored), Err(Error::Invalid(_))), "same pts again");
 }
