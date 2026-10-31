@@ -65,8 +65,8 @@ LZ4 decompression took 0.05-0.5 ms per frame. PSNR is per frame before temporal 
 
 These were early experiments. Current numbers come from `make bench` (first 3 s, after
 temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.json): BC7
-41.0 dB at 77 MB/s (byte planes), ASTC 6x6 37.4 dB at 44 MB/s, ASTC 8x8 34.0 dB at
-26 MB/s, with 0.07-0.45 ms mean decode time per frame.
+41.0 dB at 55.6 MB/s, ASTC 6x6 37.4 dB at 34.1 MB/s, ASTC 8x8 34.0 dB at 18.4 MB/s
+(Huffman-coded byte planes of residuals), with 0.6-1.5 ms mean decode time per frame.
 
 ## Milestones
 

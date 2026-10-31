@@ -64,7 +64,7 @@ uncompressed payload:
 
 | Variant | LZ4 | LZ4 over byte planes | byte planes, residuals, best section codec |
 |---|---|---|---|
-| BC7 | 100.0% | 88.0% | 63.2% |
+| BC7 | 100.0% | 88.0% | 63.4% |
 | ASTC 6x6 | 100.0% | 95.0% | 78.0% |
 | ASTC 8x8 | 99.9% | 94.7% | 71.5% |
 
@@ -74,15 +74,15 @@ Most BC7 planes end up Huffman coded; the mode plane and the two near-constant p
 ### Huffman sections
 
 An order-0 canonical Huffman code per section, at most 11 bits per code, with the symbols
-split into 4 streams decoded in an interleaved loop (four independent bit readers, refilled
-64 bits at a time, five symbols per refill; one 2048-entry lookup per symbol). The code
-lengths are stored with the section (128 bytes), so every chunk decodes on its own. Byte
+split into 4 streams decoded in an interleaved loop: four independent bit readers, refilled
+64 bits at a time, five table lookups per refill. Each lookup in a 2048-entry table yields
+one symbol, or two when both codes fit in the 11 looked-up bits. The table is built from the
+128 bytes of code lengths stored with the section, so every chunk decodes on its own. Byte
 layout in [PRAXI.md](../spec/PRAXI.md#byte-plane-form).
 
-Measured alternatives: 8 streams were slower than 4 (register pressure), a 4096-entry
-table decoding two symbols per lookup was slower because building it costs more than it
-saves on 1 MB chunks, and rANS would only beat Huffman on the skewed planes that LZ4
-already handles (Huffman sizes are within 1% of the order-0 entropy on the rest).
+Measured alternatives: 8 streams were no faster than 4, a 4096-entry two-symbol table was no
+faster than the 2048-entry one, and rANS would only beat Huffman on the skewed planes that
+LZ4 already handles (Huffman sizes are within 1% of the order-0 entropy on the rest).
 
 ### Decode cost and writer policy
 
@@ -90,10 +90,9 @@ The reader turns sections back into planes and planes back into blocks while rea
 chunk (8x8 byte tiles transposed in `u64`s), so the player and the engine see the usual
 block layout. All of it is safe portable Rust.
 
-Huffman decodes at about 1.4 GB/s of output on the development machine (Ryzen AI 9 HX 370),
-against several GB/s for LZ4 on incompressible data. A Huffman BC7 1080p frame takes about
-1.1 ms to entropy-decode against 0.3 ms for LZ4 over planes. Smaller files trade against
-decode time, so the writer only moves to a slower form when it pays:
+Huffman decodes at about 1 GB/s of output on the development machine (Ryzen AI 9 HX 370,
+one core), against several GB/s for LZ4. Smaller files trade against decode time, so the
+writer only moves to a slower form when it pays:
 
 1. raw or LZ4, whichever is smaller (LZ4 only when smaller than raw);
 2. within byte planes, each section takes raw or LZ4, whichever is smaller, or Huffman when
@@ -101,10 +100,26 @@ decode time, so the writer only moves to a slower form when it pays:
 3. byte planes instead of step 1 when their total is smaller than step 1 by at least
    `plane_min_saving` percent.
 
+`plane_min_saving = 0` always takes the smallest form; `100` never uses byte planes.
+`Writer::write_chunk` with `compression: None` applies this rule, with the threshold set by
+`Writer::set_plane_min_saving` (default 8). Measured with `praxi bench` on the input above
+(MB/s of video, mean decode time per frame including reading and applying it):
+
+| `--plane-min-saving` | BC7 | ASTC 6x6 | ASTC 8x8 |
+|---|---|---|---|
+| 0 to 8 (default) | 55.6 MB/s, 1.53 ms | 34.1 MB/s, 0.88 ms | 18.4 MB/s, 0.60 ms |
+| 20 | 62.5 MB/s, 0.83 ms | 42.5 MB/s, 0.18 ms | 23.7 MB/s, 0.15 ms |
+| 30 to 100 | 84.4 MB/s, 0.43 ms | 42.5 MB/s, 0.18 ms | 23.8 MB/s, 0.15 ms |
+
 With the default, residual planes (15-40% saving) are Huffman coded, while the noisy index
-planes of keyframes (about 5%) stay raw. `plane_min_saving = 0` always takes the smallest
-form; `100` never uses byte planes. `Writer::write_chunk` with `compression: None` applies
-this rule, with the threshold set by `Writer::set_plane_min_saving` (default 8).
+planes of keyframes (about 5%) stay raw. At 20, only the BC7 endpoint residual planes
+(about 40% saving) are Huffman coded and ASTC stays on LZ4. At 30 and above, no chunk uses
+byte planes; residuals alone still make LZ4 4% smaller than on plain blocks. Before this
+change (format 0.5) the same input took BC7 77.2 MB/s at 0.45 ms, ASTC 6x6 43.6 MB/s at
+0.11 ms and ASTC 8x8 25.7 MB/s at 0.07 ms.
+
+A game that decodes several videos at once, or on a slow core, can trade size for decode
+time with this setting at encode time; the format and the reader do not change.
 
 ### Rejected for now
 
