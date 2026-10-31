@@ -1,7 +1,7 @@
 use crate::{
     AUDIO_NAME_SIZE, CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, Compression, Cue,
     Error, HEADER_SIZE, IndexEntry, MAGIC, Result, STREAM_ENTRY_SIZE, StreamInfo, StreamParams,
-    VERSION_MAJOR, VERSION_MINOR,
+    VERSION_MAJOR, VERSION_MINOR, to_planes,
 };
 use std::io::{Seek, SeekFrom, Write};
 
@@ -18,6 +18,8 @@ pub struct Writer<W: Write + Seek> {
     /// Per audio stream: the frame after the last written chunk.
     audio_end: Vec<u64>,
     scratch: Vec<u8>,
+    planes: Vec<u8>,
+    planes_lz4: Vec<u8>,
     cue_payload: Vec<u8>,
 }
 
@@ -70,6 +72,8 @@ impl<W: Write + Seek> Writer<W> {
             last_time_us: 0,
             audio_end: vec![0; n],
             scratch: Vec::new(),
+            planes: Vec::new(),
+            planes_lz4: Vec::new(),
             cue_payload: Vec::new(),
         })
     }
@@ -83,8 +87,8 @@ impl<W: Write + Seek> Writer<W> {
         self.offset
     }
 
-    /// Writes one chunk of a video stream. `compression = Some(c)` forces `c`; `None` uses
-    /// LZ4 only when it makes the payload smaller. Cue streams take [`Writer::write_cue`],
+    /// Writes one chunk of a video stream. `compression = Some(c)` forces `c`; `None` picks
+    /// the smallest of none, LZ4 and LZ4 over byte planes. Cue streams take [`Writer::write_cue`],
     /// audio streams [`Writer::write_audio`].
     pub fn write_chunk(
         &mut self,
@@ -149,6 +153,7 @@ impl<W: Write + Seek> Writer<W> {
         };
         let is_cue = matches!(info.params, StreamParams::Cues(_));
         let is_audio = matches!(info.params, StreamParams::Audio(_));
+        let is_video = matches!(info.params, StreamParams::Video(_));
         if let Some(last) = self.last_pts[stream as usize]
             && (pts < last || (pts == last && !is_cue))
         {
@@ -162,20 +167,51 @@ impl<W: Write + Seek> Writer<W> {
             return Err(Error::Invalid("payload too large".into()));
         }
 
-        let (compression, stored): (Compression, &[u8]) = match compression {
-            Some(Compression::None) => (Compression::None, payload),
+        // (prefix, block bytes) when the payload can take the byte-plane form.
+        let plane_layout = match &info.params {
+            StreamParams::Video(v) => {
+                let (prefix, block_bytes) = (v.plane_prefix(keyframe), v.format.block_bytes() as usize);
+                (payload.len() >= prefix && (payload.len() - prefix).is_multiple_of(block_bytes))
+                    .then_some((prefix, block_bytes))
+            }
+            _ => None,
+        };
+        let planes = |w: &mut Self, (prefix, block_bytes): (usize, usize)| {
+            w.planes.clear();
+            w.planes.resize(payload.len(), 0);
+            w.planes[..prefix].copy_from_slice(&payload[..prefix]);
+            to_planes(&payload[prefix..], block_bytes, &mut w.planes[prefix..]);
+            w.planes_lz4 = lz4_flex::block::compress(&w.planes);
+        };
+        let compression = match compression {
+            Some(Compression::Lz4Planes) => {
+                let layout = plane_layout.ok_or_else(|| {
+                    Error::Invalid(format!("stream {stream}: byte planes need a video payload of whole blocks"))
+                })?;
+                planes(self, layout);
+                Compression::Lz4Planes
+            }
+            Some(Compression::None) => Compression::None,
             Some(Compression::Lz4) => {
                 self.scratch = lz4_flex::block::compress(payload);
-                (Compression::Lz4, &self.scratch)
+                Compression::Lz4
             }
             None => {
                 self.scratch = lz4_flex::block::compress(payload);
-                if self.scratch.len() < payload.len() {
-                    (Compression::Lz4, &self.scratch)
-                } else {
-                    (Compression::None, payload)
+                let mut best = if self.scratch.len() < payload.len() { Compression::Lz4 } else { Compression::None };
+                if let Some(layout) = plane_layout {
+                    planes(self, layout);
+                    if self.planes_lz4.len() < self.scratch.len().min(payload.len()) {
+                        best = Compression::Lz4Planes;
+                    }
                 }
+                best
             }
+        };
+        let stored: &[u8] = match compression {
+            Compression::None => payload,
+            Compression::Lz4 => &self.scratch,
+            Compression::Lz4Planes => &self.planes_lz4,
         };
 
         let flags = if keyframe { CHUNK_FLAG_KEYFRAME } else { 0 };
@@ -189,7 +225,7 @@ impl<W: Write + Seek> Writer<W> {
         self.inner.write_all(&h)?;
         self.inner.write_all(stored)?;
 
-        if is_cue || is_audio || (keyframe && matches!(info.params, StreamParams::Video(_))) {
+        if is_cue || is_audio || (keyframe && is_video) {
             self.index.push(IndexEntry { stream, pts, offset: self.offset });
         }
         self.offset += CHUNK_HEADER_SIZE + stored.len() as u64;

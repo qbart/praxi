@@ -1,10 +1,12 @@
 //! Reader and writer for the PRAXI container format (`docs/spec/PRAXI.md`).
 
 mod cue;
+mod planes;
 mod reader;
 mod writer;
 
 pub use cue::{Cue, Value};
+pub use planes::{from_planes, to_planes};
 pub use reader::Reader;
 pub use writer::Writer;
 
@@ -13,7 +15,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 4;
+pub const VERSION_MINOR: u16 = 5;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;
@@ -183,6 +185,12 @@ impl VideoParams {
     /// Size of the block mask that starts a delta frame payload.
     pub fn mask_size(&self) -> usize {
         self.block_count().div_ceil(8)
+    }
+
+    /// Bytes before the blocks of a payload, which the byte-plane form leaves unchanged:
+    /// none for keyframes, the mask for delta frames.
+    pub fn plane_prefix(&self, keyframe: bool) -> usize {
+        if keyframe { 0 } else { self.mask_size() }
     }
 
     pub fn srgb(&self) -> bool {
@@ -391,6 +399,8 @@ pub struct Header {
 pub enum Compression {
     None,
     Lz4,
+    /// LZ4 over the byte-plane form of a video payload.
+    Lz4Planes,
 }
 
 impl Compression {
@@ -398,6 +408,7 @@ impl Compression {
         match self {
             Compression::None => 0,
             Compression::Lz4 => 1,
+            Compression::Lz4Planes => 2,
         }
     }
 
@@ -405,6 +416,7 @@ impl Compression {
         match id {
             0 => Some(Compression::None),
             1 => Some(Compression::Lz4),
+            2 => Some(Compression::Lz4Planes),
             _ => None,
         }
     }

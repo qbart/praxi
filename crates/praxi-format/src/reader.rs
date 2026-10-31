@@ -1,7 +1,7 @@
 use crate::{
     CHUNK_HEADER_SIZE, ChunkHeader, Compression, Error, HEADER_SIZE, Header, INDEX_ENTRY_SIZE,
     IndexEntry, MAGIC, Result, AUDIO_NAME_SIZE, AudioParams, CUE_NAME_SIZE, CueParams, SampleFormat, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
-    TimeBase, VERSION_MAJOR, VideoParams, corrupt, le_u16, le_u32, le_u64,
+    TimeBase, VERSION_MAJOR, VideoParams, corrupt, from_planes, le_u16, le_u32, le_u64,
 };
 use std::io::{Read, Seek, SeekFrom};
 
@@ -14,6 +14,7 @@ pub struct Reader<R: Read + Seek> {
     /// Offset of the next chunk header.
     pos: u64,
     scratch: Vec<u8>,
+    planes: Vec<u8>,
 }
 
 impl<R: Read + Seek> Reader<R> {
@@ -49,7 +50,7 @@ impl<R: Read + Seek> Reader<R> {
         if header.index_offset < data_start {
             return corrupt(format!("index offset {} inside stream table", header.index_offset));
         }
-        Ok(Reader { inner, header, streams, data_start, pos: data_start, scratch: Vec::new() })
+        Ok(Reader { inner, header, streams, data_start, pos: data_start, scratch: Vec::new(), planes: Vec::new() })
     }
 
     pub fn header(&self) -> &Header {
@@ -114,6 +115,16 @@ impl<R: Read + Seek> Reader<R> {
         if chunk.stream as usize >= self.streams.len() {
             return corrupt(format!("chunk at {} has unknown stream {}", chunk.offset, chunk.stream));
         }
+        if compression == Compression::Lz4Planes {
+            let Some(v) = self.streams[chunk.stream as usize].video_params() else {
+                return corrupt(format!("chunk at {offset} uses byte planes outside a video stream"));
+            };
+            let prefix = v.plane_prefix(chunk.keyframe());
+            let raw = chunk.raw_size as usize;
+            if raw < prefix || !(raw - prefix).is_multiple_of(v.format.block_bytes() as usize) {
+                return corrupt(format!("chunk at {offset} has no whole blocks for byte planes"));
+            }
+        }
         if compression == Compression::None && chunk.stored_size != chunk.raw_size {
             return corrupt(format!("uncompressed chunk at {} has mismatched sizes", chunk.offset));
         }
@@ -132,11 +143,18 @@ impl<R: Read + Seek> Reader<R> {
             Compression::Lz4 => {
                 self.scratch.resize(chunk.stored_size as usize, 0);
                 self.inner.read_exact(&mut self.scratch)?;
-                match lz4_flex::block::decompress_into(&self.scratch, out) {
-                    Ok(n) if n == out.len() => {}
-                    Ok(n) => return corrupt(format!("chunk at {} decompressed to {n} bytes, expected {}", chunk.offset, out.len())),
-                    Err(e) => return corrupt(format!("chunk at {}: {e}", chunk.offset)),
-                }
+                decompress(&self.scratch, out, chunk)?;
+            }
+            Compression::Lz4Planes => {
+                self.scratch.resize(chunk.stored_size as usize, 0);
+                self.inner.read_exact(&mut self.scratch)?;
+                self.planes.resize(out.len(), 0);
+                decompress(&self.scratch, &mut self.planes, chunk)?;
+                // chunk_at checked that this is a video stream with whole blocks.
+                let v = self.streams[chunk.stream as usize].video_params().expect("video stream");
+                let prefix = v.plane_prefix(chunk.keyframe());
+                out[..prefix].copy_from_slice(&self.planes[..prefix]);
+                from_planes(&self.planes[prefix..], v.format.block_bytes() as usize, &mut out[prefix..]);
             }
         }
         Ok(())
@@ -223,5 +241,13 @@ fn padded_text(i: usize, b: &[u8]) -> Result<String> {
     match std::str::from_utf8(&b[..end]) {
         Ok(s) => Ok(s.to_string()),
         Err(_) => corrupt(format!("stream {i}: invalid UTF-8 in stream name")),
+    }
+}
+
+fn decompress(stored: &[u8], out: &mut [u8], chunk: &ChunkHeader) -> Result<()> {
+    match lz4_flex::block::decompress_into(stored, out) {
+        Ok(n) if n == out.len() => Ok(()),
+        Ok(n) => corrupt(format!("chunk at {} decompressed to {n} bytes, expected {}", chunk.offset, out.len())),
+        Err(e) => corrupt(format!("chunk at {}: {e}", chunk.offset)),
     }
 }
