@@ -1,13 +1,13 @@
 //! `praxi` command line tool (`docs/features/encoder.md`).
 
 use clap::{Parser, Subcommand, ValueEnum};
-use praxi_encoder::{CueConfig, Encoder, EncoderConfig, Quality, VariantConfig};
+use praxi_encoder::{AudioTrackConfig, CueConfig, Encoder, EncoderConfig, Quality, SampleFormat, VariantConfig};
 use praxi::{Capabilities, Player};
 use praxi_format::{Cue, Reader, StreamParams, TextureFormat, Value};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Child, Command, ExitCode, Stdio};
 use std::time::Instant;
 
 #[derive(Parser)]
@@ -57,6 +57,26 @@ struct EncodeArgs {
     /// Encode only the first N frames.
     #[arg(long)]
     frames: Option<u64>,
+    /// Leave audio out.
+    #[arg(long)]
+    no_audio: bool,
+    /// Audio variant in an ffmpeg channel layout, e.g. stereo or 5.1 (repeatable; default: source layout).
+    #[arg(long = "audio-layout")]
+    audio_layouts: Vec<String>,
+    /// Resample audio to this rate in Hz.
+    #[arg(long)]
+    audio_rate: Option<u32>,
+    #[arg(long, value_enum, default_value_t = SampleFormatArg::S16)]
+    audio_format: SampleFormatArg,
+    /// Audio track name.
+    #[arg(long, default_value = "main")]
+    audio_name: String,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SampleFormatArg {
+    S16,
+    F32,
 }
 
 #[derive(clap::Args)]
@@ -192,6 +212,98 @@ fn probe(input: &Path) -> AnyResult<Probe> {
     })
 }
 
+struct AudioProbe {
+    sample_rate: u32,
+    channels: u16,
+    layout: String,
+}
+
+/// Probes the first audio stream; `None` when the input has none.
+fn probe_audio(input: &Path) -> AnyResult<Option<AudioProbe>> {
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate,channels,channel_layout", "-of", "default=noprint_wrappers=1"])
+        .arg(input)
+        .output()
+        .map_err(|e| format!("cannot run ffprobe: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("ffprobe failed: {}", String::from_utf8_lossy(&out.stderr).trim()).into());
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let field = |key: &str| text.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('='))).map(str::trim);
+    let (Some(rate), Some(channels)) = (field("sample_rate"), field("channels")) else {
+        return Ok(None);
+    };
+    Ok(Some(AudioProbe {
+        sample_rate: rate.parse()?,
+        channels: channels.parse()?,
+        layout: field("channel_layout").unwrap_or("").to_string(),
+    }))
+}
+
+/// WAVE speaker bits, in bit order, by ffmpeg channel name.
+const SPEAKERS: [&str; 18] =
+    ["FL", "FR", "FC", "LFE", "BL", "BR", "FLC", "FRC", "BC", "SL", "SR", "TC", "TFL", "TFC", "TFR", "TBL", "TBC", "TBR"];
+
+/// ffmpeg's standard layouts made of WAVE speakers (`ffmpeg -layouts`).
+const LAYOUTS: [(&str, &str); 25] = [
+    ("mono", "FC"),
+    ("stereo", "FL+FR"),
+    ("2.1", "FL+FR+LFE"),
+    ("3.0", "FL+FR+FC"),
+    ("3.0(back)", "FL+FR+BC"),
+    ("4.0", "FL+FR+FC+BC"),
+    ("quad", "FL+FR+BL+BR"),
+    ("quad(side)", "FL+FR+SL+SR"),
+    ("3.1", "FL+FR+FC+LFE"),
+    ("5.0", "FL+FR+FC+BL+BR"),
+    ("5.0(side)", "FL+FR+FC+SL+SR"),
+    ("4.1", "FL+FR+FC+LFE+BC"),
+    ("5.1", "FL+FR+FC+LFE+BL+BR"),
+    ("5.1(side)", "FL+FR+FC+LFE+SL+SR"),
+    ("6.0", "FL+FR+FC+BC+SL+SR"),
+    ("6.0(front)", "FL+FR+FLC+FRC+SL+SR"),
+    ("3.1.2", "FL+FR+FC+LFE+TFL+TFR"),
+    ("hexagonal", "FL+FR+FC+BL+BR+BC"),
+    ("6.1", "FL+FR+FC+LFE+BC+SL+SR"),
+    ("6.1(back)", "FL+FR+FC+LFE+BL+BR+BC"),
+    ("6.1(front)", "FL+FR+LFE+FLC+FRC+SL+SR"),
+    ("7.0", "FL+FR+FC+BL+BR+SL+SR"),
+    ("7.0(front)", "FL+FR+FC+FLC+FRC+SL+SR"),
+    ("7.1", "FL+FR+FC+LFE+BL+BR+SL+SR"),
+    ("7.1(wide)", "FL+FR+FC+LFE+BL+BR+FLC+FRC"),
+];
+
+/// Channel mask and channel count of a standard ffmpeg layout.
+fn layout_mask(name: &str) -> Option<(u32, u16)> {
+    let (_, speakers) = LAYOUTS.iter().find(|(n, _)| *n == name)?;
+    let mut mask = 0u32;
+    for s in speakers.split('+') {
+        mask |= 1 << SPEAKERS.iter().position(|n| *n == s)?;
+    }
+    Some((mask, mask.count_ones() as u16))
+}
+
+/// Starts an ffmpeg process decoding the first audio stream to `f32le` on its stdout.
+fn spawn_audio(args: &EncodeArgs, layout: Option<&str>, seconds: Option<f64>) -> AnyResult<Child> {
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-v", "error", "-nostdin", "-i"]).arg(&args.input).args(["-map", "0:a:0", "-vn"]);
+    if let Some(s) = seconds {
+        cmd.args(["-t", &format!("{s:.6}")]);
+    }
+    if let Some(l) = layout {
+        cmd.args(["-af", &format!("aformat=channel_layouts={l}")]);
+    }
+    if let Some(r) = args.audio_rate {
+        cmd.args(["-ar", &r.to_string()]);
+    }
+    let child = cmd
+        .args(["-f", "f32le", "-acodec", "pcm_f32le", "-"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run ffmpeg: {e}"))?;
+    Ok(child)
+}
+
 fn pix_fmt_has_alpha(pix_fmt: &str) -> bool {
     ["yuva", "gbrap", "rgba", "bgra", "argb", "abgr", "ya8", "ya16", "pal8"].iter().any(|p| pix_fmt.starts_with(p))
 }
@@ -216,8 +328,39 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
         };
         config = config.variant(variant.quality(quality));
     }
-    for cue in args.cues {
-        config = config.cue_with(cue);
+    for cue in &args.cues {
+        config = config.cue_with(cue.clone());
+    }
+    let mut children = Vec::new();
+    let audio = if args.no_audio { None } else { probe_audio(&args.input)? };
+    if let Some(a) = &audio {
+        let seconds = args.frames.map(|n| n as f64 * p.fps_den as f64 / p.fps_num as f64);
+        let format = match args.audio_format {
+            SampleFormatArg::S16 => SampleFormat::S16,
+            SampleFormatArg::F32 => SampleFormat::F32,
+        };
+        let rate = args.audio_rate.unwrap_or(a.sample_rate);
+        let variants: Vec<(Option<&str>, u32, u16)> = if args.audio_layouts.is_empty() {
+            let mask = layout_mask(&a.layout).filter(|(_, n)| *n == a.channels).map_or(0, |(m, _)| m);
+            vec![(None, mask, a.channels)]
+        } else {
+            let mut v = Vec::new();
+            for l in &args.audio_layouts {
+                let (mask, channels) = layout_mask(l).ok_or_else(|| format!("unknown audio layout {l:?}, see ffmpeg -layouts"))?;
+                v.push((Some(l.as_str()), mask, channels));
+            }
+            v
+        };
+        for (layout, mask, channels) in variants {
+            let mut child = spawn_audio(&args, layout, seconds)?;
+            let stdout = child.stdout.take().ok_or("no ffmpeg stdout")?;
+            children.push(child);
+            let track = AudioTrackConfig::from_reader(args.audio_name.clone(), rate, channels, stdout)
+                .channel_mask(mask)
+                .format(format);
+            config = config.audio(track);
+            eprintln!("audio: {rate} Hz, {channels} channels {}", layout.unwrap_or(&a.layout));
+        }
     }
     eprintln!(
         "{}: {}x{} @ {}/{} fps{}",
@@ -232,7 +375,7 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
     let out = BufWriter::new(File::create(&args.output)?);
     let mut encoder = Encoder::new(out, config)?;
     let mut ffmpeg = Command::new("ffmpeg");
-    ffmpeg.args(["-v", "error", "-i"]).arg(&args.input);
+    ffmpeg.args(["-v", "error", "-nostdin", "-i"]).arg(&args.input);
     if let Some(n) = args.frames {
         ffmpeg.args(["-frames:v", &n.to_string()]);
     }
@@ -256,6 +399,12 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
         return Err(format!("ffmpeg exited with {status}").into());
     }
     let (_, stats) = encoder.finish()?;
+    for mut child in children {
+        let status = child.wait()?;
+        if !status.success() {
+            return Err(format!("ffmpeg (audio) exited with {status}").into());
+        }
+    }
     eprintln!("\rencoded {} frames in {:.1} s", stats.frames, started.elapsed().as_secs_f64());
 
     let secs = (stats.duration_us as f64 / 1e6).max(1e-9);
@@ -264,6 +413,10 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
         let name = v.format.map_or("?", |f| f.name());
         let skipped = 100.0 * v.skipped_blocks as f64 / v.blocks.max(1) as f64;
         println!("{:<10} {:>12} {:>9.2} {:>8.1}% {:>9}", name, v.bytes, v.bytes as f64 / 1e6 / secs, skipped, v.keyframes);
+    }
+    for a in &stats.audio {
+        let name = format!("audio {}ch", a.channels);
+        println!("{:<10} {:>12} {:>9.2}  {:?}, {} frames", name, a.bytes, a.bytes as f64 / 1e6 / secs, a.name, a.frames);
     }
     Ok(())
 }
@@ -340,6 +493,15 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
                 if v.srgb() { " sRGB" } else { "" },
                 if v.alpha() { " alpha" } else { "" }
             ),
+            StreamParams::Audio(a) => format!(
+                "audio {:?} {} Hz {} ch mask {:#x} {} preload {} ms",
+                a.name,
+                a.sample_rate,
+                a.channels,
+                a.channel_mask,
+                a.format,
+                a.preload_us / 1000
+            ),
             StreamParams::Cues(c) => format!("cues {:?}  max duration {}", c.name, c.max_duration),
             StreamParams::Unknown(kind) => format!("unknown kind {kind}"),
         };
@@ -352,6 +514,7 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
         let mut payload = Vec::new();
         while let Some(c) = r.next_chunk()? {
             let is_cue = r.streams()[c.stream as usize].cue_params().is_some();
+            let audio_frame = r.streams()[c.stream as usize].audio_params().map(|a| a.frame_bytes());
             print!(
                 "{:>10}  stream {}  pts {:>8}  {}  {:?}  {} -> {}",
                 c.offset,
@@ -365,6 +528,9 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
             if is_cue {
                 r.read_payload(&c, &mut payload)?;
                 print!("  {}", describe_cue(&Cue::decode(&payload)?));
+            }
+            if let Some(frame_bytes) = audio_frame {
+                print!("  {} frames", c.raw_size as usize / frame_bytes);
             }
             println!();
         }
