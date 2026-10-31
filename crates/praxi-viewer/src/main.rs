@@ -404,7 +404,7 @@ impl Viewer {
         #[cfg(feature = "audio")]
         let audio_clock = audio.is_some() && args.clock == ClockArg::Audio;
         if !args.paused {
-            player.play();
+            player.play()?;
         }
         let now = Instant::now();
         Ok(Viewer {
@@ -448,7 +448,7 @@ impl Viewer {
             Key::Named(NamedKey::Escape) => return Ok(true),
             Key::Character(c) if c.eq_ignore_ascii_case("q") => return Ok(true),
             Key::Named(NamedKey::Space) if p.is_playing() => p.pause(),
-            Key::Named(NamedKey::Space) => p.play(),
+            Key::Named(NamedKey::Space) => p.play()?,
             Key::Named(NamedKey::ArrowLeft) => p.seek(p.position().saturating_sub(step))?,
             Key::Named(NamedKey::ArrowRight) => p.seek((p.position() + step).min(p.duration()))?,
             Key::Named(NamedKey::Home) => p.seek(Duration::ZERO)?,

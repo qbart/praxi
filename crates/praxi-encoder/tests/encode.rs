@@ -43,7 +43,7 @@ fn config() -> EncoderConfig {
 /// Every frame of `file` for `format`, as reconstructed by the player.
 fn play_all(file: Vec<u8>, format: TextureFormat) -> (Vec<Vec<u8>>, Vec<Event>) {
     let mut p = Player::open(Cursor::new(file), &Capabilities::new([format])).unwrap();
-    p.play();
+    p.play().unwrap();
     let mut out = Vec::new();
     let mut events = Vec::new();
     p.advance(Duration::ZERO).unwrap();
@@ -199,7 +199,7 @@ fn play_audio(file: Vec<u8>, caps: Capabilities) -> (Player<Cursor<Vec<u8>>>, Ve
     let mut p = Player::open(Cursor::new(file), &caps).unwrap();
     let outputs: Vec<_> = (0..p.audio_tracks().len()).map(|t| p.audio_output(t).unwrap()).collect();
     let mut heard = vec![Vec::new(); outputs.len()];
-    p.play();
+    p.play().unwrap();
     p.advance(Duration::ZERO).unwrap();
     while !p.is_finished() {
         for (out, h) in outputs.iter().zip(&mut heard) {

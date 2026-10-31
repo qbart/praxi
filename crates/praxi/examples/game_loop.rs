@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         thread::spawn(move || audio_device(out, &stop, &frames))
     });
 
-    player.play();
+    player.play()?;
     let start = Instant::now();
     let (mut frames, mut advance_total, mut advance_max) = (0u32, Duration::ZERO, Duration::ZERO);
     let mut last = start;

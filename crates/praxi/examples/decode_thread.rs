@@ -130,7 +130,7 @@ fn decode(
         send_frame(player, video, &mut sent);
     }
     let mut current = 0;
-    players[0].play();
+    players[0].play().map_err(|e| e.to_string())?;
 
     let started = Instant::now();
     let mut decode_time = Duration::ZERO;
@@ -146,7 +146,7 @@ fn decode(
         send_frame(player, current, &mut sent);
         if finished && current + 1 < players.len() {
             current += 1;
-            players[current].play();
+            players[current].play().map_err(|e| e.to_string())?;
         }
         decode_time += t.elapsed();
         let _ = results.send(ToGame::Advanced);

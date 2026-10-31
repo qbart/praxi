@@ -108,10 +108,8 @@ fn queues_preload_ahead_of_the_clock() {
     let out = p.audio_output(0).unwrap();
     assert_eq!(out.read(&mut [0.0; 64]), 0, "nothing before play");
 
-    p.play();
-    assert_eq!(out.read(&mut [0.0; 64]), 0, "nothing decoded before the first advance");
-    p.advance(Duration::ZERO).unwrap();
-    assert_eq!(read_frames(&out, 1000), range(0, 300), "chunks due at 0 cover 300 ms");
+    p.play().unwrap();
+    assert_eq!(read_frames(&out, 1000), range(0, 300), "play queues the chunks due at 0: 300 ms");
     assert_eq!(out.read(&mut [0.0; 64]), 0);
     p.advance(100 * MS).unwrap();
     assert_eq!(read_frames(&out, 1000), range(300, 400));
@@ -124,8 +122,7 @@ fn queues_preload_ahead_of_the_clock() {
 fn converts_f32_and_mono() {
     let mut p = open(caps().max_audio_channels(1));
     let out = p.audio_output(0).unwrap();
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     let mut buf = [0.0; 4];
     assert_eq!(out.read(&mut buf), 4);
     assert_eq!(buf, [0.0, 0.001, 0.002, 0.003]);
@@ -135,12 +132,11 @@ fn converts_f32_and_mono() {
 fn pause_stops_reads_and_keeps_samples() {
     let mut p = open(caps());
     let out = p.audio_output(0).unwrap();
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     assert_eq!(read_frames(&out, 10), range(0, 10));
     p.pause();
     assert_eq!(out.read(&mut [0.0; 64]), 0);
-    p.play();
+    p.play().unwrap();
     assert_eq!(read_frames(&out, 10), range(10, 20));
 }
 
@@ -148,7 +144,7 @@ fn pause_stops_reads_and_keeps_samples() {
 fn late_reads_skip_to_the_clock() {
     let mut p = open(caps());
     let out = p.audio_output(0).unwrap();
-    p.play();
+    p.play().unwrap();
     p.advance(50 * MS).unwrap();
     assert_eq!(read_frames(&out, 5), range(0, 5), "50 ms behind is within the tolerance");
     p.advance(200 * MS).unwrap();
@@ -165,7 +161,7 @@ fn seek_refills_from_the_target() {
     let out = p.audio_output(0).unwrap();
     p.seek(330 * MS).unwrap();
     assert_eq!(out.read(&mut [0.0; 64]), 0, "stopped");
-    p.play();
+    p.play().unwrap();
     assert_eq!(read_frames(&out, 1000), range(330, 500), "decoded up to the end of the audio");
 
     p.seek(120 * MS).unwrap();
@@ -177,8 +173,7 @@ fn loops_seamlessly_with_reads_ahead() {
     let mut p = open(caps());
     let out = p.audio_output(0).unwrap();
     p.set_looping(true);
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     // The reader keeps 50 ms ahead of the clock, like an audio callback filling a buffer.
     let mut heard = read_frames(&out, 50);
     for _ in 0..120 {
@@ -196,8 +191,7 @@ fn finished_and_disabled_tracks_return_nothing() {
     let mut p = open(caps());
     let voice = p.audio_output(1).unwrap();
     p.set_audio_track_enabled(1, false);
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     assert_eq!(voice.read(&mut [0.0; 64]), 0);
 
     p.advance(150 * MS).unwrap();
@@ -211,8 +205,7 @@ fn finished_and_disabled_tracks_return_nothing() {
     p.advance(Duration::from_secs(1)).unwrap();
     assert!(p.is_finished());
     assert_eq!(music.read(&mut [0.0; 64]), 0);
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     assert_eq!(read_frames(&music, 3), range(0, 3), "play after finish starts over");
 }
 
@@ -222,8 +215,7 @@ fn outputs_work_from_another_thread() {
     assert_send_sync::<AudioOutput>();
     let mut p = open(caps());
     let out = p.audio_output(0).unwrap();
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     let frames = std::thread::spawn(move || read_frames(&out, 100)).join().unwrap();
     assert_eq!(frames, range(0, 100));
 }
@@ -305,8 +297,7 @@ fn audio_clock_follows_device_drift() {
         let mut p = Player::open(Cursor::new(long_file(20)), &caps()).unwrap();
         p.set_clock(Clock::Audio { track: 0, latency: Device::LATENCY });
         let mut device = Device::new(p.audio_output(0).unwrap(), speed);
-        p.play();
-        p.advance(Duration::ZERO).unwrap(); // decodes the first chunks before the device reads
+        p.play().unwrap();
         let positions = play_with(&mut p, &mut device, 625); // 10 s of game time
         assert!(positions.windows(2).all(|w| w[1] >= w[0]), "speed {speed}: the clock never goes back");
         assert_eq!(device.frames[0], 0);
@@ -319,8 +310,7 @@ fn audio_clock_follows_device_drift() {
     // With the game clock, a slow device falls behind and its reads skip forward.
     let mut p = Player::open(Cursor::new(long_file(20)), &caps()).unwrap();
     let mut device = Device::new(p.audio_output(0).unwrap(), 0.99);
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     let positions = play_with(&mut p, &mut device, 625);
     assert_eq!(*positions.last().unwrap(), 10_000.0);
     assert!(!contiguous(&device.frames));
@@ -331,8 +321,7 @@ fn audio_clock_runs_on_dt_while_audio_stalls() {
     let mut p = Player::open(Cursor::new(long_file(20)), &caps()).unwrap();
     p.set_clock(Clock::Audio { track: 0, latency: Device::LATENCY });
     let mut device = Device::new(p.audio_output(0).unwrap(), 1.0);
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     play_with(&mut p, &mut device, 60); // 960 ms
     let before = p.position().as_secs_f64() * 1000.0;
     // The engine stops reading for 480 ms.
@@ -357,8 +346,7 @@ fn audio_clock_jumps_to_audio_ahead() {
     let mut p = Player::open(Cursor::new(long_file(20)), &caps()).unwrap();
     p.set_clock(Clock::Audio { track: 0, latency: Duration::ZERO });
     let out = p.audio_output(0).unwrap();
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     let mut buf = [0.0; 150];
     assert_eq!(out.read(&mut buf), 150);
     p.advance(16 * MS).unwrap();
@@ -372,7 +360,7 @@ fn audio_clock_without_master_runs_on_dt() {
         p.set_clock(clock);
         assert_eq!(p.clock(), clock);
         p.set_audio_track_enabled(0, false);
-        p.play();
+        p.play().unwrap();
         for _ in 0..100 {
             p.advance(16 * MS).unwrap();
         }

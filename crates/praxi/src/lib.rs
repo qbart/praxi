@@ -457,13 +457,13 @@ impl<R: Read + Seek> Player<R> {
         }
     }
 
-    pub fn play(&mut self) {
+    /// Starts or resumes playback and decodes every chunk due at the current clock.
+    pub fn play(&mut self) -> Result<()> {
         match self.state {
-            State::Playing => {}
+            State::Playing => return Ok(()),
             State::Paused => {
                 self.state = State::Playing;
                 self.events.push_back(Event::Resumed);
-                self.sync_audio();
             }
             State::Stopped | State::Finished => {
                 if self.state == State::Finished {
@@ -471,9 +471,9 @@ impl<R: Read + Seek> Player<R> {
                 }
                 self.state = State::Playing;
                 self.events.push_back(Event::Started);
-                self.sync_audio();
             }
         }
+        self.decode_due()
     }
 
     pub fn pause(&mut self) {
@@ -526,6 +526,11 @@ impl<R: Read + Seek> Player<R> {
         let dt_ns = dt.as_nanos() + self.dt_carry_ns as u128;
         self.dt_carry_ns = (dt_ns % 1000) as u32;
         self.clock_us = self.next_clock((dt_ns / 1000).min(u64::MAX as u128) as u64);
+        self.decode_due()
+    }
+
+    /// Decodes every chunk due at the clock, then loops or finishes at the end.
+    fn decode_due(&mut self) -> Result<()> {
         loop {
             self.process_due(true)?;
             if !(self.at_end && self.clock_us >= self.duration_us) {

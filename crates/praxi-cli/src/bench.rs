@@ -128,11 +128,15 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
         let mut times = Vec::new();
         for _ in 0..args.passes {
             let mut player = open_variant(&encoded.path, format)?;
-            player.play();
             for i in 0..stats.frames {
                 let dt = frame_us(i) - frame_us(i.saturating_sub(1));
                 let start = Instant::now();
-                player.advance(Duration::from_micros(dt))?;
+                // `play()` decodes the first frame.
+                if i == 0 {
+                    player.play()?;
+                } else {
+                    player.advance(Duration::from_micros(dt))?;
+                }
                 times.push(start.elapsed());
                 check_frame(&player, i, frame_us(i))?;
             }
@@ -144,7 +148,7 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
     let mut players = Vec::new();
     for &format in &formats {
         let mut player = open_variant(&encoded.path, format)?;
-        player.play();
+        player.play()?;
         players.push(player);
     }
     let mut quality: Vec<(f64, f64)> = vec![(0.0, PSNR_CAP); formats.len()]; // (summed MSE, worst frame PSNR)

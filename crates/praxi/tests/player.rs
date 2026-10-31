@@ -117,10 +117,9 @@ fn plays_frames_and_emits_events() {
     p.advance(100 * MS).unwrap();
     assert!(p.video_frame(0).is_none(), "stopped players ignore advance");
 
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     assert_eq!(log.take(&mut p), ["started"]);
-    let f = p.video_frame(0).unwrap();
+    let f = p.video_frame(0).expect("play decodes the first frame");
     assert_eq!((f.format, f.srgb, f.width, f.height), (TextureFormat::Bc1, true, 8, 4));
     assert_eq!(f.data, bc1_frame(0));
     let first_index = f.index;
@@ -150,8 +149,7 @@ fn plays_frames_and_emits_events() {
     assert_eq!(p.position(), 500 * MS);
     assert_eq!(p.video_frame(0).unwrap().data, bc1_frame(4), "last frame stays visible");
 
-    p.play();
-    p.advance(Duration::ZERO).unwrap();
+    p.play().unwrap();
     assert_eq!(log.take(&mut p), ["started"]);
     assert_eq!(p.video_frame(0).unwrap().data, bc1_frame(0), "play after finish restarts");
 }
@@ -159,7 +157,7 @@ fn plays_frames_and_emits_events() {
 #[test]
 fn cue_event_carries_fields() {
     let mut p = open(&[TextureFormat::Bc1]);
-    p.play();
+    p.play().unwrap();
     p.advance(130 * MS).unwrap();
     let cue = std::iter::from_fn(|| p.poll_event())
         .find_map(|e| match e {
@@ -175,13 +173,13 @@ fn cue_event_carries_fields() {
 fn pause_and_resume() {
     let mut log = Log::default();
     let mut p = open(&[TextureFormat::Bc1]);
-    p.play();
+    p.play().unwrap();
     p.advance(100 * MS).unwrap();
     p.pause();
     p.advance(Duration::from_secs(5)).unwrap();
     assert_eq!(p.position(), 100 * MS);
     assert_eq!(p.video_frame(0).unwrap().data, bc1_frame(1));
-    p.play();
+    p.play().unwrap();
     assert!(p.is_playing());
     assert_eq!(log.take(&mut p), ["started", "paused", "resumed"]);
 }
@@ -191,7 +189,7 @@ fn loops_with_carry_over() {
     let mut log = Log::default();
     let mut p = open(&[TextureFormat::Bc1]);
     p.set_looping(true);
-    p.play();
+    p.play().unwrap();
     p.advance(480 * MS).unwrap();
     assert_eq!(
         log.take(&mut p),
@@ -218,7 +216,7 @@ fn seeks_from_preceding_keyframe() {
     assert_eq!(p.video_frame(0).unwrap().data, bc1_frame(2), "deltas replayed from keyframe 0");
     assert_eq!(log.take(&mut p), ["end red", "end blue", "seeked@250", "cue red@120", "cue blue@250"]);
 
-    p.play();
+    p.play().unwrap();
     p.advance(200 * MS).unwrap();
     assert_eq!(log.take(&mut p), ["started", "end red", "end blue", "cue b@420", "cue long@450"]);
     assert_eq!(p.video_frame(0).unwrap().data, bc1_frame(4));
@@ -241,7 +239,7 @@ fn cue_streams_can_be_disabled() {
             CueStreamInfo { stream: 3, name: "gameplay".into() },
         ]
     );
-    p.play();
+    p.play().unwrap();
     p.advance(130 * MS).unwrap();
     assert_eq!(log.take(&mut p), ["started", "cue red@120"]);
     p.set_cue_stream_enabled(3, false);
@@ -254,7 +252,7 @@ fn cue_streams_can_be_disabled() {
 #[test]
 fn sub_microsecond_steps_add_up() {
     let mut p = open(&[TextureFormat::Bc1]);
-    p.play();
+    p.play().unwrap();
     // 144 Hz: 6944.44 us per frame; truncating each step would lose 0.44 us a frame.
     let frame = Duration::from_nanos(6_944_444);
     for _ in 0..36 {

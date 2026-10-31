@@ -182,17 +182,18 @@ impl Game {
             auto,
         };
         if auto {
-            game.start_cutscene();
+            game.start_cutscene()?;
         }
         Ok(game)
     }
 
-    fn start_cutscene(&mut self) {
+    fn start_cutscene(&mut self) -> Result<(), String> {
         if self.phase == Phase::Gameplay {
             println!("cutscene: start");
-            self.player.play();
+            self.player.play().map_err(|e| e.to_string())?;
             self.phase = Phase::Cutscene { since: Instant::now() };
         }
+        Ok(())
     }
 
     fn end_cutscene(&mut self) {
@@ -331,7 +332,12 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed && !event.repeat => {
                 match event.logical_key {
-                    Key::Named(NamedKey::Space) => game.start_cutscene(),
+                    Key::Named(NamedKey::Space) => {
+                        if let Err(e) = game.start_cutscene() {
+                            self.error = Some(e);
+                            event_loop.exit();
+                        }
+                    }
                     Key::Named(NamedKey::Escape) if game.phase == Phase::Gameplay => event_loop.exit(),
                     Key::Named(NamedKey::Escape) => game.end_cutscene(),
                     _ => {}
