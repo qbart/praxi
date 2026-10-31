@@ -5,6 +5,9 @@ use crate::{
 };
 use std::io::{Seek, SeekFrom, Write};
 
+/// Default of [`Writer::set_plane_min_saving`], in percent.
+pub const DEFAULT_PLANE_MIN_SAVING: f64 = 8.0;
+
 /// Writes a praxi file. Chunks must be written in time order (`docs/spec/PRAXI.md#ordering`).
 pub struct Writer<W: Write + Seek> {
     inner: W,
@@ -20,6 +23,7 @@ pub struct Writer<W: Write + Seek> {
     scratch: Vec<u8>,
     planes: Vec<u8>,
     planes_lz4: Vec<u8>,
+    plane_min_saving: f64,
     cue_payload: Vec<u8>,
 }
 
@@ -74,6 +78,7 @@ impl<W: Write + Seek> Writer<W> {
             scratch: Vec::new(),
             planes: Vec::new(),
             planes_lz4: Vec::new(),
+            plane_min_saving: DEFAULT_PLANE_MIN_SAVING,
             cue_payload: Vec::new(),
         })
     }
@@ -87,8 +92,15 @@ impl<W: Write + Seek> Writer<W> {
         self.offset
     }
 
+    /// Sets how many percent byte planes must save over raw or LZ4 before `write_chunk`
+    /// picks them on its own (default [`DEFAULT_PLANE_MIN_SAVING`]). Clamped to `0..=100`.
+    pub fn set_plane_min_saving(&mut self, percent: f64) {
+        self.plane_min_saving = if percent.is_nan() { DEFAULT_PLANE_MIN_SAVING } else { percent.clamp(0.0, 100.0) };
+    }
+
     /// Writes one chunk of a video stream. `compression = Some(c)` forces `c`; `None` picks
-    /// the smallest of none, LZ4 and LZ4 over byte planes. Cue streams take [`Writer::write_cue`],
+    /// raw or LZ4, whichever is smaller, or LZ4 over byte planes when that is smaller by at
+    /// least the plane saving threshold (`docs/features/video-codec.md`). Cue streams take [`Writer::write_cue`],
     /// audio streams [`Writer::write_audio`].
     pub fn write_chunk(
         &mut self,
@@ -199,9 +211,13 @@ impl<W: Write + Seek> Writer<W> {
             None => {
                 self.scratch = lz4_flex::block::compress(payload);
                 let mut best = if self.scratch.len() < payload.len() { Compression::Lz4 } else { Compression::None };
-                if let Some(layout) = plane_layout {
+                if let Some(layout) = plane_layout
+                    && self.plane_min_saving < 100.0
+                {
                     planes(self, layout);
-                    if self.planes_lz4.len() < self.scratch.len().min(payload.len()) {
+                    let other = self.scratch.len().min(payload.len());
+                    let limit = other as f64 * (1.0 - self.plane_min_saving / 100.0);
+                    if self.planes_lz4.len() < other && self.planes_lz4.len() as f64 <= limit {
                         best = Compression::Lz4Planes;
                     }
                 }

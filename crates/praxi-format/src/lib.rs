@@ -8,7 +8,7 @@ mod writer;
 pub use cue::{Cue, Value};
 pub use planes::{from_planes, to_planes};
 pub use reader::Reader;
-pub use writer::Writer;
+pub use writer::{DEFAULT_PLANE_MIN_SAVING, Writer};
 
 use std::fmt;
 

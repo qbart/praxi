@@ -61,6 +61,8 @@ pub struct Settings {
     pub rdo: f64,
     pub keyint: u32,
     pub skip_threshold: u8,
+    #[serde(default)]
+    pub plane_min_saving: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -212,6 +214,7 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
             rdo: args.video.rdo as f64,
             keyint: args.video.keyint,
             skip_threshold: args.video.skip_threshold,
+            plane_min_saving: args.video.plane_min_saving,
         },
         encode_seconds,
         variants,
@@ -366,7 +369,7 @@ mod tests {
             fps_num: 30,
             fps_den: 1,
             frames: 10,
-            settings: Settings { quality: "fast".into(), rdo: 0.0, keyint: 60, skip_threshold: 3 },
+            settings: Settings { quality: "fast".into(), rdo: 0.0, keyint: 60, skip_threshold: 3, plane_min_saving: 8.0 },
             encode_seconds: 1.0,
             variants: vec![VariantResult {
                 format: "bc7".into(),

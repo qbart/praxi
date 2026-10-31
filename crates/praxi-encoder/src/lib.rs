@@ -228,6 +228,8 @@ pub struct EncoderConfig {
     pub variants: Vec<VariantConfig>,
     pub keyint: u32,
     pub skip_threshold: u8,
+    /// Percent byte planes must save before a chunk uses them (`docs/features/video-codec.md`).
+    pub plane_min_saving: f64,
     /// Cue streams; empty ones are left out of the file.
     pub cue_streams: Vec<CueStreamConfig>,
     /// Whether the alpha channel is meaningful (sets the stream's alpha flag).
@@ -253,6 +255,7 @@ impl EncoderConfig {
             variants: Vec::new(),
             keyint: 60,
             skip_threshold: 3,
+            plane_min_saving: praxi_format::DEFAULT_PLANE_MIN_SAVING,
             cue_streams: Vec::new(),
             alpha: false,
             threads: 0,
@@ -289,6 +292,12 @@ impl EncoderConfig {
 
     pub fn skip_threshold(mut self, threshold: u8) -> EncoderConfig {
         self.skip_threshold = threshold;
+        self
+    }
+
+    /// Use byte planes only when they save at least `percent` (0 to 100, default 8).
+    pub fn plane_min_saving(mut self, percent: f64) -> EncoderConfig {
+        self.plane_min_saving = percent;
         self
     }
 
@@ -414,6 +423,9 @@ impl<W: Write + Seek> Encoder<W> {
         if c.keyint == 0 {
             return Err(Error::Config("keyint must be at least 1".into()));
         }
+        if !(0.0..=100.0).contains(&config.plane_min_saving) {
+            return Err(Error::Config("plane_min_saving must be between 0 and 100".into()));
+        }
 
         let threads = match c.threads {
             0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
@@ -536,7 +548,8 @@ impl<W: Write + Seek> Encoder<W> {
             }
         }
         cues.sort_by_key(|(at, _, _)| *at);
-        let writer = Writer::new(out, streams)?;
+        let mut writer = Writer::new(out, streams)?;
+        writer.set_plane_min_saving(config.plane_min_saving);
         Ok(Encoder { writer, config, threads, variants, audio, time_base, cues, next_cue: 0, frame: 0 })
     }
 

@@ -79,6 +79,9 @@ struct VideoOptions {
     /// Temporal skip threshold.
     #[arg(long, default_value_t = 3)]
     skip_threshold: u8,
+    /// Use byte planes only when they save at least this many percent (0-100).
+    #[arg(long, default_value_t = praxi_format::DEFAULT_PLANE_MIN_SAVING)]
+    plane_min_saving: f64,
     /// Encode only the first N frames.
     #[arg(long)]
     frames: Option<u64>,
@@ -346,6 +349,7 @@ fn video_config(p: &Probe, o: &VideoOptions) -> EncoderConfig {
     let mut config = EncoderConfig::new(p.width, p.height, p.fps_num, p.fps_den)
         .keyint(o.keyint)
         .skip_threshold(o.skip_threshold)
+        .plane_min_saving(o.plane_min_saving)
         .alpha(p.alpha);
     for v in &o.variants {
         let variant = match v {
