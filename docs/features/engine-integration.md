@@ -99,7 +99,7 @@ video.draw(&mut pass, praxi_wgpu::Rect::fit(width, height, target_w, target_h));
 |---|---|---|
 | `game_loop` (crate `praxi`, no dependencies) | `cargo run --release -p praxi --example game_loop -- FILE` | The frame loop above at a fixed 60 Hz without a GPU: variant selection, uploads skipped when the frame index did not change, events, an audio "device" pulling from `AudioOutput` on another thread. Prints a summary. |
 | `decode_thread` (crate `praxi`, no dependencies) | `cargo run --release -p praxi --example decode_thread -- FILE [NEXT]` | The player on a worker thread, frames handed to the game thread in recycled buffers, events forwarded; with `NEXT`, a second file prerolled during the first and started on the next frame after the first finishes. |
-| `cutscene` (crate `praxi-wgpu`, window) | `cargo run --release -p praxi-wgpu --example cutscene -- FILE` | An animated stand-in for gameplay; Space starts the prerolled video with a fade-in over it, Escape skips with a fade-out, the end fades out by itself. `light.flash` cues flash the scene in their `color` field (`red`, `green`, `blue`, `white`). `--auto` starts at once and quits after the fade-out. |
+| `cutscene` (crate `praxi-wgpu`, window) | `cargo run --release -p praxi-wgpu --example cutscene -- FILE` | An animated stand-in for gameplay; Space starts the prerolled video with a fade-in over it, Escape skips with a fade-out, the end fades out by itself. `light.flash` cues flash the screen in their `color` field (`red`, `green`, `blue`, `white`). `--auto` starts at once and quits after the fade-out. |
 
 `make examples` encodes the first 2 seconds of the sample video with two cues and runs
 `game_loop` and `decode_thread` on it; CI runs it in the bench job.
