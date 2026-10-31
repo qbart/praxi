@@ -86,11 +86,10 @@ pub fn decode(src: &[u8], out: &mut [u8]) -> Result<(), &'static str> {
     let mut done = 0;
     if let Some(lim) = lim {
         let fast = o3.len() / PER_REFILL;
-        let groups = o0
-            .chunks_exact_mut(PER_REFILL)
-            .zip(o1.chunks_exact_mut(PER_REFILL))
-            .zip(o2.chunks_exact_mut(PER_REFILL))
-            .zip(o3.chunks_exact_mut(PER_REFILL))
+        let groups = o0.as_chunks_mut::<PER_REFILL>().0.iter_mut()
+            .zip(o1.as_chunks_mut::<PER_REFILL>().0)
+            .zip(o2.as_chunks_mut::<PER_REFILL>().0)
+            .zip(o3.as_chunks_mut::<PER_REFILL>().0)
             .take(fast);
         for (((c0, c1), c2), c3) in groups {
             if r0.pos.max(r1.pos).max(r2.pos).max(r3.pos) > lim {
@@ -289,8 +288,8 @@ mod tests {
                 x ^= x << 13;
                 x ^= x >> 7;
                 x ^= x << 17;
-                // Skewed: geometric-ish distribution over `bits` bits.
-                ((x as u8) & ((1u16 << bits) - 1) as u8) >> (x >> 61) as u32 % bits.max(1)
+                // Skewed toward small values: `bits` random bits, shifted right by 0 to 7.
+                (x as u8 & ((1u16 << bits) - 1) as u8) >> ((x >> 61) as u32)
             })
             .collect()
     }

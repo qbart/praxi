@@ -287,7 +287,8 @@ fn byte_planes() {
     assert!(matches!(err, Err(Error::Invalid(_))), "not whole blocks after the mask: {err:?}");
     let file = w.finish(100_000).unwrap().into_inner();
 
-    // The saving threshold: planes save about 18% here.
+    // The saving threshold: planes save about 13% here (three constant planes as LZ4, minus
+    // 85 bytes of section headers).
     let auto_compression = |percent: f64| {
         let streams = vec![StreamInfo::video(0, TimeBase::new(1, 30), params)];
         let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
@@ -298,8 +299,8 @@ fn byte_planes() {
         r.next_chunk().unwrap().unwrap().compression
     };
     assert_eq!(auto_compression(0.0), Compression::Planes);
-    assert_eq!(auto_compression(15.0), Compression::Planes);
-    assert_eq!(auto_compression(25.0), Compression::None, "saving below the threshold");
+    assert_eq!(auto_compression(10.0), Compression::Planes);
+    assert_eq!(auto_compression(15.0), Compression::None, "saving below the threshold");
     assert_eq!(auto_compression(100.0), Compression::None, "never byte planes");
 
     let mut r = Reader::new(Cursor::new(file.clone())).unwrap();

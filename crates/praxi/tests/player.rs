@@ -39,12 +39,13 @@ fn sample_file() -> Vec<u8> {
         StreamInfo::cues("gameplay"),
     ];
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
+    // Delta frames carry residuals: new block XOR previous block.
     let bc1_payloads: [(bool, Vec<u8>); 5] = [
         (true, bc1_frame(0)),
-        (false, [vec![0b01], vec![1; 8]].concat()),
-        (false, [vec![0b10], vec![12; 8]].concat()),
+        (false, [vec![0b01], vec![1; 8]].concat()), // 0 ^ 1
+        (false, [vec![0b10], vec![10 ^ 12; 8]].concat()),
         (true, bc1_frame(3)),
-        (false, [vec![0b11], vec![4; 8], vec![14; 8]].concat()),
+        (false, [vec![0b11], vec![3 ^ 4; 8], vec![13 ^ 14; 8]].concat()),
     ];
     for (n, (key, payload)) in bc1_payloads.iter().enumerate() {
         match n {
