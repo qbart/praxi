@@ -35,6 +35,8 @@ jobs:
           apt-get install -y --no-install-recommends ffmpeg
       - name: Benchmark
         run: make bench
+      - name: Examples
+        run: make examples
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v3
