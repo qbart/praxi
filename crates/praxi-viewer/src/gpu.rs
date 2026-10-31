@@ -349,3 +349,40 @@ impl Renderer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wgpu_formats_match_block_layout() {
+        for format in TextureFormat::ALL {
+            for srgb in [false, true] {
+                let w = wgpu_format(format, srgb);
+                assert_eq!(w.block_dimensions(), format.block_size(), "{format}");
+                assert_eq!(w.block_copy_size(None), Some(format.block_bytes()), "{format}");
+                let has_srgb = !matches!(format, TextureFormat::Bc4 | TextureFormat::Bc5);
+                assert_eq!(w.is_srgb(), srgb && has_srgb, "{format}");
+            }
+        }
+    }
+
+    #[test]
+    fn prefers_bc_then_astc() {
+        assert!(supported_formats(wgpu::Features::empty()).is_empty());
+        let both = supported_formats(
+            wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TEXTURE_COMPRESSION_ASTC,
+        );
+        assert_eq!(both[0], TextureFormat::Bc7);
+        assert_eq!(both.len(), 9);
+        assert_eq!(supported_formats(wgpu::Features::TEXTURE_COMPRESSION_ASTC), ASTC);
+    }
+
+    #[test]
+    fn fit_letterboxes() {
+        let r = Rect::fit(1920, 1080, 640, 480);
+        assert_eq!((r.x, r.y, r.w, r.h), (0.0, 60.0, 640.0, 360.0));
+        let r = Rect::fit(1920, 1080, 1000, 360);
+        assert_eq!((r.x, r.y, r.w, r.h), (180.0, 0.0, 640.0, 360.0));
+    }
+}

@@ -329,11 +329,12 @@ impl Viewer {
 
         #[cfg(feature = "audio")]
         let device_audio = if args.no_audio { None } else { audio::Device::open_default() };
-        let mut caps = gpu::capabilities(&adapter, args.format)?;
+        let caps = gpu::capabilities(&adapter, args.format)?;
         #[cfg(feature = "audio")]
-        if let Some(channels) = device_audio.as_ref().and_then(|d| d.channels()) {
-            caps = caps.max_audio_channels(channels);
-        }
+        let caps = match device_audio.as_ref().and_then(|d| d.channels()) {
+            Some(channels) => caps.max_audio_channels(channels),
+            None => caps,
+        };
         let mut player = open_player(args, &caps)?;
         describe_tracks(&player);
 
@@ -522,5 +523,20 @@ fn start_audio(device: &audio::Device, player: &FilePlayer, muted: Arc<AtomicBoo
             println!("audio device: {}: {e}; playing without sound", device.name());
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_arguments() {
+        assert_eq!(parse_format("astc6x6"), Ok(TextureFormat::Astc6x6));
+        assert_eq!(parse_format("BC7"), Ok(TextureFormat::Bc7));
+        assert!(parse_format("etc2").is_err());
+        assert_eq!(parse_size("640x480"), Ok((640, 480)));
+        assert!(parse_size("640").is_err());
+        assert!(parse_size("0x480").is_err());
     }
 }
