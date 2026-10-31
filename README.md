@@ -37,6 +37,10 @@ while let Some(event) = player.poll_event() { /* Started, Cue, CueEnd, Finished,
 if let Some(frame) = player.video_frame(0) { /* upload frame.data as a compressed texture */ }
 ```
 
+Engine integration guide, the `praxi-wgpu` helper crate and runnable examples (a headless
+game loop, decoding on a worker thread, a wgpu cutscene with fades):
+[docs/features/engine-integration.md](docs/features/engine-integration.md).
+
 ## Docs
 
 - Features: [docs/features/](docs/features/)

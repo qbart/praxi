@@ -6,8 +6,10 @@ upload: no YUV conversion and no per-pixel CPU work. Frames stay compressed in V
 
 ## Goals
 
-- **Cheap decode.** A 1080p frame decodes in well under 1 ms on one CPU core. The player
-  allocates nothing per frame and spawns no threads.
+- **Cheap decode.** A 1080p frame decodes in 0.6-1.5 ms on one CPU core with the smallest
+  encoding, or 0.15-0.45 ms when the encoder trades size for speed
+  ([video-codec.md](video-codec.md#decode-cost-and-writer-policy)). The player allocates
+  nothing per frame and spawns no threads.
 - **Alpha.** Video streams can carry straight (non-premultiplied) alpha.
 - **Per-platform variants.** One video track can be stored in several GPU texture formats
   (BC for desktop/consoles, ASTC for mobile); the player picks the one the GPU supports
@@ -42,7 +44,8 @@ Cargo workspace under `crates/`:
 | `praxi` | Runtime player: variant selection, frame reconstruction, clock, events | `praxi-format` |
 | `praxi-encoder` | Encoder library: RGBA frames to `.praxi` | `ktx-rs`, `praxi-format` |
 | `praxi-cli` | `praxi` command line tool (encode via ffmpeg, inspect files) | `praxi-encoder`, `clap` |
-| `praxi-viewer` | GPU viewer: plays files in a window, screenshots ([viewer.md](viewer.md)) | `praxi`, `wgpu`, `winit`, `cpal` |
+| `praxi-wgpu` | Texture upload and drawing for `wgpu` engines ([engine-integration.md](engine-integration.md)) | `praxi`, `wgpu` |
+| `praxi-viewer` | GPU viewer: plays files in a window, screenshots ([viewer.md](viewer.md)) | `praxi-wgpu`, `winit`, `cpal` |
 
 The runtime (`praxi`, `praxi-format`) does not depend on `ktx-rs`. Only the encoder does,
 with default features off (no Vulkan loader). See [video-codec.md](video-codec.md) and
@@ -80,4 +83,5 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
    with per-plane LZ4 or Huffman, XOR residuals in delta frames
    ([video-codec.md](video-codec.md#compression)). Measured and set aside: zstd, block
    motion copy, context modeling.
-5. **M4** Engine integration examples.
+5. **M4** Engine integration examples: integration guide, `praxi-wgpu`, headless and
+   windowed examples ([engine-integration.md](engine-integration.md)).

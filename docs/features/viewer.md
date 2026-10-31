@@ -15,7 +15,8 @@ runtime crates do not depend on a GPU stack.
 
 | Dependency | Use |
 |---|---|
-| `wgpu` | Device, compressed textures, rendering |
+| `praxi-wgpu` | Compressed textures, uploads and drawing ([engine-integration.md](engine-integration.md#praxi-wgpu)) |
+| `wgpu` | Device, surface, checkerboard |
 | `winit` | Window and input |
 | `cpal` (feature `audio`, default) | Audio output. Build with `--no-default-features` on systems without audio libraries (ALSA on Linux). |
 | `png` | Screenshots |
