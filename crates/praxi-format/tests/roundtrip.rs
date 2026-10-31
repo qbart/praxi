@@ -1,6 +1,6 @@
 use praxi_format::{
-    COLOR_FLAG_SRGB, Compression, Cue, CueParams, Error, Reader, StreamInfo, StreamParams,
-    TextureFormat, TimeBase, Value, VideoParams, Writer,
+    AudioParams, COLOR_FLAG_SRGB, Compression, Cue, CueParams, Error, Reader, SampleFormat,
+    StreamInfo, StreamParams, TextureFormat, TimeBase, Value, VideoParams, Writer,
 };
 use std::io::Cursor;
 
@@ -95,7 +95,7 @@ fn rejects_bad_magic_and_version() {
 
     let mut file = sample_file();
     file[8] = 1;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 3 })));
+    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 4 })));
 
     let mut file = sample_file();
     file[10] = 1;
@@ -157,4 +157,85 @@ fn rejects_bad_cue_payloads() {
     let ty_at = bad_type.len() - 2;
     bad_type[ty_at] = 9;
     assert!(Cue::decode(&bad_type).is_err());
+}
+
+fn audio(name: &str) -> StreamInfo {
+    StreamInfo::audio(
+        3,
+        AudioParams {
+            sample_rate: 1000,
+            channels: 2,
+            format: SampleFormat::S16,
+            channel_mask: 0x3,
+            preload_us: 200_000,
+            name: name.into(),
+        },
+    )
+}
+
+#[test]
+fn audio_roundtrip_and_decode_time_order() {
+    let streams = vec![video(TextureFormat::Bc7), audio("music")];
+    let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
+    let samples = |frames: usize| vec![1u8; frames * 4];
+    w.write_audio(1, 0, &samples(100)).unwrap();
+    w.write_audio(1, 100, &samples(100)).unwrap();
+    w.write_audio(1, 200, &samples(100)).unwrap();
+    w.write_chunk(0, 0, true, &[0; 32], None).unwrap();
+    // Due at 300 - 200 = 100 ms, before the video frame at 133 ms.
+    w.write_audio(1, 300, &samples(100)).unwrap();
+    w.write_chunk(0, 4, true, &[0; 32], None).unwrap();
+    assert!(matches!(w.write_audio(1, 350, &samples(10)), Err(Error::Invalid(_))), "overlap");
+    assert!(matches!(w.write_audio(1, 400, &samples(10)[..6]), Err(Error::Invalid(_))), "partial frame");
+    assert!(matches!(w.write_audio(1, 400, &[]), Err(Error::Invalid(_))), "empty");
+    assert!(matches!(w.write_chunk(1, 400, true, &samples(10), None), Err(Error::Invalid(_))));
+    assert!(matches!(w.write_audio(0, 400, &samples(10)), Err(Error::Invalid(_))));
+    // A gap is allowed; due at 600 - 200 = 400 ms.
+    w.write_audio(1, 600, &samples(50)).unwrap();
+    assert!(matches!(w.write_chunk(0, 10, true, &[0; 32], None), Err(Error::Invalid(_))), "frame at 333 ms after 400 ms");
+    let file = w.finish(650_000).unwrap().into_inner();
+
+    let mut r = Reader::new(Cursor::new(file)).unwrap();
+    assert_eq!(r.streams()[1], {
+        let mut s = audio("music");
+        s.chunk_count = 5;
+        s
+    });
+    assert_eq!(r.streams()[1].time_base, TimeBase::new(1, 1000));
+    assert_eq!(r.streams()[1].decode_time_us(300), 100_000);
+    assert_eq!(r.streams()[1].decode_time_us(100), 0);
+    assert_eq!(r.streams()[0].decode_time_us(4), 133_333);
+    let index = r.read_index().unwrap();
+    assert_eq!(index.iter().filter(|e| e.stream == 1).map(|e| e.pts).collect::<Vec<_>>(), [0, 100, 200, 300, 600]);
+    let mut payload = Vec::new();
+    let mut order = Vec::new();
+    while let Some(c) = r.next_chunk().unwrap() {
+        r.read_payload(&c, &mut payload).unwrap();
+        if c.stream == 1 {
+            assert!(c.keyframe());
+            assert_eq!(payload, samples(c.raw_size as usize / 4));
+        }
+        order.push((c.stream, c.pts));
+    }
+    assert_eq!(order, [(1, 0), (1, 100), (1, 200), (0, 0), (1, 300), (0, 4), (1, 600)]);
+}
+
+#[test]
+fn rejects_bad_audio_streams() {
+    let bad = |f: fn(&mut StreamInfo)| {
+        let mut s = audio("music");
+        f(&mut s);
+        matches!(Writer::new(Cursor::new(Vec::new()), vec![s]), Err(Error::Invalid(_)))
+    };
+    assert!(bad(|s| s.time_base = TimeBase::new(1, 48_000)));
+    assert!(bad(|s| if let StreamParams::Audio(a) = &mut s.params { a.channel_mask = 0x7 }));
+    assert!(bad(|s| if let StreamParams::Audio(a) = &mut s.params { a.name = "x".repeat(33) }));
+    assert!(bad(|s| if let StreamParams::Audio(a) = &mut s.params { a.channels = 0 }));
+
+    // Unknown sample format in the file.
+    let mut w = Writer::new(Cursor::new(Vec::new()), vec![audio("music")]).unwrap();
+    w.write_audio(0, 0, &[0; 8]).unwrap();
+    let mut file = w.finish(2_000).unwrap().into_inner();
+    file[48 + 22] = 9;
+    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::Corrupt(_))));
 }

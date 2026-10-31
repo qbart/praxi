@@ -7,7 +7,7 @@
 mod audio;
 
 use audio::us_to_frames;
-use praxi_format::{ChunkHeader, Cue, IndexEntry, Reader, StreamInfo, StreamParams, TimeBase};
+use praxi_format::{CHUNK_HEADER_SIZE, ChunkHeader, Cue, IndexEntry, Reader, StreamInfo, StreamParams, TimeBase};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -267,6 +267,10 @@ pub struct Player<R: Read + Seek> {
     audio: Vec<AudioTrack>,
     audio_infos: Vec<AudioTrackInfo>,
     audio_tolerance_us: u64,
+    /// Largest preload of the selected audio tracks.
+    max_preload_us: u64,
+    /// While looping: offset of the next chunk to check for the next pass's audio.
+    loop_scan: Option<u64>,
     routes: Vec<Route>,
     cue_streams: Vec<CueStreamInfo>,
     /// Per stream number: a cue stream that is enabled.
@@ -355,6 +359,8 @@ impl<R: Read + Seek> Player<R> {
             track_infos: tracks.iter().map(|t| t.info).collect(),
             tracks,
             audio_infos: audio.iter().map(|a| a.info.clone()).collect(),
+            max_preload_us: audio.iter().map(|a| a.info.params.preload_us as u64).max().unwrap_or(0),
+            loop_scan: None,
             audio,
             audio_tolerance_us,
             routes,
@@ -489,6 +495,7 @@ impl<R: Read + Seek> Player<R> {
         loop {
             self.process_due(true)?;
             if !(self.at_end && self.clock_us >= self.duration_us) {
+                self.prefetch_next_pass()?;
                 self.sync_audio();
                 return Ok(());
             }
@@ -547,6 +554,7 @@ impl<R: Read + Seek> Player<R> {
         self.reader.seek_to(start)?;
         self.pending = None;
         self.at_end = false;
+        self.loop_scan = None;
         self.clock_us = target;
         self.process_due(false)?;
         if self.state == State::Finished {
@@ -586,6 +594,7 @@ impl<R: Read + Seek> Player<R> {
     fn rewind(&mut self) {
         self.pending = None;
         self.at_end = false;
+        self.loop_scan = None;
         for t in &mut self.tracks {
             t.resume_offset = 0;
         }
@@ -629,12 +638,7 @@ impl<R: Read + Seek> Player<R> {
                 Route::Audio(ai) => {
                     let a = &self.audio[ai];
                     if a.enabled && chunk.offset >= a.resume_offset {
-                        self.reader.read_payload(&chunk, &mut self.payload)?;
-                        let p = &a.info.params;
-                        if self.payload.is_empty() || !self.payload.len().is_multiple_of(p.frame_bytes()) {
-                            return corrupt(format!("audio chunk at {} is not a whole number of frames", chunk.offset));
-                        }
-                        a.output.lock().push(a.base_frame + chunk.pts, &self.payload, p.format);
+                        self.queue_audio(ai, &chunk, a.base_frame + chunk.pts)?;
                     }
                 }
                 Route::Cues if self.cue_enabled[stream] && emit_cues => self.begin_cue(&chunk)?,
@@ -643,6 +647,53 @@ impl<R: Read + Seek> Player<R> {
         }
         let clock = self.clock_us;
         self.end_cues(|c| c.end_us <= clock);
+        Ok(())
+    }
+
+    /// While looping near the end, queues the audio chunks of the next pass that are already
+    /// due in its timeline, so outputs read ahead of the clock do not run dry at the loop
+    /// point. Those chunks sit at the start of the file, all with decode time 0.
+    fn prefetch_next_pass(&mut self) -> Result<()> {
+        if !self.looping || self.audio.is_empty() || self.duration_us == 0 {
+            return Ok(());
+        }
+        if self.clock_us.saturating_add(self.max_preload_us) < self.duration_us {
+            return Ok(());
+        }
+        let mut offset = self.loop_scan.unwrap_or(self.reader.data_start());
+        while offset < self.reader.header().index_offset {
+            let chunk = self.reader.chunk_at(offset)?;
+            let s = &self.reader.streams()[chunk.stream as usize];
+            if s.decode_time_us(chunk.pts) > 0 {
+                break;
+            }
+            if let Route::Audio(ai) = self.routes[chunk.stream as usize] {
+                // Due in the next pass at `time - preload`, which is `duration` later on this clock.
+                let time = s.time_base.to_micros(chunk.pts);
+                let a = &self.audio[ai];
+                if time.saturating_add(self.duration_us) > self.clock_us.saturating_add(a.info.params.preload_us as u64) {
+                    break;
+                }
+                if a.enabled {
+                    let at = a.base_frame + a.frames(self.duration_us) + chunk.pts;
+                    self.queue_audio(ai, &chunk, at)?;
+                }
+            }
+            offset = chunk.offset + CHUNK_HEADER_SIZE + chunk.stored_size as u64;
+        }
+        self.loop_scan = Some(offset);
+        Ok(())
+    }
+
+    /// Reads the audio chunk `chunk` of track `ai` and queues it at output frame `at`.
+    fn queue_audio(&mut self, ai: usize, chunk: &ChunkHeader, at: u64) -> Result<()> {
+        self.reader.read_payload(chunk, &mut self.payload)?;
+        let a = &self.audio[ai];
+        let p = &a.info.params;
+        if self.payload.is_empty() || !self.payload.len().is_multiple_of(p.frame_bytes()) {
+            return corrupt(format!("audio chunk at {} is not a whole number of frames", chunk.offset));
+        }
+        a.output.lock().push(at, &self.payload, p.format);
         Ok(())
     }
 
