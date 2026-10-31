@@ -182,23 +182,23 @@ impl<'a> BitReader<'a> {
 type Table = [u32; TABLE_SIZE];
 
 fn decode_table(lens: &[u8; 256], empty: bool) -> Result<Table, &'static str> {
-    let used: Vec<u8> = (0..=255).filter(|&s| lens[s as usize] != 0).collect();
+    let used = || (0..=255u8).filter(|&s| lens[s as usize] != 0);
     // First the single-code table: symbol << 8 | length.
     let mut single = [0u16; TABLE_SIZE];
-    match used[..] {
-        [] if empty => return Ok([0; TABLE_SIZE]),
-        [] => return Err("Huffman section without codes"),
-        [s] if lens[s as usize] == 1 => single = [(s as u16) << 8 | 1; TABLE_SIZE],
+    match (used().next(), used().nth(1)) {
+        (None, _) if empty => return Ok([0; TABLE_SIZE]),
+        (None, _) => return Err("Huffman section without codes"),
+        (Some(s), None) if lens[s as usize] == 1 => single = [(s as u16) << 8 | 1; TABLE_SIZE],
         _ => {
-            if used.iter().any(|&s| lens[s as usize] as usize > MAX_LEN) {
+            if used().any(|s| lens[s as usize] as usize > MAX_LEN) {
                 return Err("Huffman code longer than 11 bits");
             }
-            let kraft: usize = used.iter().map(|&s| TABLE_SIZE >> lens[s as usize]).sum();
+            let kraft: usize = used().map(|s| TABLE_SIZE >> lens[s as usize]).sum();
             if kraft != TABLE_SIZE {
                 return Err("Huffman code lengths do not form a complete code");
             }
             let codes = canonical_codes(lens);
-            for &s in &used {
+            for s in used() {
                 let (code, len) = codes[s as usize];
                 for i in (code as usize..TABLE_SIZE).step_by(1 << len) {
                     single[i] = (s as u16) << 8 | len as u16;
