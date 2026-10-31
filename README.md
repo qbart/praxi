@@ -10,7 +10,8 @@ Requires `ffmpeg` and `ffprobe` on `PATH` for encoding.
 
 ```sh
 make build
-./target/release/praxi encode input.mp4 -o intro.praxi --variant bc7 --variant astc6x6 --cue 2.5=explosion
+./target/release/praxi encode input.mp4 -o intro.praxi --variant bc7 --variant astc6x6 --cue 2.5=explosion \
+    --audio-layout stereo --audio-layout 5.1
 ./target/release/praxi info intro.praxi
 ./target/release/praxi frame intro.praxi --at 2.5 -o frame.png
 ```
@@ -18,8 +19,10 @@ make build
 Playback from Rust:
 
 ```rust
-let caps = praxi::Capabilities::new([praxi::TextureFormat::Bc7]);
+let caps = praxi::Capabilities::new([praxi::TextureFormat::Bc7]).max_audio_channels(2);
 let mut player = praxi::Player::open(std::fs::File::open("intro.praxi")?, &caps)?;
+let audio = player.audio_output(0).unwrap(); // Send + Sync: read it from the audio callback
+// audio callback: let n = audio.read(buf); buf[n..].fill(0.0);
 player.play();
 // every game frame:
 player.advance(dt)?;
