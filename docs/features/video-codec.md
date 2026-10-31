@@ -32,10 +32,44 @@ decodes from the preceding keyframe, so `keyint` bounds the seek cost.
 
 ## Compression
 
-Each chunk is compressed with LZ4 (block format, `lz4_flex`) only when that makes it
-smaller; otherwise it is stored uncompressed. BC7/ASTC data is close to incompressible for
-LZ4 on its own; LZ4 pays off on delta frames (sparse masks) and with rate-distortion
-optimised (RDO) BC7 encoding.
+Each chunk is stored in the smallest of these forms (LZ4 is the block format of
+`lz4_flex`):
+
+- **raw**;
+- **LZ4**;
+- **LZ4 over byte planes** (video chunks only): the blocks are transposed so that byte 0 of
+  every block comes first, then byte 1 of every block, and so on, and the result is LZ4
+  compressed. A delta frame's mask stays in front, untouched.
+
+Interleaved BC7/ASTC blocks are close to incompressible for LZ4, but a few byte positions
+of each block (mode, partition and similar header bits) take few distinct values across a
+frame. In byte planes those become long runs. On Big Buck Bunny 1080p (`make bench` input):
+
+| Variant | LZ4 | LZ4 over byte planes |
+|---|---|---|
+| BC7 | 100.0% | 88.0% |
+| BC7, RDO lambda 1 | 91.4% | 88.0% |
+| ASTC 6x6 | 100.0% | 95.1% |
+| ASTC 8x8 | 99.9% | 94.7% |
+
+(percent of the uncompressed payload). The reader turns planes back into blocks while
+reading the chunk, so the player and the engine see the usual block layout. Undoing the
+transpose costs one pass over the frame's block data.
+
+### Rejected for now
+
+Measured on the same input, 180 frames, and not worth their cost for camera footage:
+
+- **zstd** instead of LZ4: 7.5% (level 3) to 12.5% (level 19) smaller than LZ4 on
+  interleaved blocks, but the pure-Rust decoder (`ruzstd`) needs about 4 ms per 1080p BC7
+  frame against 0.06 ms for LZ4, and the C library would end pure Rust.
+- **Block motion copy** (a changed block copied from another block position of the
+  previous frame, within 4 blocks): only 0.6% of changed BC7 blocks and 0.01% of ASTC 8x8
+  blocks have such a source within the skip threshold. Copies must be block aligned, and
+  camera motion rarely is. It may still pay off for 2D or UI content that scrolls in
+  whole blocks.
+- **Entropy coding of byte planes** is the next step: the order-0 entropy of the planes is
+  78% (BC7) and 85-88% (ASTC) of the raw size, against 88% and 95% for LZ4 over planes.
 
 ## Encoding paths
 
