@@ -1,5 +1,5 @@
 use crate::{
-    CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, Compression, Cue,
+    AUDIO_NAME_SIZE, CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, Compression, Cue,
     Error, HEADER_SIZE, IndexEntry, MAGIC, Result, STREAM_ENTRY_SIZE, StreamInfo, StreamParams,
     VERSION_MAJOR, VERSION_MINOR,
 };
@@ -13,8 +13,10 @@ pub struct Writer<W: Write + Seek> {
     index: Vec<IndexEntry>,
     /// Last pts per stream, to enforce pts order within a stream.
     last_pts: Vec<Option<u64>>,
-    /// Last chunk time in microseconds, to enforce file order.
+    /// Last chunk decode time in microseconds, to enforce file order.
     last_time_us: u64,
+    /// Per audio stream: the frame after the last written chunk.
+    audio_end: Vec<u64>,
     scratch: Vec<u8>,
     cue_payload: Vec<u8>,
 }
@@ -38,6 +40,20 @@ impl<W: Write + Seek> Writer<W> {
             {
                 return Err(Error::Invalid(format!("stream {i}: cue stream name too long or has a zero byte")));
             }
+            if let StreamParams::Audio(a) = &s.params {
+                if a.sample_rate == 0 || a.channels == 0 {
+                    return Err(Error::Invalid(format!("stream {i}: zero sample rate or channels")));
+                }
+                if s.time_base != crate::TimeBase::new(1, a.sample_rate) {
+                    return Err(Error::Invalid(format!("stream {i}: audio time base must be 1/sample_rate")));
+                }
+                if a.channel_mask != 0 && a.channel_mask.count_ones() != a.channels as u32 {
+                    return Err(Error::Invalid(format!("stream {i}: channel mask does not match {} channels", a.channels)));
+                }
+                if a.name.len() > AUDIO_NAME_SIZE || a.name.contains('\0') {
+                    return Err(Error::Invalid(format!("stream {i}: audio stream name too long or has a zero byte")));
+                }
+            }
         }
         inner.seek(SeekFrom::Start(0))?;
         inner.write_all(&[0u8; HEADER_SIZE as usize])?;
@@ -52,6 +68,7 @@ impl<W: Write + Seek> Writer<W> {
             index: Vec::new(),
             last_pts: vec![None; n],
             last_time_us: 0,
+            audio_end: vec![0; n],
             scratch: Vec::new(),
             cue_payload: Vec::new(),
         })
@@ -67,7 +84,8 @@ impl<W: Write + Seek> Writer<W> {
     }
 
     /// Writes one chunk of a video stream. `compression = Some(c)` forces `c`; `None` uses
-    /// LZ4 only when it makes the payload smaller. Cue streams take [`Writer::write_cue`].
+    /// LZ4 only when it makes the payload smaller. Cue streams take [`Writer::write_cue`],
+    /// audio streams [`Writer::write_audio`].
     pub fn write_chunk(
         &mut self,
         stream: u16,
@@ -76,10 +94,30 @@ impl<W: Write + Seek> Writer<W> {
         payload: &[u8],
         compression: Option<Compression>,
     ) -> Result<()> {
-        if let Some(StreamParams::Cues(_)) = self.streams.get(stream as usize).map(|s| &s.params) {
-            return Err(Error::Invalid(format!("stream {stream} is a cue stream, use write_cue")));
+        match self.streams.get(stream as usize).map(|s| &s.params) {
+            Some(StreamParams::Cues(_)) => Err(Error::Invalid(format!("stream {stream} is a cue stream, use write_cue"))),
+            Some(StreamParams::Audio(_)) => Err(Error::Invalid(format!("stream {stream} is an audio stream, use write_audio"))),
+            _ => self.write_raw(stream, pts, keyframe, payload, compression),
         }
-        self.write_raw(stream, pts, keyframe, payload, compression)
+    }
+
+    /// Writes one chunk of an audio stream: interleaved samples in the stream's sample
+    /// format, starting at frame `pts`. LZ4 is used when it makes the payload smaller.
+    pub fn write_audio(&mut self, stream: u16, pts: u64, samples: &[u8]) -> Result<()> {
+        let Some(StreamParams::Audio(a)) = self.streams.get(stream as usize).map(|s| &s.params) else {
+            return Err(Error::Invalid(format!("stream {stream} is not an audio stream")));
+        };
+        let frame_bytes = a.frame_bytes();
+        if samples.is_empty() || !samples.len().is_multiple_of(frame_bytes) {
+            return Err(Error::Invalid(format!("stream {stream}: {} bytes is not a whole number of frames", samples.len())));
+        }
+        let end = self.audio_end[stream as usize];
+        if self.last_pts[stream as usize].is_some() && pts < end {
+            return Err(Error::Invalid(format!("stream {stream}: audio chunk at {pts} overlaps the previous one ending at {end}")));
+        }
+        self.write_raw(stream, pts, true, samples, None)?;
+        self.audio_end[stream as usize] = pts + (samples.len() / frame_bytes) as u64;
+        Ok(())
     }
 
     /// Writes one cue starting at `pts` to a cue stream.
@@ -110,14 +148,15 @@ impl<W: Write + Seek> Writer<W> {
             return Err(Error::Invalid(format!("unknown stream {stream}")));
         };
         let is_cue = matches!(info.params, StreamParams::Cues(_));
+        let is_audio = matches!(info.params, StreamParams::Audio(_));
         if let Some(last) = self.last_pts[stream as usize]
             && (pts < last || (pts == last && !is_cue))
         {
             return Err(Error::Invalid(format!("stream {stream}: pts {pts} after {last} breaks stream order")));
         }
-        let time_us = info.time_base.to_micros(pts);
+        let time_us = info.decode_time_us(pts);
         if time_us < self.last_time_us {
-            return Err(Error::Invalid(format!("stream {stream}: chunk at {time_us} us written out of time order")));
+            return Err(Error::Invalid(format!("stream {stream}: chunk due at {time_us} us written out of order")));
         }
         if payload.len() > u32::MAX as usize {
             return Err(Error::Invalid("payload too large".into()));
@@ -150,7 +189,7 @@ impl<W: Write + Seek> Writer<W> {
         self.inner.write_all(&h)?;
         self.inner.write_all(stored)?;
 
-        if is_cue || (keyframe && matches!(info.params, StreamParams::Video(_))) {
+        if is_cue || is_audio || (keyframe && matches!(info.params, StreamParams::Video(_))) {
             self.index.push(IndexEntry { stream, pts, offset: self.offset });
         }
         self.offset += CHUNK_HEADER_SIZE + stored.len() as u64;
@@ -210,6 +249,14 @@ fn encode_stream(s: &StreamInfo) -> [u8; STREAM_ENTRY_SIZE as usize] {
     if let StreamParams::Cues(c) = &s.params {
         b[16..24].copy_from_slice(&c.max_duration.to_le_bytes());
         b[24..24 + c.name.len()].copy_from_slice(c.name.as_bytes());
+    }
+    if let StreamParams::Audio(a) = &s.params {
+        b[16..20].copy_from_slice(&a.sample_rate.to_le_bytes());
+        b[20..22].copy_from_slice(&a.channels.to_le_bytes());
+        b[22..24].copy_from_slice(&a.format.id().to_le_bytes());
+        b[24..28].copy_from_slice(&a.channel_mask.to_le_bytes());
+        b[28..32].copy_from_slice(&a.preload_us.to_le_bytes());
+        b[32..32 + a.name.len()].copy_from_slice(a.name.as_bytes());
     }
     b
 }

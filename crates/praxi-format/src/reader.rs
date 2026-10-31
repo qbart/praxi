@@ -1,6 +1,6 @@
 use crate::{
     CHUNK_HEADER_SIZE, ChunkHeader, Compression, Error, HEADER_SIZE, Header, INDEX_ENTRY_SIZE,
-    IndexEntry, MAGIC, Result, CUE_NAME_SIZE, CueParams, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
+    IndexEntry, MAGIC, Result, AUDIO_NAME_SIZE, AudioParams, CUE_NAME_SIZE, CueParams, SampleFormat, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
     TimeBase, VERSION_MAJOR, VideoParams, corrupt, le_u16, le_u32, le_u64,
 };
 use std::io::{Read, Seek, SeekFrom};
@@ -185,6 +185,30 @@ fn decode_stream(i: usize, b: &[u8]) -> Result<StreamInfo> {
             }
             StreamParams::Video(v)
         }
+        2 => {
+            let id = le_u16(b, 22);
+            let Some(format) = SampleFormat::from_id(id) else {
+                return corrupt(format!("stream {i}: unknown sample format {id}"));
+            };
+            let a = AudioParams {
+                sample_rate: le_u32(b, 16),
+                channels: le_u16(b, 20),
+                format,
+                channel_mask: le_u32(b, 24),
+                preload_us: le_u32(b, 28),
+                name: padded_text(i, &b[32..32 + AUDIO_NAME_SIZE])?,
+            };
+            if a.sample_rate == 0 || a.channels == 0 {
+                return corrupt(format!("stream {i}: zero sample rate or channels"));
+            }
+            if time_base != TimeBase::new(1, a.sample_rate) {
+                return corrupt(format!("stream {i}: audio time base is not 1/sample_rate"));
+            }
+            if a.channel_mask != 0 && a.channel_mask.count_ones() != a.channels as u32 {
+                return corrupt(format!("stream {i}: channel mask does not match {} channels", a.channels));
+            }
+            StreamParams::Audio(a)
+        }
         3 => StreamParams::Cues(CueParams {
             max_duration: le_u64(b, 16),
             name: padded_text(i, &b[24..24 + CUE_NAME_SIZE])?,
@@ -198,6 +222,6 @@ fn padded_text(i: usize, b: &[u8]) -> Result<String> {
     let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
     match std::str::from_utf8(&b[..end]) {
         Ok(s) => Ok(s.to_string()),
-        Err(_) => corrupt(format!("stream {i}: invalid UTF-8 in cue stream text")),
+        Err(_) => corrupt(format!("stream {i}: invalid UTF-8 in stream name")),
     }
 }

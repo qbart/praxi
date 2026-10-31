@@ -13,7 +13,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 3;
+pub const VERSION_MINOR: u16 = 4;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;
@@ -205,9 +205,77 @@ pub struct CueParams {
 
 pub const CUE_NAME_SIZE: usize = 32;
 
+/// Sample formats of audio streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SampleFormat {
+    S16,
+    F32,
+}
+
+impl SampleFormat {
+    pub fn id(self) -> u16 {
+        match self {
+            SampleFormat::S16 => 1,
+            SampleFormat::F32 => 2,
+        }
+    }
+
+    pub fn from_id(id: u16) -> Option<SampleFormat> {
+        match id {
+            1 => Some(SampleFormat::S16),
+            2 => Some(SampleFormat::F32),
+            _ => None,
+        }
+    }
+
+    pub fn bytes(self) -> usize {
+        match self {
+            SampleFormat::S16 => 2,
+            SampleFormat::F32 => 4,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SampleFormat::S16 => "s16",
+            SampleFormat::F32 => "f32",
+        }
+    }
+}
+
+impl fmt::Display for SampleFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// Parameters of an audio stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioParams {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub format: SampleFormat,
+    /// WAVE speaker bits, `0` for unspecified.
+    pub channel_mask: u32,
+    /// How far ahead of their time chunks are stored.
+    pub preload_us: u32,
+    /// At most 32 bytes.
+    pub name: String,
+}
+
+impl AudioParams {
+    /// Bytes per sample frame (all channels).
+    pub fn frame_bytes(&self) -> usize {
+        self.channels as usize * self.format.bytes()
+    }
+}
+
+pub const AUDIO_NAME_SIZE: usize = 32;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamParams {
     Video(VideoParams),
+    Audio(AudioParams),
     Cues(CueParams),
     /// A stream of a kind this reader does not know; its chunks are skipped.
     Unknown(u8),
@@ -217,6 +285,7 @@ impl StreamParams {
     pub fn kind(&self) -> u8 {
         match self {
             StreamParams::Video(_) => 1,
+            StreamParams::Audio(_) => 2,
             StreamParams::Cues(_) => 3,
             StreamParams::Unknown(kind) => *kind,
         }
@@ -257,6 +326,16 @@ impl StreamInfo {
         StreamInfo { group, time_base, chunk_count: 0, params: StreamParams::Video(params) }
     }
 
+    /// An audio stream with a time base of `1 / sample_rate`.
+    pub fn audio(group: u16, params: AudioParams) -> StreamInfo {
+        StreamInfo {
+            group,
+            time_base: TimeBase::new(1, params.sample_rate),
+            chunk_count: 0,
+            params: StreamParams::Audio(params),
+        }
+    }
+
     /// A cue stream with a microsecond time base.
     pub fn cues(name: impl Into<String>) -> StreamInfo {
         StreamInfo {
@@ -278,6 +357,23 @@ impl StreamInfo {
         match &self.params {
             StreamParams::Cues(c) => Some(c),
             _ => None,
+        }
+    }
+
+    pub fn audio_params(&self) -> Option<&AudioParams> {
+        match &self.params {
+            StreamParams::Audio(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// The time in microseconds at which a chunk with `pts` is due: its time, less the
+    /// preload for audio (`docs/spec/PRAXI.md#ordering`).
+    pub fn decode_time_us(&self, pts: u64) -> u64 {
+        let time = self.time_base.to_micros(pts);
+        match &self.params {
+            StreamParams::Audio(a) => time.saturating_sub(a.preload_us as u64),
+            _ => time,
         }
     }
 }

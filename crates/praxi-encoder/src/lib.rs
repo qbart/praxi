@@ -1,4 +1,5 @@
-//! Encoder for praxi video files (`docs/features/encoder.md`, `docs/features/video-codec.md`).
+//! Encoder for praxi video files (`docs/features/encoder.md`, `docs/features/video-codec.md`,
+//! `docs/features/audio.md`).
 
 mod decode;
 
@@ -10,13 +11,15 @@ use ktx::astcenc::{
 };
 use ktx::basisu::{uastc_bc7, uastc_enc};
 use praxi_format::{
-    COLOR_FLAG_ALPHA, COLOR_FLAG_SRGB, Cue, StreamInfo, TextureFormat, TimeBase, VideoParams,
-    Writer,
+    AudioParams, COLOR_FLAG_ALPHA, COLOR_FLAG_SRGB, Cue, StreamInfo, TextureFormat, TimeBase,
+    VideoParams, Writer,
 };
 
-pub use praxi_format::Value;
+pub use praxi_format::{SampleFormat, Value};
+use std::collections::BTreeSet;
 use std::fmt;
-use std::io::{Seek, Write};
+use std::io::{Cursor, Read, Seek, Write};
+use std::time::Duration;
 
 #[derive(Debug)]
 pub enum Error {
@@ -149,7 +152,74 @@ impl CueStreamConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+/// One audio stream (`docs/features/audio.md#encoder`). Samples are interleaved `f32`.
+pub struct AudioTrackConfig {
+    pub name: String,
+    pub sample_rate: u32,
+    pub channels: u16,
+    /// WAVE speaker bits, `0` for unspecified.
+    pub channel_mask: u32,
+    pub format: SampleFormat,
+    /// `None` shares the group of earlier tracks with the same name, or takes a new one.
+    pub group: Option<u16>,
+    source: Box<dyn Read + Send>,
+}
+
+impl AudioTrackConfig {
+    pub fn from_samples(name: impl Into<String>, sample_rate: u32, channels: u16, samples: Vec<f32>) -> AudioTrackConfig {
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        AudioTrackConfig::from_reader(name, sample_rate, channels, Cursor::new(bytes))
+    }
+
+    /// Reads samples as little-endian `f32` bytes (what `ffmpeg -f f32le` writes), pulled
+    /// as the encoder needs them.
+    pub fn from_reader(
+        name: impl Into<String>,
+        sample_rate: u32,
+        channels: u16,
+        reader: impl Read + Send + 'static,
+    ) -> AudioTrackConfig {
+        AudioTrackConfig {
+            name: name.into(),
+            sample_rate,
+            channels,
+            channel_mask: 0,
+            format: SampleFormat::S16,
+            group: None,
+            source: Box::new(reader),
+        }
+    }
+
+    pub fn channel_mask(mut self, mask: u32) -> AudioTrackConfig {
+        self.channel_mask = mask;
+        self
+    }
+
+    pub fn format(mut self, format: SampleFormat) -> AudioTrackConfig {
+        self.format = format;
+        self
+    }
+
+    pub fn group(mut self, group: u16) -> AudioTrackConfig {
+        self.group = Some(group);
+        self
+    }
+}
+
+impl fmt::Debug for AudioTrackConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AudioTrackConfig")
+            .field("name", &self.name)
+            .field("sample_rate", &self.sample_rate)
+            .field("channels", &self.channels)
+            .field("channel_mask", &self.channel_mask)
+            .field("format", &self.format)
+            .field("group", &self.group)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug)]
 pub struct EncoderConfig {
     pub width: u32,
     pub height: u32,
@@ -164,10 +234,16 @@ pub struct EncoderConfig {
     pub alpha: bool,
     /// Worker threads; 0 uses `std::thread::available_parallelism`.
     pub threads: usize,
+    pub audio: Vec<AudioTrackConfig>,
+    /// How far ahead of their time audio chunks are stored.
+    pub audio_preload: Duration,
+    /// Length of an audio chunk.
+    pub audio_chunk: Duration,
 }
 
 impl EncoderConfig {
-    /// A config with no variants, keyframes every 60 frames and skip threshold 3.
+    /// A config with no variants, keyframes every 60 frames, skip threshold 3, and audio
+    /// preload 250 ms and chunks 100 ms.
     pub fn new(width: u32, height: u32, fps_num: u32, fps_den: u32) -> EncoderConfig {
         EncoderConfig {
             width,
@@ -180,7 +256,25 @@ impl EncoderConfig {
             cue_streams: Vec::new(),
             alpha: false,
             threads: 0,
+            audio: Vec::new(),
+            audio_preload: Duration::from_millis(250),
+            audio_chunk: Duration::from_millis(100),
         }
+    }
+
+    pub fn audio(mut self, track: AudioTrackConfig) -> EncoderConfig {
+        self.audio.push(track);
+        self
+    }
+
+    pub fn audio_preload(mut self, preload: Duration) -> EncoderConfig {
+        self.audio_preload = preload;
+        self
+    }
+
+    pub fn audio_chunk(mut self, chunk: Duration) -> EncoderConfig {
+        self.audio_chunk = chunk;
+        self
     }
 
     pub fn variant(mut self, v: VariantConfig) -> EncoderConfig {
@@ -241,10 +335,36 @@ pub struct VariantStats {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct AudioStats {
+    pub name: String,
+    pub channels: u16,
+    /// Bytes in the file, chunk headers included.
+    pub bytes: u64,
+    /// Sample frames.
+    pub frames: u64,
+    pub chunks: u64,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct Stats {
     pub frames: u64,
     pub duration_us: u64,
     pub variants: Vec<VariantStats>,
+    pub audio: Vec<AudioStats>,
+}
+
+struct AudioTrack {
+    stream: u16,
+    channels: usize,
+    format: SampleFormat,
+    source: Box<dyn Read + Send>,
+    chunk_frames: usize,
+    next_pts: u64,
+    /// The source is exhausted.
+    done: bool,
+    input: Vec<u8>,
+    payload: Vec<u8>,
+    stats: AudioStats,
 }
 
 enum BlockEncoder {
@@ -270,6 +390,7 @@ pub struct Encoder<W: Write + Seek> {
     config: EncoderConfig,
     threads: usize,
     variants: Vec<Variant>,
+    audio: Vec<AudioTrack>,
     time_base: TimeBase,
     /// Cues as (start in microseconds, stream, cue), sorted by start.
     cues: Vec<(u64, u16, Cue)>,
@@ -278,7 +399,8 @@ pub struct Encoder<W: Write + Seek> {
 }
 
 impl<W: Write + Seek> Encoder<W> {
-    pub fn new(out: W, config: EncoderConfig) -> Result<Encoder<W>> {
+    pub fn new(out: W, mut config: EncoderConfig) -> Result<Encoder<W>> {
+        let audio_configs = std::mem::take(&mut config.audio);
         let c = &config;
         if c.width == 0 || c.height == 0 {
             return Err(Error::Config("zero frame size".into()));
@@ -342,6 +464,58 @@ impl<W: Write + Seek> Encoder<W> {
                 stats: VariantStats { format: Some(format), ..Default::default() },
             });
         }
+        let preload_us = c.audio_preload.as_micros();
+        if preload_us > u32::MAX as u128 {
+            return Err(Error::Config("audio preload too long".into()));
+        }
+        let mut audio = Vec::new();
+        let explicit: BTreeSet<u16> = audio_configs.iter().filter_map(|a| a.group).collect();
+        let mut named_groups: Vec<(String, u16)> = Vec::new();
+        for a in audio_configs {
+            if a.sample_rate == 0 || a.channels == 0 {
+                return Err(Error::Config(format!("audio track {:?} has zero sample rate or channels", a.name)));
+            }
+            if a.channel_mask != 0 && a.channel_mask.count_ones() != a.channels as u32 {
+                return Err(Error::Config(format!("audio track {:?}: channel mask does not match {} channels", a.name, a.channels)));
+            }
+            let chunk_frames = (c.audio_chunk.as_micros() * a.sample_rate as u128 / 1_000_000) as usize;
+            if chunk_frames == 0 {
+                return Err(Error::Config("audio chunk is shorter than one sample frame".into()));
+            }
+            let group = match a.group {
+                Some(g) => g,
+                None => match named_groups.iter().find(|(n, _)| *n == a.name) {
+                    Some((_, g)) => *g,
+                    None => {
+                        let used = |g: &u16| explicit.contains(g) || named_groups.iter().any(|(_, n)| n == g);
+                        let g = (0..=u16::MAX).find(|g| !used(g)).ok_or_else(|| Error::Config("too many audio groups".into()))?;
+                        named_groups.push((a.name.clone(), g));
+                        g
+                    }
+                },
+            };
+            let params = AudioParams {
+                sample_rate: a.sample_rate,
+                channels: a.channels,
+                format: a.format,
+                channel_mask: a.channel_mask,
+                preload_us: preload_us as u32,
+                name: a.name.clone(),
+            };
+            audio.push(AudioTrack {
+                stream: streams.len() as u16,
+                channels: a.channels as usize,
+                format: a.format,
+                source: a.source,
+                chunk_frames,
+                next_pts: 0,
+                done: false,
+                input: Vec::new(),
+                payload: Vec::new(),
+                stats: AudioStats { name: a.name, channels: a.channels, ..Default::default() },
+            });
+            streams.push(StreamInfo::audio(group, params));
+        }
         let mut cues = Vec::new();
         let mut scratch = Vec::new();
         for cs in c.cue_streams.iter().filter(|s| !s.cues.is_empty()) {
@@ -363,7 +537,7 @@ impl<W: Write + Seek> Encoder<W> {
         }
         cues.sort_by_key(|(at, _, _)| *at);
         let writer = Writer::new(out, streams)?;
-        Ok(Encoder { writer, config, threads, variants, time_base, cues, next_cue: 0, frame: 0 })
+        Ok(Encoder { writer, config, threads, variants, audio, time_base, cues, next_cue: 0, frame: 0 })
     }
 
     /// Encodes one frame: `width * height * 4` bytes of sRGB RGBA8, rows top to bottom.
@@ -373,7 +547,7 @@ impl<W: Write + Seek> Encoder<W> {
             return Err(Error::Config(format!("frame has {} bytes, expected {}", rgba.len(), w * h * 4)));
         }
         let pts = self.frame;
-        self.write_cues_until(self.time_base.to_micros(pts))?;
+        self.write_due(self.time_base.to_micros(pts))?;
 
         let keyframe = pts.is_multiple_of(self.config.keyint as u64);
         for v in &mut self.variants {
@@ -397,30 +571,95 @@ impl<W: Write + Seek> Encoder<W> {
         Ok(())
     }
 
-    /// Writes the remaining cues and the index, and returns the output and statistics.
+    /// Writes the remaining cues and audio and the index, and returns the output and
+    /// statistics.
     pub fn finish(mut self) -> Result<(W, Stats)> {
-        self.write_cues_until(u64::MAX)?;
+        self.write_due(u64::MAX)?;
         let frames_end = self.time_base.to_micros(self.frame);
-        let duration_us = self.cues.iter().map(|(at, _, c)| at.saturating_add(c.duration)).fold(frames_end, u64::max);
+        let cues_end = self.cues.iter().map(|(at, _, c)| at.saturating_add(c.duration));
+        let audio_end = self.audio.iter().map(|a| self.writer.streams()[a.stream as usize].time_base.to_micros(a.next_pts));
+        let duration_us = cues_end.chain(audio_end).fold(frames_end, u64::max);
         let out = self.writer.finish(duration_us)?;
         let stats = Stats {
             frames: self.frame,
             duration_us,
             variants: self.variants.into_iter().map(|v| v.stats).collect(),
+            audio: self.audio.into_iter().map(|a| a.stats).collect(),
         };
         Ok((out, stats))
     }
 
-    fn write_cues_until(&mut self, time_us: u64) -> Result<()> {
-        while let Some((at, stream, cue)) = self.cues.get(self.next_cue) {
-            if *at > time_us {
-                break;
+    /// Writes the cues and audio chunks due at or before `time_us`, in decode-time order
+    /// with cues first on ties.
+    fn write_due(&mut self, time_us: u64) -> Result<()> {
+        loop {
+            let cue_at = self.cues.get(self.next_cue).map(|(at, _, _)| *at);
+            let audio_next = self
+                .audio
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| !a.done)
+                .map(|(i, a)| (self.writer.streams()[a.stream as usize].decode_time_us(a.next_pts), i))
+                .min();
+            match (cue_at, audio_next) {
+                (Some(at), next) if at <= time_us && next.is_none_or(|(t, _)| at <= t) => {
+                    let (at, stream, cue) = &self.cues[self.next_cue];
+                    self.writer.write_cue(*stream, *at, cue)?;
+                    self.next_cue += 1;
+                }
+                (_, Some((t, i))) if t <= time_us => self.write_audio_chunk(i)?,
+                _ => return Ok(()),
             }
-            self.writer.write_cue(*stream, *at, cue)?;
-            self.next_cue += 1;
         }
+    }
+
+    /// Pulls one chunk of samples from an audio source and writes it.
+    fn write_audio_chunk(&mut self, i: usize) -> Result<()> {
+        let a = &mut self.audio[i];
+        let frame_in = a.channels * 4;
+        a.input.resize(a.chunk_frames * frame_in, 0);
+        let got = read_full(&mut a.source, &mut a.input)
+            .map_err(|e| Error::Encode(format!("audio track {:?}: {e}", a.stats.name)))?;
+        let frames = got / frame_in;
+        if frames < a.chunk_frames {
+            a.done = true;
+        }
+        if frames == 0 {
+            return Ok(());
+        }
+        let input = &a.input[..frames * frame_in];
+        a.payload.clear();
+        match a.format {
+            SampleFormat::F32 => a.payload.extend_from_slice(input),
+            SampleFormat::S16 => {
+                for b in input.as_chunks::<4>().0 {
+                    let v = (f32::from_le_bytes(*b) * 32768.0).round().clamp(-32768.0, 32767.0) as i16;
+                    a.payload.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+        }
+        let before = self.writer.bytes_written();
+        self.writer.write_audio(a.stream, a.next_pts, &a.payload)?;
+        a.stats.bytes += self.writer.bytes_written() - before;
+        a.stats.frames += frames as u64;
+        a.stats.chunks += 1;
+        a.next_pts += frames as u64;
         Ok(())
     }
+}
+
+/// Reads until `buf` is full or the reader ends; returns the bytes read.
+fn read_full(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match r.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
 }
 
 /// Splits an RGBA image into blocks of `bw * bh` pixels (row-major blocks, row-major pixels

@@ -161,6 +161,8 @@ praxi encode input.mp4 -o intro.praxi --no-audio
 
 The CLI takes the first audio stream of the input (`ffprobe -select_streams a:0`). Each
 variant is decoded by its own `ffmpeg` process writing `f32le` to a pipe. Channel masks
-come from the ffmpeg layout name; unknown layouts get mask `0`. With `--frames N`, audio is
+come from the ffmpeg layout name: `--audio-layout` takes the standard ffmpeg layouts
+(`ffmpeg -layouts`) built from the 18 WAVE speakers, and a source layout outside that list
+gets mask `0`. With `--frames N`, audio is
 cut at the end of frame `N`. `praxi info` lists audio streams; `--chunks` shows the frame
 count of each audio chunk.
