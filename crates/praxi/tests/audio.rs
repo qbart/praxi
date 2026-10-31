@@ -1,5 +1,5 @@
 use praxi::format::{AudioParams, COLOR_FLAG_SRGB, SampleFormat, StreamInfo, TimeBase, VideoParams, Writer};
-use praxi::{AudioOutput, Capabilities, Player, TextureFormat};
+use praxi::{AudioOutput, Capabilities, Clock, Player, TextureFormat};
 use std::io::Cursor;
 use std::time::Duration;
 
@@ -226,4 +226,156 @@ fn outputs_work_from_another_thread() {
     p.advance(Duration::ZERO).unwrap();
     let frames = std::thread::spawn(move || read_frames(&out, 100)).join().unwrap();
     assert_eq!(frames, range(0, 100));
+}
+
+/// `seconds` of 8x4 BC1 video at 1 fps and one mono f32 track at 1000 Hz whose frame `i`
+/// holds `i / 1000`, in 100-frame chunks with 200 ms preload.
+fn long_file(seconds: u64) -> Vec<u8> {
+    let video = VideoParams { width: 8, height: 4, format: TextureFormat::Bc1, color_flags: COLOR_FLAG_SRGB };
+    let streams = vec![StreamInfo::video(0, TimeBase::new(1, 1), video), audio_stream(0, "music", 1, SampleFormat::F32)];
+    let mut chunks: Vec<(u64, u16, u64)> = (0..seconds).map(|n| (n * 1000, 0, n)).collect();
+    chunks.extend((0..seconds * 1000).step_by(100).map(|pts| (pts.saturating_sub(200), 1, pts)));
+    chunks.sort_by_key(|&(t, stream, _)| (t, stream != 0));
+    let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
+    for (_, stream, pts) in chunks {
+        match stream {
+            0 => w.write_chunk(0, pts, true, &[pts as u8; 16], None).unwrap(),
+            _ => w.write_audio(1, pts, &samples(pts, pts + 100, 1, SampleFormat::F32)).unwrap(),
+        }
+    }
+    w.finish(seconds * 1_000_000).unwrap().into_inner()
+}
+
+/// An audio device whose clock runs at `speed` times the game clock. Its callback reads
+/// 10-frame (10 ms) buffers one buffer ahead of what it has played, so its output latency
+/// is 10 ms.
+struct Device {
+    out: AudioOutput,
+    speed: f64,
+    /// Milliseconds played by the device.
+    played: f64,
+    /// Frame numbers returned by reads.
+    frames: Vec<u64>,
+    reads: u64,
+}
+
+impl Device {
+    const LATENCY: Duration = Duration::from_millis(10);
+
+    fn new(out: AudioOutput, speed: f64) -> Device {
+        Device { out, speed, played: 0.0, frames: Vec::new(), reads: 0 }
+    }
+
+    /// Plays `dt` of game time.
+    fn run(&mut self, dt: Duration) {
+        self.played += dt.as_secs_f64() * 1000.0 * self.speed;
+        while (self.reads as f64) * 10.0 < self.played + 10.0 {
+            let mut buf = [0.0; 10];
+            let n = self.out.read(&mut buf);
+            self.frames.extend(buf[..n].iter().map(|v| (v * 1000.0).round() as u64));
+            self.reads += 1;
+        }
+    }
+
+    /// Heard position in milliseconds: one past the last frame read, minus the latency.
+    fn heard_ms(&self) -> f64 {
+        self.frames.last().map_or(0.0, |&f| f as f64 + 1.0 - 10.0)
+    }
+}
+
+/// Plays `steps` game frames of 16 ms with the device; returns the positions after each.
+fn play_with(p: &mut Player<Cursor<Vec<u8>>>, device: &mut Device, steps: usize) -> Vec<f64> {
+    let dt = 16 * MS;
+    (0..steps)
+        .map(|_| {
+            device.run(dt);
+            p.advance(dt).unwrap();
+            p.position().as_secs_f64() * 1000.0
+        })
+        .collect()
+}
+
+fn contiguous(frames: &[u64]) -> bool {
+    frames.windows(2).all(|w| w[1] == w[0] + 1)
+}
+
+#[test]
+fn audio_clock_follows_device_drift() {
+    for speed in [1.01, 0.99] {
+        let mut p = Player::open(Cursor::new(long_file(20)), &caps()).unwrap();
+        p.set_clock(Clock::Audio { track: 0, latency: Device::LATENCY });
+        let mut device = Device::new(p.audio_output(0).unwrap(), speed);
+        p.play();
+        p.advance(Duration::ZERO).unwrap(); // decodes the first chunks before the device reads
+        let positions = play_with(&mut p, &mut device, 625); // 10 s of game time
+        assert!(positions.windows(2).all(|w| w[1] >= w[0]), "speed {speed}: the clock never goes back");
+        assert_eq!(device.frames[0], 0);
+        assert!(contiguous(&device.frames), "speed {speed}: no skipped or repeated audio");
+        let last = *positions.last().unwrap();
+        assert!((last - device.heard_ms()).abs() < 10.0, "speed {speed}: clock {last} ms, heard {} ms", device.heard_ms());
+        assert!((last - 10_000.0 * speed).abs() < 20.0, "speed {speed}: clock {last} ms follows the device");
+    }
+
+    // With the game clock, a slow device falls behind and its reads skip forward.
+    let mut p = Player::open(Cursor::new(long_file(20)), &caps()).unwrap();
+    let mut device = Device::new(p.audio_output(0).unwrap(), 0.99);
+    p.play();
+    p.advance(Duration::ZERO).unwrap();
+    let positions = play_with(&mut p, &mut device, 625);
+    assert_eq!(*positions.last().unwrap(), 10_000.0);
+    assert!(!contiguous(&device.frames));
+}
+
+#[test]
+fn audio_clock_runs_on_dt_while_audio_stalls() {
+    let mut p = Player::open(Cursor::new(long_file(20)), &caps()).unwrap();
+    p.set_clock(Clock::Audio { track: 0, latency: Device::LATENCY });
+    let mut device = Device::new(p.audio_output(0).unwrap(), 1.0);
+    p.play();
+    p.advance(Duration::ZERO).unwrap();
+    play_with(&mut p, &mut device, 60); // 960 ms
+    let before = p.position().as_secs_f64() * 1000.0;
+    // The engine stops reading for 480 ms.
+    for _ in 0..30 {
+        p.advance(16 * MS).unwrap();
+    }
+    let stalled = p.position().as_secs_f64() * 1000.0;
+    assert!(stalled - before > 400.0, "the clock went on: {before} -> {stalled} ms");
+    // Reads resume behind the clock and skip forward to it, then the clock follows them.
+    let resumed_at = device.frames.len();
+    device.played += 480.0;
+    play_with(&mut p, &mut device, 60);
+    let first = device.frames[resumed_at];
+    assert!(first as f64 >= stalled - 1.0, "first read after the stall at frame {first}, clock {stalled} ms");
+    assert!(contiguous(&device.frames[resumed_at..]));
+    let last = p.position().as_secs_f64() * 1000.0;
+    assert!((last - device.heard_ms()).abs() < 15.0, "clock {last} ms, heard {} ms", device.heard_ms());
+}
+
+#[test]
+fn audio_clock_jumps_to_audio_ahead() {
+    let mut p = Player::open(Cursor::new(long_file(20)), &caps()).unwrap();
+    p.set_clock(Clock::Audio { track: 0, latency: Duration::ZERO });
+    let out = p.audio_output(0).unwrap();
+    p.play();
+    p.advance(Duration::ZERO).unwrap();
+    let mut buf = [0.0; 150];
+    assert_eq!(out.read(&mut buf), 150);
+    p.advance(16 * MS).unwrap();
+    assert_eq!(p.position(), 150 * MS, "150 ms heard, 134 ms ahead of the clock");
+}
+
+#[test]
+fn audio_clock_without_master_runs_on_dt() {
+    for clock in [Clock::Audio { track: 0, latency: Duration::ZERO }, Clock::Audio { track: 7, latency: Duration::ZERO }] {
+        let mut p = Player::open(Cursor::new(long_file(20)), &caps()).unwrap();
+        p.set_clock(clock);
+        assert_eq!(p.clock(), clock);
+        p.set_audio_track_enabled(0, false);
+        p.play();
+        for _ in 0..100 {
+            p.advance(16 * MS).unwrap();
+        }
+        assert_eq!(p.position(), 1600 * MS, "{clock:?}");
+    }
 }
