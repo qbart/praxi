@@ -10,9 +10,10 @@ audio = ["dep:cpal"]
 
 [dependencies]
 praxi.workspace = true
+praxi-wgpu.workspace = true
 clap.workspace = true
-wgpu = "30"
-winit = "0.30"
-pollster = "0.4"
+wgpu.workspace = true
+winit.workspace = true
+pollster.workspace = true
 png = "0.18"
 cpal = { version = "0.18", optional = true }

@@ -2,10 +2,11 @@
 
 #[cfg(feature = "audio")]
 mod audio;
-mod gpu;
+mod checker;
 
 use clap::Parser;
-use gpu::{Rect, Renderer};
+use checker::Checker;
+use praxi_wgpu::{Rect, VideoRenderer};
 use praxi::{Capabilities, Event, Player, TextureFormat, Value};
 #[cfg(feature = "audio")]
 use praxi::Clock;
@@ -147,6 +148,20 @@ fn print_event(at: Duration, event: &Event) {
     println!("[{:>8.3}] {what}", at.as_secs_f64());
 }
 
+/// A render pass that clears `view` to transparent black.
+fn begin_pass<'a>(encoder: &'a mut wgpu::CommandEncoder, view: &'a wgpu::TextureView) -> wgpu::RenderPass<'a> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("praxi-viewer"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+        })],
+        ..Default::default()
+    })
+}
+
 // --- Screenshot -----------------------------------------------------------------------
 
 fn screenshot(args: &Args) -> AnyResult<()> {
@@ -154,17 +169,17 @@ fn screenshot(args: &Args) -> AnyResult<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None))?;
     describe_adapter(&adapter);
-    let player = open_player(args, &gpu::capabilities(&adapter, args.format)?)?;
+    let player = open_player(args, &praxi_wgpu::capabilities(&adapter, args.format)?)?;
     describe_tracks(&player);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("praxi-viewer"),
-        required_features: gpu::required_features(&adapter),
+        required_features: praxi_wgpu::required_features(&adapter),
         ..Default::default()
     }))?;
 
     let target_format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let mut renderer = Renderer::new(&device, target_format, &player);
-    renderer.upload(&queue, &player);
+    let mut renderer = VideoRenderer::new(&device, target_format, &player);
+    renderer.prepare(&queue, &player, 1.0);
     let video = player.tracks()[0].params;
     let (width, height) = args.size.unwrap_or((video.width, video.height));
     let target = device.create_texture(&wgpu::TextureDescriptor {
@@ -187,7 +202,11 @@ fn screenshot(args: &Args) -> AnyResult<()> {
     });
     let mut encoder = device.create_command_encoder(&Default::default());
     let rect = Rect::fit(video.width, video.height, width, height);
-    renderer.draw(&mut encoder, &target.create_view(&Default::default()), rect, false);
+    {
+        let view = target.create_view(&Default::default());
+        let mut pass = begin_pass(&mut encoder, &view);
+        renderer.draw_replace(&mut pass, rect);
+    }
     encoder.copy_texture_to_buffer(
         target.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
@@ -316,7 +335,8 @@ struct Viewer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    renderer: Renderer,
+    renderer: VideoRenderer,
+    checker: Checker,
     player: FilePlayer,
     name: String,
     muted: Arc<AtomicBool>,
@@ -343,7 +363,7 @@ impl Viewer {
 
         #[cfg(feature = "audio")]
         let device_audio = if args.no_audio { None } else { audio::Device::open_default() };
-        let caps = gpu::capabilities(&adapter, args.format)?;
+        let caps = praxi_wgpu::capabilities(&adapter, args.format)?;
         #[cfg(feature = "audio")]
         let caps = match device_audio.as_ref().and_then(|d| d.channels()) {
             Some(channels) => caps.max_audio_channels(channels),
@@ -354,7 +374,7 @@ impl Viewer {
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("praxi-viewer"),
-            required_features: gpu::required_features(&adapter),
+            required_features: praxi_wgpu::required_features(&adapter),
             ..Default::default()
         }))?;
         let size = window.inner_size();
@@ -367,7 +387,8 @@ impl Viewer {
         }
         config.present_mode = wgpu::PresentMode::Fifo;
         surface.configure(&device, &config);
-        let renderer = Renderer::new(&device, config.format, &player);
+        let renderer = VideoRenderer::new(&device, config.format, &player);
+        let checker = Checker::new(&device, config.format);
 
         let video = player.tracks()[0].params;
         let fit = Rect::fit(video.width, video.height, 1280, 800);
@@ -393,6 +414,7 @@ impl Viewer {
             queue,
             config,
             renderer,
+            checker,
             player,
             name,
             muted,
@@ -461,7 +483,7 @@ impl Viewer {
         self.player.advance(dt)?;
         let advanced = Instant::now();
         self.drain_events();
-        let uploads = self.renderer.upload(&self.queue, &self.player);
+        let uploads = self.renderer.prepare(&self.queue, &self.player, 1.0);
         let uploaded = Instant::now();
 
         let frame = match self.surface.get_current_texture() {
@@ -480,7 +502,11 @@ impl Viewer {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         let video = self.player.tracks()[0].params;
         let rect = Rect::fit(video.width, video.height, self.config.width, self.config.height);
-        self.renderer.draw(&mut encoder, &view, rect, true);
+        {
+            let mut pass = begin_pass(&mut encoder, &view);
+            self.checker.draw(&mut pass, rect);
+            self.renderer.draw(&mut pass, rect);
+        }
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         self.queue.present(frame);

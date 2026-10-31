@@ -1,0 +1,13 @@
+[package]
+name = "praxi-wgpu"
+description = "Texture upload and drawing of praxi video for wgpu engines"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+praxi.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+winit.workspace = true
+pollster.workspace = true

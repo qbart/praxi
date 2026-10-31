@@ -1677,6 +1677,17 @@ dependencies = [
  "png",
  "pollster",
  "praxi",
+ "praxi-wgpu",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "praxi-wgpu"
+version = "0.1.0"
+dependencies = [
+ "pollster",
+ "praxi",
  "wgpu",
  "winit",
 ]

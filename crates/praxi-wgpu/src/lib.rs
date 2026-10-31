@@ -1,4 +1,5 @@
-//! Compressed texture upload and drawing, shared by the window and screenshots.
+//! Texture upload and drawing of praxi video for `wgpu` engines
+//! (`docs/features/engine-integration.md#praxi-wgpu`).
 
 use praxi::{Capabilities, Player, TextureFormat};
 use std::io::{Read, Seek};
@@ -13,6 +14,7 @@ const SHADER: &str = r#"
 struct Params {
     uv_scale: vec2<f32>,
     uv_max: vec2<f32>,
+    opacity: f32,
 };
 
 @group(0) @binding(0) var tex: texture_2d<f32>;
@@ -37,16 +39,13 @@ fn vs(@builtin(vertex_index) i: u32) -> VsOut {
 @fragment
 fn fs_video(in: VsOut) -> @location(0) vec4<f32> {
     // Clamp to the last texel centre so filtering never reads block padding.
-    return textureSample(tex, samp, min(in.uv * params.uv_scale, params.uv_max));
-}
-
-@fragment
-fn fs_checker(in: VsOut) -> @location(0) vec4<f32> {
-    let odd = ((u32(in.pos.x) / 16u) + (u32(in.pos.y) / 16u)) & 1u;
-    let v = select(0.2, 0.35, odd == 1u);
-    return vec4<f32>(v, v, v, 1.0);
+    let c = textureSample(tex, samp, min(in.uv * params.uv_scale, params.uv_max));
+    return vec4<f32>(c.rgb, c.a * params.opacity);
 }
 "#;
+
+/// Bytes of the `Params` uniform (`opacity` at 16, padded to 32).
+const PARAMS_SIZE: usize = 32;
 
 /// Texture formats the adapter can sample, most preferred first.
 pub fn supported_formats(features: wgpu::Features) -> Vec<TextureFormat> {
@@ -118,6 +117,7 @@ impl Rect {
 
 struct TrackTexture {
     texture: wgpu::Texture,
+    params: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     format: TextureFormat,
     blocks: (u32, u32),
@@ -125,18 +125,19 @@ struct TrackTexture {
     uploaded: Option<u64>,
 }
 
-pub struct Renderer {
+/// The textures of one player's video tracks and the pipelines that draw them.
+pub struct VideoRenderer {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     blend: wgpu::RenderPipeline,
     replace: wgpu::RenderPipeline,
-    checker: wgpu::RenderPipeline,
     tracks: Vec<TrackTexture>,
+    opacity: f32,
 }
 
-impl Renderer {
+impl VideoRenderer {
     /// Creates pipelines drawing into `target` and one texture per video track of `player`.
-    pub fn new<R: Read + Seek>(device: &wgpu::Device, target: wgpu::TextureFormat, player: &Player<R>) -> Renderer {
+    pub fn new<R: Read + Seek>(device: &wgpu::Device, target: wgpu::TextureFormat, player: &Player<R>) -> VideoRenderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("praxi"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -189,10 +190,10 @@ impl Renderer {
                 operation: wgpu::BlendOperation::Add,
             },
         };
-        let pipeline = |label, layout: Option<&wgpu::PipelineLayout>, fragment, blend| {
+        let pipeline = |label, blend| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
-                layout,
+                layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs"),
@@ -207,7 +208,7 @@ impl Renderer {
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some(fragment),
+                    entry_point: Some("fs_video"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: target,
@@ -225,13 +226,13 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let mut renderer = Renderer {
-            blend: pipeline("blend", Some(&pipeline_layout), "fs_video", Some(blend)),
-            replace: pipeline("replace", Some(&pipeline_layout), "fs_video", None),
-            checker: pipeline("checker", None, "fs_checker", None),
+        let mut renderer = VideoRenderer {
+            blend: pipeline("blend", Some(blend)),
+            replace: pipeline("replace", None),
             layout,
             sampler,
             tracks: Vec::new(),
+            opacity: 1.0,
         };
         for info in player.tracks() {
             let p = &info.params;
@@ -261,19 +262,23 @@ impl Renderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let params: [f32; 4] = [
+        let values: [f32; 5] = [
             width as f32 / padded_w as f32,
             height as f32 / padded_h as f32,
             (width as f32 - 0.5) / padded_w as f32,
             (height as f32 - 0.5) / padded_h as f32,
+            self.opacity,
         ];
-        let bytes: Vec<u8> = params.iter().flat_map(|v| v.to_le_bytes()).collect();
-        let uniform = wgpu::util::DeviceExt::create_buffer_init(
+        let mut bytes = [0u8; PARAMS_SIZE];
+        for (dst, v) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
+            *dst = v.to_le_bytes();
+        }
+        let params = wgpu::util::DeviceExt::create_buffer_init(
             device,
             &wgpu::util::BufferInitDescriptor {
                 label: Some("track"),
                 contents: &bytes,
-                usage: wgpu::BufferUsages::UNIFORM,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             },
         );
         let view = texture.create_view(&Default::default());
@@ -283,14 +288,22 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: params.as_entire_binding() },
             ],
         });
-        TrackTexture { texture, bind_group, format, blocks, uploaded: None }
+        TrackTexture { texture, params, bind_group, format, blocks, uploaded: None }
     }
 
-    /// Uploads the frames that changed since the last call. Returns how many were uploaded.
-    pub fn upload<R: Read + Seek>(&mut self, queue: &wgpu::Queue, player: &Player<R>) -> usize {
+    /// Uploads the frames that changed since the last call and sets the opacity (clamped to
+    /// 0..=1) of the next draws. Returns how many frames were uploaded.
+    pub fn prepare<R: Read + Seek>(&mut self, queue: &wgpu::Queue, player: &Player<R>, opacity: f32) -> usize {
+        let opacity = if opacity.is_nan() { 1.0 } else { opacity.clamp(0.0, 1.0) };
+        if opacity != self.opacity {
+            self.opacity = opacity;
+            for t in &self.tracks {
+                queue.write_buffer(&t.params, 16, &opacity.to_le_bytes());
+            }
+        }
         let mut uploaded = 0;
         for (i, t) in self.tracks.iter_mut().enumerate() {
             let Some(frame) = player.video_frame(i) else { continue };
@@ -319,33 +332,24 @@ impl Renderer {
         uploaded
     }
 
-    /// Clears `view` to black and draws every track that has a frame into `rect`. With
-    /// `checker`, a checkerboard goes under the tracks; without, track 0 replaces the target.
-    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, rect: Rect, checker: bool) {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("praxi"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
+    /// Draws every track that has a frame into `rect`, in track order, each blended over
+    /// what is already there (straight alpha times the opacity). Sets the viewport to `rect`.
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, rect: Rect) {
+        self.draw_tracks(pass, rect, false);
+    }
+
+    /// Like [`VideoRenderer::draw`], but track 0 replaces the target pixels, alpha included
+    /// (for offscreen rendering such as screenshots).
+    pub fn draw_replace(&self, pass: &mut wgpu::RenderPass<'_>, rect: Rect) {
+        self.draw_tracks(pass, rect, true);
+    }
+
+    fn draw_tracks(&self, pass: &mut wgpu::RenderPass<'_>, rect: Rect, replace_first: bool) {
         pass.set_viewport(rect.x, rect.y, rect.w, rect.h, 0.0, 1.0);
-        if checker {
-            pass.set_pipeline(&self.checker);
-            pass.draw(0..4, 0..1);
-        }
-        let mut first = !checker;
-        for t in self.tracks.iter().filter(|t| t.uploaded.is_some()) {
-            pass.set_pipeline(if first { &self.replace } else { &self.blend });
+        for (i, t) in self.tracks.iter().enumerate().filter(|(_, t)| t.uploaded.is_some()) {
+            pass.set_pipeline(if replace_first && i == 0 { &self.replace } else { &self.blend });
             pass.set_bind_group(0, &t.bind_group, &[]);
             pass.draw(0..4, 0..1);
-            first = false;
         }
     }
 }

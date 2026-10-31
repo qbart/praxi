@@ -10,9 +10,13 @@ edition = "2024"
 praxi = { path = "crates/praxi" }
 praxi-format = { path = "crates/praxi-format" }
 praxi-encoder = { path = "crates/praxi-encoder" }
+praxi-wgpu = { path = "crates/praxi-wgpu" }
 lz4_flex = "0.14"
 ktx-rs = { version = "4.4.3", default-features = false }
 clap = { version = "4.6", features = ["derive"] }
+wgpu = "30"
+winit = "0.30"
+pollster = "0.4"
 
 # ktx-rs encoders are very slow unoptimised; keep dependencies fast in dev and test builds.
 [profile.dev.package."*"]
