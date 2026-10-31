@@ -1,7 +1,7 @@
 use crate::{
     AUDIO_NAME_SIZE, CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, Compression, Cue,
     Error, HEADER_SIZE, IndexEntry, MAGIC, Result, STREAM_ENTRY_SIZE, StreamInfo, StreamParams,
-    VERSION_MAJOR, VERSION_MINOR, to_planes,
+    VERSION_MAJOR, VERSION_MINOR, planes::encode_sections, to_planes,
 };
 use std::io::{Seek, SeekFrom, Write};
 
@@ -22,7 +22,8 @@ pub struct Writer<W: Write + Seek> {
     audio_end: Vec<u64>,
     scratch: Vec<u8>,
     planes: Vec<u8>,
-    planes_lz4: Vec<u8>,
+    planes_stored: Vec<u8>,
+    huff: Vec<u8>,
     plane_min_saving: f64,
     cue_payload: Vec<u8>,
 }
@@ -77,7 +78,8 @@ impl<W: Write + Seek> Writer<W> {
             audio_end: vec![0; n],
             scratch: Vec::new(),
             planes: Vec::new(),
-            planes_lz4: Vec::new(),
+            planes_stored: Vec::new(),
+            huff: Vec::new(),
             plane_min_saving: DEFAULT_PLANE_MIN_SAVING,
             cue_payload: Vec::new(),
         })
@@ -93,15 +95,16 @@ impl<W: Write + Seek> Writer<W> {
     }
 
     /// Sets how many percent byte planes must save over raw or LZ4 before `write_chunk`
-    /// picks them on its own (default [`DEFAULT_PLANE_MIN_SAVING`]). Clamped to `0..=100`.
+    /// picks them on its own, and a Huffman section over a raw or LZ4 one (default
+    /// [`DEFAULT_PLANE_MIN_SAVING`]). Clamped to `0..=100`.
     pub fn set_plane_min_saving(&mut self, percent: f64) {
         self.plane_min_saving = if percent.is_nan() { DEFAULT_PLANE_MIN_SAVING } else { percent.clamp(0.0, 100.0) };
     }
 
     /// Writes one chunk of a video stream. `compression = Some(c)` forces `c`; `None` picks
-    /// raw or LZ4, whichever is smaller, or LZ4 over byte planes when that is smaller by at
-    /// least the plane saving threshold (`docs/features/video-codec.md`). Cue streams take [`Writer::write_cue`],
-    /// audio streams [`Writer::write_audio`].
+    /// raw or LZ4, whichever is smaller, or byte planes when they are smaller by at least
+    /// the plane saving threshold (`docs/features/video-codec.md#decode-cost-and-writer-policy`).
+    /// Cue streams take [`Writer::write_cue`], audio streams [`Writer::write_audio`].
     pub fn write_chunk(
         &mut self,
         stream: u16,
@@ -193,15 +196,16 @@ impl<W: Write + Seek> Writer<W> {
             w.planes.resize(payload.len(), 0);
             w.planes[..prefix].copy_from_slice(&payload[..prefix]);
             to_planes(&payload[prefix..], block_bytes, &mut w.planes[prefix..]);
-            w.planes_lz4 = lz4_flex::block::compress(&w.planes);
+            w.planes_stored.clear();
+            encode_sections(&w.planes, prefix, block_bytes, w.plane_min_saving, &mut w.planes_stored, &mut w.huff);
         };
         let compression = match compression {
-            Some(Compression::Lz4Planes) => {
+            Some(Compression::Planes) => {
                 let layout = plane_layout.ok_or_else(|| {
                     Error::Invalid(format!("stream {stream}: byte planes need a video payload of whole blocks"))
                 })?;
                 planes(self, layout);
-                Compression::Lz4Planes
+                Compression::Planes
             }
             Some(Compression::None) => Compression::None,
             Some(Compression::Lz4) => {
@@ -217,8 +221,8 @@ impl<W: Write + Seek> Writer<W> {
                     planes(self, layout);
                     let other = self.scratch.len().min(payload.len());
                     let limit = other as f64 * (1.0 - self.plane_min_saving / 100.0);
-                    if self.planes_lz4.len() < other && self.planes_lz4.len() as f64 <= limit {
-                        best = Compression::Lz4Planes;
+                    if self.planes_stored.len() < other && self.planes_stored.len() as f64 <= limit {
+                        best = Compression::Planes;
                     }
                 }
                 best
@@ -227,7 +231,7 @@ impl<W: Write + Seek> Writer<W> {
         let stored: &[u8] = match compression {
             Compression::None => payload,
             Compression::Lz4 => &self.scratch,
-            Compression::Lz4Planes => &self.planes_lz4,
+            Compression::Planes => &self.planes_stored,
         };
 
         let flags = if keyframe { CHUNK_FLAG_KEYFRAME } else { 0 };

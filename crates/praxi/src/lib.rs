@@ -240,7 +240,9 @@ fn apply_delta(frame: &mut [u8], payload: &[u8], p: &VideoParams, offset: u64) -
             if i >= block_count {
                 return corrupt(format!("delta frame at {offset} sets mask bits past the last block"));
             }
-            frame[i * bb..(i + 1) * bb].copy_from_slice(&blocks[src..src + bb]);
+            for (dst, residual) in frame[i * bb..(i + 1) * bb].iter_mut().zip(&blocks[src..src + bb]) {
+                *dst ^= residual;
+            }
             src += bb;
             bits &= bits - 1;
         }

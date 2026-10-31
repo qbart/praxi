@@ -1,7 +1,7 @@
 use crate::{
     CHUNK_HEADER_SIZE, ChunkHeader, Compression, Error, HEADER_SIZE, Header, INDEX_ENTRY_SIZE,
     IndexEntry, MAGIC, Result, AUDIO_NAME_SIZE, AudioParams, CUE_NAME_SIZE, CueParams, SampleFormat, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
-    TimeBase, VERSION_MAJOR, VideoParams, corrupt, from_planes, le_u16, le_u32, le_u64,
+    TimeBase, VERSION_MAJOR, VideoParams, corrupt, from_planes, planes::decode_sections, le_u16, le_u32, le_u64,
 };
 use std::io::{Read, Seek, SeekFrom};
 
@@ -115,7 +115,7 @@ impl<R: Read + Seek> Reader<R> {
         if chunk.stream as usize >= self.streams.len() {
             return corrupt(format!("chunk at {} has unknown stream {}", chunk.offset, chunk.stream));
         }
-        if compression == Compression::Lz4Planes {
+        if compression == Compression::Planes {
             let Some(v) = self.streams[chunk.stream as usize].video_params() else {
                 return corrupt(format!("chunk at {offset} uses byte planes outside a video stream"));
             };
@@ -145,16 +145,19 @@ impl<R: Read + Seek> Reader<R> {
                 self.inner.read_exact(&mut self.scratch)?;
                 decompress(&self.scratch, out, chunk)?;
             }
-            Compression::Lz4Planes => {
+            Compression::Planes => {
                 self.scratch.resize(chunk.stored_size as usize, 0);
                 self.inner.read_exact(&mut self.scratch)?;
                 self.planes.resize(out.len(), 0);
-                decompress(&self.scratch, &mut self.planes, chunk)?;
                 // chunk_at checked that this is a video stream with whole blocks.
                 let v = self.streams[chunk.stream as usize].video_params().expect("video stream");
                 let prefix = v.plane_prefix(chunk.keyframe());
+                let block_bytes = v.format.block_bytes() as usize;
+                if let Err(e) = decode_sections(&self.scratch, prefix, block_bytes, &mut self.planes) {
+                    return corrupt(format!("chunk at {}: {e}", chunk.offset));
+                }
                 out[..prefix].copy_from_slice(&self.planes[..prefix]);
-                from_planes(&self.planes[prefix..], v.format.block_bytes() as usize, &mut out[prefix..]);
+                from_planes(&self.planes[prefix..], block_bytes, &mut out[prefix..]);
             }
         }
         Ok(())

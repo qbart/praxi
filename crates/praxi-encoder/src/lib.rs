@@ -783,7 +783,7 @@ fn build_payload(v: &mut Variant, keyframe: bool, threshold: u8) {
             // Close enough to what the decoder already shows.
         } else {
             v.payload[i / 8] |= 1 << (i % 8);
-            v.payload.extend_from_slice(enc);
+            v.payload.extend(enc.iter().zip(ref_enc.iter()).map(|(a, b)| a ^ b));
             ref_src.copy_from_slice(src);
             ref_enc.copy_from_slice(enc);
             continue;

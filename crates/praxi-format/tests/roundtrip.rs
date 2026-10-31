@@ -95,7 +95,7 @@ fn rejects_bad_magic_and_version() {
 
     let mut file = sample_file();
     file[8] = 1;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 5 })));
+    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 6 })));
 
     let mut file = sample_file();
     file[10] = 1;
@@ -282,8 +282,8 @@ fn byte_planes() {
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     w.write_cue(1, 0, &Cue::new("start")).unwrap();
     w.write_chunk(0, 0, true, &key, None).unwrap();
-    w.write_chunk(0, 1, false, &delta, Some(Compression::Lz4Planes)).unwrap();
-    let err = w.write_chunk(0, 2, false, &delta[..30], Some(Compression::Lz4Planes));
+    w.write_chunk(0, 1, false, &delta, Some(Compression::Planes)).unwrap();
+    let err = w.write_chunk(0, 2, false, &delta[..30], Some(Compression::Planes));
     assert!(matches!(err, Err(Error::Invalid(_))), "not whole blocks after the mask: {err:?}");
     let file = w.finish(100_000).unwrap().into_inner();
 
@@ -297,8 +297,8 @@ fn byte_planes() {
         let mut r = Reader::new(Cursor::new(file)).unwrap();
         r.next_chunk().unwrap().unwrap().compression
     };
-    assert_eq!(auto_compression(0.0), Compression::Lz4Planes);
-    assert_eq!(auto_compression(15.0), Compression::Lz4Planes);
+    assert_eq!(auto_compression(0.0), Compression::Planes);
+    assert_eq!(auto_compression(15.0), Compression::Planes);
     assert_eq!(auto_compression(25.0), Compression::None, "saving below the threshold");
     assert_eq!(auto_compression(100.0), Compression::None, "never byte planes");
 
@@ -306,12 +306,12 @@ fn byte_planes() {
     let mut payload = Vec::new();
     r.next_chunk().unwrap().unwrap();
     let c = r.next_chunk().unwrap().unwrap();
-    assert_eq!(c.compression, Compression::Lz4Planes, "auto picks byte planes for structured blocks");
+    assert_eq!(c.compression, Compression::Planes, "auto picks byte planes for structured blocks");
     assert!(c.stored_size < c.raw_size);
     r.read_payload(&c, &mut payload).unwrap();
     assert_eq!(payload, key);
     let c = r.next_chunk().unwrap().unwrap();
-    assert_eq!(c.compression, Compression::Lz4Planes, "forced");
+    assert_eq!(c.compression, Compression::Planes, "forced");
     r.read_payload(&c, &mut payload).unwrap();
     assert_eq!(payload, delta, "the mask stays in front");
 

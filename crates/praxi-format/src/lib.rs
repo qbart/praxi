@@ -1,6 +1,7 @@
 //! Reader and writer for the PRAXI container format (`docs/spec/PRAXI.md`).
 
 mod cue;
+mod huffman;
 mod planes;
 mod reader;
 mod writer;
@@ -15,7 +16,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 5;
+pub const VERSION_MINOR: u16 = 6;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;
@@ -399,8 +400,8 @@ pub struct Header {
 pub enum Compression {
     None,
     Lz4,
-    /// LZ4 over the byte-plane form of a video payload.
-    Lz4Planes,
+    /// The byte-plane form of a video payload, as raw, LZ4 or Huffman sections.
+    Planes,
 }
 
 impl Compression {
@@ -408,7 +409,7 @@ impl Compression {
         match self {
             Compression::None => 0,
             Compression::Lz4 => 1,
-            Compression::Lz4Planes => 2,
+            Compression::Planes => 2,
         }
     }
 
@@ -416,7 +417,7 @@ impl Compression {
         match id {
             0 => Some(Compression::None),
             1 => Some(Compression::Lz4),
-            2 => Some(Compression::Lz4Planes),
+            2 => Some(Compression::Planes),
             _ => None,
         }
     }
