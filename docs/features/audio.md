@@ -94,7 +94,8 @@ player.play();
 
 ### Sync
 
-The game clock (`advance(dt)`) is the master clock; audio follows it.
+By default the game clock (`advance(dt)`) is the master clock and audio follows it. With
+[`Clock::Audio`](#audio-master-clock), the clock follows one audio track instead.
 
 - The player decodes audio chunks when their decode time is reached, so each output queues
   about `preload` of audio ahead of the clock.
@@ -107,7 +108,41 @@ The game clock (`advance(dt)`) is the master clock; audio follows it.
 - When the engine stops reading entirely, the queue keeps at most `preload + tolerance +
   100 ms` plus one chunk; older samples are dropped.
 
-Planned: an audio-master mode where the clock follows the samples read from one track.
+### Audio-master clock
+
+The game clock and the audio device's clock drift apart (typically 0.01-0.1%, a few ms
+per minute), and the default mode corrects that by skipping audio forward once the drift
+exceeds the tolerance, an audible glitch. For long videos with continuous sound it is
+better to let the video follow the audio:
+
+```rust
+player.set_clock(Clock::Audio { track: 0, latency: Duration::from_millis(20) });
+```
+
+- `track` is the master audio track (index into `audio_tracks()`); `latency` is the
+  engine's output latency: how long after `AudioOutput::read` returns a sample it is heard
+  (device buffer plus mixer delay; for example, cpal's callback-to-playback timestamp
+  difference). `set_clock(Clock::Game)` (the default) switches back.
+- The *heard position* is the master's read position (frames returned by `read` across all
+  its handles) minus `latency`.
+- `advance(dt)` still moves the clock by `dt`, then steers it toward the heard position:
+  with `err = heard - (clock + dt)`,
+  - `|err|` within the sync tolerance: the clock becomes `clock + dt + err * min(1, dt /
+    500 ms)`, a smooth correction that absorbs drift and the burstiness of audio callbacks
+    (reads come in buffer-sized steps) without visible jumps;
+  - `err` above the tolerance (audio ahead, for example after a burst of reads): the clock
+    jumps forward to the heard position;
+  - `err` below minus the tolerance (audio behind: the engine stopped reading, the device
+    stalled, or the track's audio ended before the video): the clock runs on `dt` alone.
+    When reads resume, they are behind the clock and skip forward to it as in the default
+    mode, after which steering resumes.
+- The clock never moves backward, so video frames and cues stay in order.
+- While the master track is disabled or out of range, the clock runs on `dt` alone.
+- Other audio tracks keep following the clock as in the default mode, so they stay in step
+  with the master.
+- Pause, seek and looping work as in the default mode. At the start of playback the heard
+  position begins at the clock, so the engine should start reading within the tolerance
+  (60 ms) of `play()`; a later start loses the first samples, as in the default mode.
 
 ### Transport
 

@@ -36,6 +36,7 @@ praxi-viewer intro.praxi --screenshot frame.png --at 2.5
 | `--paused` | off | Open paused at the first frame. |
 | `--at <SECONDS>` | `0` | Start position. |
 | `--no-audio` | | Do not open an audio device. |
+| `--clock <C>` | `audio` | `audio`: the clock follows the audio output while audio plays; `game`: the wall clock is master ([audio.md](audio.md#audio-master-clock)). |
 | `--screenshot <PNG>` | | Render the frame at `--at` without a window, write it and exit. |
 | `--size <WxH>` | video size | Screenshot size. |
 
@@ -72,7 +73,10 @@ adapter, backend and the selected variant of every track at start-up.
 
 ## Playback
 
-- The clock is the wall clock: each redraw calls `player.advance(elapsed)`.
+- Each redraw calls `player.advance(elapsed)` with the wall-clock time since the last one.
+  When audio plays, the clock follows the output (`Clock::Audio` on the first mixed track,
+  latency from cpal's callback and playback timestamps); `--clock game` keeps the wall
+  clock as master.
 - Every enabled audio track with the same sample rate and channel count as audio track 0
   is mixed (summed) into one output stream opened at that rate and channel count; other
   tracks are reported and skipped. The viewer does not resample: if the device refuses the

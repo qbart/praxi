@@ -75,7 +75,7 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
    Done: GPU viewer with screenshots ([viewer.md](viewer.md)), `praxi bench` with a CI
    baseline check ([benchmarks.md](benchmarks.md)).
 3. **M2** Multi-channel audio streams and A/V sync. Done: PCM tracks with layout variants,
-   game-clock sync ([audio.md](audio.md)). Open: audio-master clock, compressed audio.
+   game-clock sync and an audio-master clock ([audio.md](audio.md)). Open: compressed audio.
 4. **M3** Better compression: motion copy, zstd, codebook frame types. Done: byte planes
    with per-plane LZ4 or Huffman, XOR residuals in delta frames
    ([video-codec.md](video-codec.md#compression)). Measured and set aside: zstd, block

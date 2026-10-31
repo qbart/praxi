@@ -40,15 +40,20 @@ for track in 0..player.tracks().len() {
 - `seek(time)`: jump to `time`. Decodes from the preceding keyframe of each track.
   Instantaneous cues at or before `time` are not emitted; cues active at `time` are
   ([cues.md](cues.md#player-behaviour)).
-- `advance(dt)`: when playing, move the clock forward by `dt` and decode every chunk whose
-  time is at or before the clock. Paused players ignore `dt`.
+- `advance(dt)`: when playing, move the clock forward by `dt` (steered toward the master
+  audio track with `Clock::Audio`) and decode every chunk whose time is at or before the
+  clock. Paused players ignore `dt`.
 - `position()` and `duration()`.
 - `video_frame(track)`: the latest decoded frame of a track (`None` before its first
   frame): texture format, sRGB flag, width, height, block data, frame index and timestamp.
   `index` changes only when a new frame was decoded, so engines can skip redundant uploads.
 - `cue_streams()` and `set_cue_stream_enabled(stream, bool)`: see [cues.md](cues.md).
 - `audio_tracks()`, `audio_output(track)`, `set_audio_track_enabled(track, bool)` and
-  `set_audio_sync_tolerance(d)`: see [audio.md](audio.md). Audio follows the game clock.
+  `set_audio_sync_tolerance(d)`: see [audio.md](audio.md).
+- `set_clock(Clock::Game)` (default): the clock advances by `dt`, audio follows it.
+  `set_clock(Clock::Audio { track, latency })`: `advance(dt)` steers the clock toward what
+  audio track `track` has played ([audio.md](audio.md#audio-master-clock)). `clock()`
+  returns the current setting.
 - `Capabilities::max_audio_channels(n)` limits the channels of selected audio variants.
 - `poll_event()`: the next queued event, oldest first.
 
