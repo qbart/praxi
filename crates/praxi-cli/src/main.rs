@@ -91,6 +91,7 @@ struct VideoOptions {
 enum SampleFormatArg {
     S16,
     F32,
+    Adpcm,
 }
 
 #[derive(clap::Args)]
@@ -408,6 +409,7 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
         let format = match args.audio_format {
             SampleFormatArg::S16 => SampleFormat::S16,
             SampleFormatArg::F32 => SampleFormat::F32,
+            SampleFormatArg::Adpcm => SampleFormat::Adpcm,
         };
         let rate = args.audio_rate.unwrap_or(a.sample_rate);
         let variants: Vec<(Option<&str>, u32, u16)> = if args.audio_layouts.is_empty() {
@@ -569,7 +571,7 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
         let mut payload = Vec::new();
         while let Some(c) = r.next_chunk()? {
             let is_cue = r.streams()[c.stream as usize].cue_params().is_some();
-            let audio_frame = r.streams()[c.stream as usize].audio_params().map(|a| a.frame_bytes());
+            let audio = r.streams()[c.stream as usize].audio_params().cloned();
             print!(
                 "{:>10}  stream {}  pts {:>8}  {}  {:?}  {} -> {}",
                 c.offset,
@@ -584,8 +586,10 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
                 r.read_payload(&c, &mut payload)?;
                 print!("  {}", describe_cue(&Cue::decode(&payload)?));
             }
-            if let Some(frame_bytes) = audio_frame {
-                print!("  {} frames", c.raw_size as usize / frame_bytes);
+            if let Some(a) = audio {
+                r.read_payload(&c, &mut payload)?;
+                let frames = a.payload_frames(&payload).ok_or("invalid audio payload")?;
+                print!("  {frames} frames");
             }
             println!();
         }

@@ -306,6 +306,8 @@ pub struct Player<R: Read + Seek> {
     pending: Option<ChunkHeader>,
     at_end: bool,
     payload: Vec<u8>,
+    /// Decoded samples of the latest audio chunk.
+    samples: Vec<f32>,
     frame_counter: u64,
 }
 
@@ -398,6 +400,7 @@ impl<R: Read + Seek> Player<R> {
             pending: None,
             at_end: false,
             payload: Vec::new(),
+            samples: Vec::new(),
             frame_counter: 0,
         })
     }
@@ -728,11 +731,10 @@ impl<R: Read + Seek> Player<R> {
     fn queue_audio(&mut self, ai: usize, chunk: &ChunkHeader, at: u64) -> Result<()> {
         self.reader.read_payload(chunk, &mut self.payload)?;
         let a = &self.audio[ai];
-        let p = &a.info.params;
-        if self.payload.is_empty() || !self.payload.len().is_multiple_of(p.frame_bytes()) {
-            return corrupt(format!("audio chunk at {} is not a whole number of frames", chunk.offset));
+        if let Err(e) = a.info.params.decode_payload(&self.payload, &mut self.samples) {
+            return corrupt(format!("audio chunk at {}: {e}", chunk.offset));
         }
-        a.output.lock().push(at, &self.payload, p.format);
+        a.output.lock().push(at, &self.samples);
         Ok(())
     }
 

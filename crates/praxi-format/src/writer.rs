@@ -120,22 +120,22 @@ impl<W: Write + Seek> Writer<W> {
         }
     }
 
-    /// Writes one chunk of an audio stream: interleaved samples in the stream's sample
-    /// format, starting at frame `pts`. LZ4 is used when it makes the payload smaller.
+    /// Writes one chunk of an audio stream starting at frame `pts`: interleaved samples in
+    /// the stream's PCM format, or an ADPCM payload. LZ4 is used when it makes the payload
+    /// smaller.
     pub fn write_audio(&mut self, stream: u16, pts: u64, samples: &[u8]) -> Result<()> {
         let Some(StreamParams::Audio(a)) = self.streams.get(stream as usize).map(|s| &s.params) else {
             return Err(Error::Invalid(format!("stream {stream} is not an audio stream")));
         };
-        let frame_bytes = a.frame_bytes();
-        if samples.is_empty() || !samples.len().is_multiple_of(frame_bytes) {
-            return Err(Error::Invalid(format!("stream {stream}: {} bytes is not a whole number of frames", samples.len())));
-        }
+        let Some(frames) = a.payload_frames(samples) else {
+            return Err(Error::Invalid(format!("stream {stream}: {} bytes is not a valid {} payload", samples.len(), a.format)));
+        };
         let end = self.audio_end[stream as usize];
         if self.last_pts[stream as usize].is_some() && pts < end {
             return Err(Error::Invalid(format!("stream {stream}: audio chunk at {pts} overlaps the previous one ending at {end}")));
         }
         self.write_raw(stream, pts, true, samples, None)?;
-        self.audio_end[stream as usize] = pts + (samples.len() / frame_bytes) as u64;
+        self.audio_end[stream as usize] = pts + frames;
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-use praxi::format::{AudioParams, COLOR_FLAG_SRGB, SampleFormat, StreamInfo, TimeBase, VideoParams, Writer};
+use praxi::format::{AudioParams, COLOR_FLAG_SRGB, SampleFormat, StreamInfo, TimeBase, VideoParams, Writer, adpcm};
 use praxi::{AudioOutput, Capabilities, Clock, Player, TextureFormat};
 use std::io::Cursor;
 use std::time::Duration;
@@ -24,6 +24,7 @@ fn samples(from: u64, to: u64, channels: u16, format: SampleFormat) -> Vec<u8> {
             match format {
                 SampleFormat::S16 => out.extend_from_slice(&((i as i16 * 10) * sign).to_le_bytes()),
                 SampleFormat::F32 => out.extend_from_slice(&((i as f32 / 1000.0) * sign as f32).to_le_bytes()),
+                SampleFormat::Adpcm => unreachable!("see plays_adpcm"),
             }
         }
     }
@@ -126,6 +127,42 @@ fn converts_f32_and_mono() {
     let mut buf = [0.0; 4];
     assert_eq!(out.read(&mut buf), 4);
     assert_eq!(buf, [0.0, 0.001, 0.002, 0.003]);
+}
+
+#[test]
+fn plays_adpcm() {
+    // 1 s of a mono tone at 1000 Hz in ADPCM chunks of 100 frames, with a 1 fps video.
+    let tone: Vec<i16> = (0..1000).map(|i| (10000.0 * (i as f64 * 0.05).sin()) as i16).collect();
+    let video = VideoParams { width: 8, height: 4, format: TextureFormat::Bc1, color_flags: COLOR_FLAG_SRGB };
+    let streams = vec![StreamInfo::video(0, TimeBase::new(1, 1), video), audio_stream(0, "music", 1, SampleFormat::Adpcm)];
+    let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
+    w.write_chunk(0, 0, true, &[0; 16], None).unwrap();
+    let mut encoder = adpcm::Encoder::new(1);
+    for (n, part) in tone.chunks(100).enumerate() {
+        let mut payload = Vec::new();
+        encoder.encode(part, &mut payload);
+        w.write_audio(1, n as u64 * 100, &payload).unwrap();
+    }
+    let file = w.finish(1_000_000).unwrap().into_inner();
+    let mut p = Player::open(Cursor::new(file), &caps()).unwrap();
+    let out = p.audio_output(0).unwrap();
+    let close = |got: &[f32], from: usize| {
+        for (i, &s) in got.iter().enumerate() {
+            let want = tone[from + i] as f32 / 32768.0;
+            assert!((s - want).abs() < 0.01, "frame {}: {s} vs {want}", from + i);
+        }
+    };
+
+    p.play().unwrap();
+    let mut buf = vec![0.0; 1000];
+    let n = out.read(&mut buf);
+    assert_eq!(n, 300, "chunks due at 0: 200 ms preload, whole chunks");
+    close(&buf[..n], 0);
+
+    p.seek(Duration::from_millis(250)).unwrap();
+    let n = out.read(&mut buf);
+    assert_eq!(n, 250, "from the target to the chunks due at 250 ms");
+    close(&buf[..n], 250);
 }
 
 #[test]

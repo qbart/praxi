@@ -11,7 +11,7 @@ use ktx::astcenc::{
 };
 use ktx::basisu::{uastc_bc7, uastc_enc};
 use praxi_format::{
-    AudioParams, COLOR_FLAG_ALPHA, COLOR_FLAG_SRGB, Cue, StreamInfo, TextureFormat, TimeBase,
+    AudioParams, COLOR_FLAG_ALPHA, adpcm, COLOR_FLAG_SRGB, Cue, StreamInfo, TextureFormat, TimeBase,
     VideoParams, Writer,
 };
 
@@ -372,6 +372,9 @@ struct AudioTrack {
     /// The source is exhausted.
     done: bool,
     input: Vec<u8>,
+    /// Rounded samples, for ADPCM.
+    pcm: Vec<i16>,
+    adpcm: adpcm::Encoder,
     payload: Vec<u8>,
     stats: AudioStats,
 }
@@ -523,6 +526,8 @@ impl<W: Write + Seek> Encoder<W> {
                 next_pts: 0,
                 done: false,
                 input: Vec::new(),
+                pcm: Vec::new(),
+                adpcm: adpcm::Encoder::new(a.channels as usize),
                 payload: Vec::new(),
                 stats: AudioStats { name: a.name, channels: a.channels, ..Default::default() },
             });
@@ -642,13 +647,18 @@ impl<W: Write + Seek> Encoder<W> {
         }
         let input = &a.input[..frames * frame_in];
         a.payload.clear();
+        let to_s16 = |b: &[u8; 4]| (f32::from_le_bytes(*b) * 32768.0).round().clamp(-32768.0, 32767.0) as i16;
         match a.format {
             SampleFormat::F32 => a.payload.extend_from_slice(input),
             SampleFormat::S16 => {
                 for b in input.as_chunks::<4>().0 {
-                    let v = (f32::from_le_bytes(*b) * 32768.0).round().clamp(-32768.0, 32767.0) as i16;
-                    a.payload.extend_from_slice(&v.to_le_bytes());
+                    a.payload.extend_from_slice(&to_s16(b).to_le_bytes());
                 }
+            }
+            SampleFormat::Adpcm => {
+                a.pcm.clear();
+                a.pcm.extend(input.as_chunks::<4>().0.iter().map(to_s16));
+                a.adpcm.encode(&a.pcm, &mut a.payload);
             }
         }
         let before = self.writer.bytes_written();

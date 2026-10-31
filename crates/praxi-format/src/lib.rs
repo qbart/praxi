@@ -1,5 +1,6 @@
 //! Reader and writer for the PRAXI container format (`docs/spec/PRAXI.md`).
 
+pub mod adpcm;
 mod cue;
 mod huffman;
 mod planes;
@@ -16,7 +17,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 6;
+pub const VERSION_MINOR: u16 = 7;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;
@@ -219,6 +220,7 @@ pub const CUE_NAME_SIZE: usize = 32;
 pub enum SampleFormat {
     S16,
     F32,
+    Adpcm,
 }
 
 impl SampleFormat {
@@ -226,6 +228,7 @@ impl SampleFormat {
         match self {
             SampleFormat::S16 => 1,
             SampleFormat::F32 => 2,
+            SampleFormat::Adpcm => 3,
         }
     }
 
@@ -233,14 +236,17 @@ impl SampleFormat {
         match id {
             1 => Some(SampleFormat::S16),
             2 => Some(SampleFormat::F32),
+            3 => Some(SampleFormat::Adpcm),
             _ => None,
         }
     }
 
-    pub fn bytes(self) -> usize {
+    /// Bytes per sample of the PCM formats, `None` for ADPCM.
+    pub fn pcm_bytes(self) -> Option<usize> {
         match self {
-            SampleFormat::S16 => 2,
-            SampleFormat::F32 => 4,
+            SampleFormat::S16 => Some(2),
+            SampleFormat::F32 => Some(4),
+            SampleFormat::Adpcm => None,
         }
     }
 
@@ -248,6 +254,7 @@ impl SampleFormat {
         match self {
             SampleFormat::S16 => "s16",
             SampleFormat::F32 => "f32",
+            SampleFormat::Adpcm => "adpcm",
         }
     }
 }
@@ -273,9 +280,30 @@ pub struct AudioParams {
 }
 
 impl AudioParams {
-    /// Bytes per sample frame (all channels).
-    pub fn frame_bytes(&self) -> usize {
-        self.channels as usize * self.format.bytes()
+    /// The frame count of a decompressed chunk payload, or `None` when the payload is not
+    /// valid for these parameters.
+    pub fn payload_frames(&self, payload: &[u8]) -> Option<u64> {
+        let channels = self.channels as usize;
+        let Some(sample_bytes) = self.format.pcm_bytes() else {
+            return adpcm::frames(payload, channels);
+        };
+        let frame_bytes = channels * sample_bytes;
+        (!payload.is_empty() && payload.len().is_multiple_of(frame_bytes)).then(|| (payload.len() / frame_bytes) as u64)
+    }
+
+    /// Decodes a decompressed chunk payload into `out`: interleaved samples in `[-1, 1]`
+    /// (nominally, for `f32`).
+    pub fn decode_payload(&self, payload: &[u8], out: &mut Vec<f32>) -> std::result::Result<(), String> {
+        if self.payload_frames(payload).is_none() {
+            return Err(format!("{} bytes is not a valid {} payload of {} channels", payload.len(), self.format, self.channels));
+        }
+        out.clear();
+        match self.format {
+            SampleFormat::S16 => out.extend(payload.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b) as f32 / 32768.0)),
+            SampleFormat::F32 => out.extend(payload.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b))),
+            SampleFormat::Adpcm => adpcm::decode(payload, self.channels as usize, out)?,
+        }
+        Ok(())
     }
 }
 

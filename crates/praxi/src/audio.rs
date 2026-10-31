@@ -1,6 +1,6 @@
 //! Audio outputs (`docs/features/audio.md`).
 
-use praxi_format::{AudioParams, SampleFormat};
+use praxi_format::AudioParams;
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -157,11 +157,11 @@ impl Queue {
         self.start += frames;
     }
 
-    /// Queues an audio payload starting at output frame `at`. Frames already queued are
+    /// Queues interleaved samples starting at output frame `at`. Frames already queued are
     /// skipped, gaps are filled with silence, and the oldest frames beyond `keep` dropped.
-    pub(crate) fn push(&mut self, at: u64, payload: &[u8], format: SampleFormat) {
+    pub(crate) fn push(&mut self, at: u64, samples: &[f32]) {
         let ch = self.channels;
-        let frames = (payload.len() / format.bytes() / ch) as u64;
+        let frames = (samples.len() / ch) as u64;
         let end = self.end();
         let mut skip = 0;
         if at < end {
@@ -177,13 +177,7 @@ impl Queue {
                 self.samples.extend(std::iter::repeat_n(0.0, gap as usize * ch));
             }
         }
-        let data = &payload[skip as usize * ch * format.bytes()..];
-        match format {
-            SampleFormat::S16 => self
-                .samples
-                .extend(data.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b) as f32 / 32768.0)),
-            SampleFormat::F32 => self.samples.extend(data.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b))),
-        }
+        self.samples.extend(&samples[skip as usize * ch..]);
         let limit = (self.keep + frames) as usize * ch;
         if self.samples.len() > limit {
             let excess = self.samples.len() - limit;
