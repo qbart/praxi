@@ -145,6 +145,9 @@ fn rejects_bad_config() {
         EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue(1.0, ""),
         EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue_with(CueConfig::new(1.0, "a").duration(f64::NAN)),
         EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue_stream(CueStreamConfig::new("x".repeat(40)).cue(CueConfig::new(0.0, "a"))),
+        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).plane_min_saving(-1.0),
+        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).plane_min_saving(f64::NAN),
+        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).plane_min_saving(101.0),
     ];
     for config in bad {
         assert!(Encoder::new(Cursor::new(Vec::new()), config).is_err());

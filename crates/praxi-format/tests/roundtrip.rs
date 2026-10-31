@@ -240,18 +240,21 @@ fn rejects_bad_audio_streams() {
     assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::Corrupt(_))));
 }
 
-/// BC7 blocks whose byte 0 is the same everywhere and whose other bytes are noise, like
-/// real encoder output.
+/// BC7 blocks whose bytes 0, 6 and 7 are the same everywhere and whose other bytes are
+/// noise, like real encoder output.
 fn structured_blocks(n: usize, seed: u32) -> Vec<u8> {
     let mut x = seed.wrapping_mul(2654435761) | 1;
     let mut out = Vec::new();
     for _ in 0..n {
-        out.extend_from_slice(&[0x40]);
-        for _ in 1..16 {
+        for k in 0..16 {
             x ^= x << 13;
             x ^= x >> 17;
             x ^= x << 5;
-            out.push(x as u8);
+            out.push(match k {
+                0 => 0x40,
+                6 | 7 => 0,
+                _ => x as u8,
+            });
         }
     }
     out
@@ -283,6 +286,21 @@ fn byte_planes() {
     let err = w.write_chunk(0, 2, false, &delta[..30], Some(Compression::Lz4Planes));
     assert!(matches!(err, Err(Error::Invalid(_))), "not whole blocks after the mask: {err:?}");
     let file = w.finish(100_000).unwrap().into_inner();
+
+    // The saving threshold: planes save about 18% here.
+    let auto_compression = |percent: f64| {
+        let streams = vec![StreamInfo::video(0, TimeBase::new(1, 30), params)];
+        let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
+        w.set_plane_min_saving(percent);
+        w.write_chunk(0, 0, true, &key, None).unwrap();
+        let file = w.finish(100_000).unwrap().into_inner();
+        let mut r = Reader::new(Cursor::new(file)).unwrap();
+        r.next_chunk().unwrap().unwrap().compression
+    };
+    assert_eq!(auto_compression(0.0), Compression::Lz4Planes);
+    assert_eq!(auto_compression(15.0), Compression::Lz4Planes);
+    assert_eq!(auto_compression(25.0), Compression::None, "saving below the threshold");
+    assert_eq!(auto_compression(100.0), Compression::None, "never byte planes");
 
     let mut r = Reader::new(Cursor::new(file.clone())).unwrap();
     let mut payload = Vec::new();
