@@ -3,8 +3,8 @@
 Cues are timed events stored in a praxi file. The player emits them while playing, so the
 engine can react: shake the camera, play a sound, show text. Cues are generic: praxi stores
 and times them but gives no meaning to their types or fields; that is up to the game. They
-are meant to be authored by tools: the encoder CLI, the encoder library or a future cue
-editor.
+are meant to be authored by tools: the encoder CLI, the encoder library or cue sheets
+([cue-editing.md](cue-editing.md)).
 
 ## Model
 
@@ -50,5 +50,6 @@ The byte layout is in [PRAXI.md](../spec/PRAXI.md#cue-payload).
   stream named `cues`. Values given on the command line are strings. See
   [encoder.md](encoder.md).
 - Encoder library: any number of cue streams, typed field values.
-- Planned: a cue editor that rewrites the cue streams of an existing file without
-  re-encoding video.
+- Cue sheets: `praxi cues export` and `praxi cues import` rewrite the cue streams of an
+  existing file without re-encoding video; `praxi cues srt` converts subtitles to cues
+  ([cue-editing.md](cue-editing.md)).
