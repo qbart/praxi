@@ -295,6 +295,8 @@ pub struct Player<R: Read + Seek> {
     active_cues: Vec<ActiveCue>,
     index: Vec<IndexEntry>,
     clock_us: u64,
+    /// Nanoseconds of `dt` below a whole microsecond, carried to the next `advance`.
+    dt_carry_ns: u32,
     clock: Clock,
     duration_us: u64,
     state: State,
@@ -387,6 +389,7 @@ impl<R: Read + Seek> Player<R> {
             active_cues: Vec::new(),
             index,
             clock_us: 0,
+            dt_carry_ns: 0,
             clock: Clock::Game,
             duration_us,
             state: State::Stopped,
@@ -520,7 +523,9 @@ impl<R: Read + Seek> Player<R> {
         if self.state != State::Playing {
             return Ok(());
         }
-        self.clock_us = self.next_clock(dt.as_micros().min(u64::MAX as u128) as u64);
+        let dt_ns = dt.as_nanos() + self.dt_carry_ns as u128;
+        self.dt_carry_ns = (dt_ns % 1000) as u32;
+        self.clock_us = self.next_clock((dt_ns / 1000).min(u64::MAX as u128) as u64);
         loop {
             self.process_due(true)?;
             if !(self.at_end && self.clock_us >= self.duration_us) {
