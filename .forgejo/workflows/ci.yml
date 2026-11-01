@@ -16,12 +16,12 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Clippy
         run: |
-          cargo clippy --workspace --exclude praxi-viewer --all-targets -- -D warnings
-          cargo clippy -p praxi-viewer --no-default-features --all-targets -- -D warnings
+          cargo clippy --workspace --exclude praxi-viewer --exclude praxi-editor --all-targets -- -D warnings
+          cargo clippy -p praxi-viewer -p praxi-editor --no-default-features --all-targets -- -D warnings
       - name: Test
         run: |
-          cargo test --workspace --exclude praxi-viewer
-          cargo test -p praxi-viewer --no-default-features
+          cargo test --workspace --exclude praxi-viewer --exclude praxi-editor
+          cargo test -p praxi-viewer -p praxi-editor --no-default-features
 
   bench:
     runs-on: docker

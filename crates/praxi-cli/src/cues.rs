@@ -3,7 +3,7 @@
 use crate::AnyResult;
 use praxi_format::{Cue, CueTrack, Reader, TimedCue, Value, cue_sheet};
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(clap::Subcommand)]
@@ -88,22 +88,8 @@ fn parse_field(s: &str) -> Result<(String, String), String> {
     }
 }
 
-/// Writes the file with the new cue streams to a temporary file next to `output`, then
-/// renames it over `output` (which may be `input`).
 fn import(input: &Path, tracks: &[CueTrack], output: &Path) -> AnyResult<()> {
-    let name = output.file_name().ok_or("output has no file name")?.to_string_lossy();
-    let temp = output.with_file_name(format!(".{name}.praxi-tmp"));
-    let result = (|| -> AnyResult<()> {
-        let reader = Reader::new(BufReader::new(File::open(input)?))?;
-        let out = praxi_format::replace_cues(reader, BufWriter::new(File::create(&temp)?), tracks)?;
-        out.into_inner().map_err(|e| e.into_error())?.sync_all()?;
-        Ok(())
-    })();
-    if let Err(e) = result {
-        let _ = std::fs::remove_file(&temp);
-        return Err(e);
-    }
-    std::fs::rename(&temp, output)?;
+    praxi_format::replace_cues_in_file(input, output, tracks)?;
     let count: usize = tracks.iter().map(|t| t.cues.len()).sum();
     eprintln!("{}: {} cue streams, {count} cues", output.display(), tracks.len());
     Ok(())

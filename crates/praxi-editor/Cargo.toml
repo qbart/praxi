@@ -1,0 +1,17 @@
+[package]
+name = "praxi-editor"
+description = "Cue editor for praxi files"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["audio"]
+audio = ["dep:cpal"]
+
+[dependencies]
+praxi = { workspace = true, features = ["cue-sheet"] }
+praxi-wgpu.workspace = true
+wgpu.workspace = true
+clap.workspace = true
+eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "wayland", "wgpu", "x11"] }
+cpal = { version = "0.18", optional = true }

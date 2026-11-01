@@ -1,7 +1,9 @@
 //! Rewriting the cue streams of a file (`docs/features/cue-editing.md`).
 
-use crate::{Cue, Reader, Result, StreamInfo, Writer};
-use std::io::{Read, Seek, Write};
+use crate::{Cue, Error, Reader, Result, StreamInfo, Writer};
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Read, Seek, Write};
+use std::path::Path;
 
 /// A cue and its start time.
 #[derive(Debug, Clone, PartialEq)]
@@ -86,4 +88,24 @@ pub fn replace_cues<R: Read + Seek, W: Write + Seek>(mut reader: Reader<R>, out:
         w.write_cue(*s, c.time_us, &c.cue)?;
     }
     w.finish(duration_us)
+}
+
+/// [`replace_cues`] from the file `input` to `output` through a temporary file next to
+/// `output`, renamed over it when complete; `output` may be `input`. The temporary file is
+/// removed on failure.
+pub fn replace_cues_in_file(input: &Path, output: &Path, tracks: &[CueTrack]) -> Result<()> {
+    let name = output.file_name().ok_or_else(|| Error::Invalid("output has no file name".into()))?.to_string_lossy();
+    let temp = output.with_file_name(format!(".{name}.praxi-tmp"));
+    let result = (|| -> Result<()> {
+        let reader = Reader::new(BufReader::new(File::open(input)?))?;
+        let out = replace_cues(reader, BufWriter::new(File::create(&temp)?), tracks)?;
+        out.into_inner().map_err(|e| e.into_error())?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+        return result;
+    }
+    std::fs::rename(&temp, output)?;
+    Ok(())
 }

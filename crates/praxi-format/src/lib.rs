@@ -13,7 +13,7 @@ mod writer;
 pub use cue::{Cue, Value};
 pub use planes::{from_planes, to_planes};
 pub use reader::Reader;
-pub use remux::{CueTrack, TimedCue, read_cues, replace_cues};
+pub use remux::{CueTrack, TimedCue, read_cues, replace_cues, replace_cues_in_file};
 pub use writer::{DEFAULT_PLANE_MIN_SAVING, Writer};
 
 use std::fmt;
