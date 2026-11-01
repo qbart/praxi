@@ -112,5 +112,10 @@ Not scheduled; smallest first.
 - **Real hardware**: measure on discrete and integrated GPUs, macOS and a phone (ASTC);
   everything so far ran on llvmpipe/lavapipe.
 - **Engine plugins**: Bevy or Godot integration on top of `praxi-wgpu`.
+- **Transform video codec**: a much smaller variant next to BC7/ASTC, decoded on the GPU
+  into RGBA textures (Bink 2's approach). Block transform plus motion compensation;
+  quality set by bitrate, aiming for BC7's PSNR or better at a fraction of its size.
+  Entropy decoding is serial, so it may stay on the CPU with the rest in compute shaders.
+  Needs its own feature spec and a new frame format in [PRAXI.md](../spec/PRAXI.md).
 - **Perceptual audio**: Opus, smaller than ADPCM at a higher decode cost
   ([audio.md](audio.md)).
