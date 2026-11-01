@@ -17,6 +17,9 @@ clap = { version = "4.6", features = ["derive"] }
 wgpu = "30"
 winit = "0.30"
 pollster = "0.4"
+serde = { version = "1", features = ["derive"] }
+# preserve_order keeps cue field order; arbitrary_precision lets cue sheets reject integers outside i64.
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 
 # ktx-rs encoders are very slow unoptimised; keep dependencies fast in dev and test builds.
 [profile.dev.package."*"]

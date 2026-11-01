@@ -1666,6 +1666,8 @@ name = "praxi-format"
 version = "0.1.0"
 dependencies = [
  "lz4_flex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

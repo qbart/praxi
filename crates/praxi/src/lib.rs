@@ -15,7 +15,7 @@ use std::io::{Read, Seek};
 use std::time::Duration;
 
 pub use audio::AudioOutput;
-pub use praxi_format::{self as format, AudioParams, SampleFormat, TextureFormat, Value, VideoParams};
+pub use praxi_format::{self as format, AudioParams, CueTrack, SampleFormat, TextureFormat, TimedCue, Value, VideoParams};
 
 /// Default for [`Player::set_audio_sync_tolerance`].
 pub const DEFAULT_AUDIO_SYNC_TOLERANCE: Duration = Duration::from_millis(60);
@@ -138,6 +138,17 @@ impl CueEvent {
 pub struct CueStreamInfo {
     pub stream: u16,
     pub name: String,
+}
+
+/// Id of the first cue given to [`Player::replace_cues`].
+const REPLACED_CUE_ID: u64 = 1 << 63;
+
+/// A cue given to [`Player::replace_cues`].
+struct ReplacedCue {
+    start_us: u64,
+    end_us: u64,
+    stream: u16,
+    cue: Cue,
 }
 
 /// A started cue with a non-zero duration.
@@ -293,6 +304,10 @@ pub struct Player<R: Read + Seek> {
     /// Per stream number: a cue stream that is enabled.
     cue_enabled: Vec<bool>,
     active_cues: Vec<ActiveCue>,
+    /// Cues from `replace_cues` in emission order; the file's cue streams are then disabled.
+    replaced_cues: Option<Vec<ReplacedCue>>,
+    /// Clock up to which cues have been processed in this pass; `None` before any.
+    cues_through: Option<u64>,
     index: Vec<IndexEntry>,
     clock_us: u64,
     /// Nanoseconds of `dt` below a whole microsecond, carried to the next `advance`.
@@ -389,6 +404,8 @@ impl<R: Read + Seek> Player<R> {
             cue_streams,
             cue_enabled,
             active_cues: Vec::new(),
+            replaced_cues: None,
+            cues_through: None,
             index,
             clock_us: 0,
             dt_carry_ns: 0,
@@ -457,6 +474,40 @@ impl<R: Read + Seek> Player<R> {
         self.cue_enabled[stream as usize] = enabled;
         if !enabled {
             self.end_cues(|c| c.stream == stream);
+        }
+    }
+
+    /// Plays `tracks` in place of the file's cue streams, as if the file had been written
+    /// with them (`docs/features/cue-preview.md#player`). Their streams are numbered from
+    /// the file's stream count up; tracks beyond stream 65535 are dropped. For cues, this
+    /// acts like a seek to the current position.
+    pub fn replace_cues(&mut self, tracks: Vec<CueTrack>) {
+        self.end_cues(|_| true);
+        let first = self.reader.streams().len();
+        let tracks = &tracks[..tracks.len().min((u16::MAX as usize + 1).saturating_sub(first))];
+        self.cue_enabled = vec![true; first + tracks.len()];
+        self.cue_enabled[..first].fill(false);
+        self.cue_streams = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| CueStreamInfo { stream: (first + i) as u16, name: t.name.clone() })
+            .collect();
+        let mut cues: Vec<ReplacedCue> = tracks
+            .iter()
+            .enumerate()
+            .flat_map(|(i, t)| {
+                t.cues.iter().map(move |c| ReplacedCue {
+                    start_us: c.time_us,
+                    end_us: c.time_us.saturating_add(c.cue.duration),
+                    stream: (first + i) as u16,
+                    cue: c.cue.clone(),
+                })
+            })
+            .collect();
+        cues.sort_by_key(|c| c.start_us);
+        self.replaced_cues = Some(cues);
+        if let Some(through) = self.cues_through.filter(|_| self.state != State::Finished) {
+            self.begin_active_replaced_cues(through);
         }
     }
 
@@ -598,6 +649,7 @@ impl<R: Read + Seek> Player<R> {
         self.at_end = false;
         self.loop_scan = None;
         self.clock_us = target;
+        self.cues_through = None;
         self.process_due(false)?;
         if self.state == State::Finished {
             self.state = State::Paused;
@@ -645,6 +697,7 @@ impl<R: Read + Seek> Player<R> {
             a.base_frame += a.frames(self.duration_us);
         }
         self.clock_us = 0;
+        self.cues_through = None;
         let start = self.reader.data_start();
         self.reader.seek_to(start).expect("data start is a valid chunk offset");
     }
@@ -668,6 +721,7 @@ impl<R: Read + Seek> Player<R> {
                 self.pending = Some(chunk);
                 break;
             }
+            self.process_replaced_cues(time_us, emit_cues);
             self.end_cues(|c| c.end_us <= time_us);
             match self.routes[stream] {
                 Route::Video(ti) => {
@@ -688,8 +742,58 @@ impl<R: Read + Seek> Player<R> {
             }
         }
         let clock = self.clock_us;
+        self.process_replaced_cues(clock, emit_cues);
         self.end_cues(|c| c.end_us <= clock);
         Ok(())
+    }
+
+    /// Processes the replaced cues after `cues_through` and up to `limit`, emitting them
+    /// when `emit` is set, and moves `cues_through` to `limit`. Cues after the duration
+    /// are never reached, even when the clock overshoots the end before looping.
+    fn process_replaced_cues(&mut self, limit: u64, emit: bool) {
+        let through = self.cues_through;
+        let limit = limit.min(self.duration_us).max(through.unwrap_or(0));
+        self.cues_through = Some(limit);
+        let Some(cues) = self.replaced_cues.take() else { return };
+        let start = through.map_or(0, |t| cues.partition_point(|c| c.start_us <= t));
+        let end = cues.partition_point(|c| c.start_us <= limit);
+        if emit {
+            for (i, c) in cues.iter().enumerate().take(end).skip(start) {
+                if self.cue_enabled[c.stream as usize] {
+                    self.end_cues(|a| a.end_us <= c.start_us);
+                    self.begin_replaced_cue(i, c);
+                }
+            }
+        }
+        self.replaced_cues = Some(cues);
+    }
+
+    /// Emits the `Cue` event of replaced cue `i`.
+    fn begin_replaced_cue(&mut self, i: usize, c: &ReplacedCue) {
+        let id = REPLACED_CUE_ID + i as u64;
+        if c.end_us > c.start_us {
+            self.active_cues.push(ActiveCue { end_us: c.end_us, id, stream: c.stream });
+        }
+        self.events.push_back(Event::Cue(CueEvent {
+            id,
+            stream: c.stream,
+            time: Duration::from_micros(c.start_us),
+            duration: Duration::from_micros(c.end_us - c.start_us),
+            kind: c.cue.kind.clone(),
+            fields: c.cue.fields.clone(),
+        }));
+    }
+
+    /// Emits `Cue` for every enabled replaced cue with a duration that is active at `target`.
+    fn begin_active_replaced_cues(&mut self, target: u64) {
+        let Some(cues) = self.replaced_cues.take() else { return };
+        let end = cues.partition_point(|c| c.start_us <= target);
+        for (i, c) in cues.iter().enumerate().take(end) {
+            if c.end_us > target && self.cue_enabled[c.stream as usize] {
+                self.begin_replaced_cue(i, c);
+            }
+        }
+        self.replaced_cues = Some(cues);
     }
 
     /// While looping near the end, queues the audio chunks of the next pass that are already
@@ -808,6 +912,10 @@ impl<R: Read + Seek> Player<R> {
     /// Emits `Cue` for every enabled cue with a duration that is active at `target`
     /// (`docs/spec/PRAXI.md#seeking`).
     fn begin_active_cues(&mut self, target: u64) -> Result<()> {
+        if self.replaced_cues.is_some() {
+            self.begin_active_replaced_cues(target);
+            return Ok(());
+        }
         let mut found = Vec::new();
         for c in &self.cue_streams {
             if !self.cue_enabled[c.stream as usize] {

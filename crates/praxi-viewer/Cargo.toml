@@ -9,7 +9,7 @@ default = ["audio"]
 audio = ["dep:cpal"]
 
 [dependencies]
-praxi.workspace = true
+praxi = { workspace = true, features = ["cue-sheet"] }
 praxi-wgpu.workspace = true
 clap.workspace = true
 wgpu.workspace = true

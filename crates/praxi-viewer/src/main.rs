@@ -7,7 +7,7 @@ mod checker;
 use clap::Parser;
 use checker::Checker;
 use praxi_wgpu::{Rect, VideoRenderer};
-use praxi::{Capabilities, Event, Player, TextureFormat, Value};
+use praxi::{Capabilities, CueTrack, Event, Player, TextureFormat, Value};
 #[cfg(feature = "audio")]
 use praxi::Clock;
 use std::fs::File;
@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -48,6 +48,9 @@ struct Args {
     /// Master clock: `audio` follows the audio output while audio plays, `game` the wall clock.
     #[arg(long, value_enum, default_value_t = ClockArg::Audio)]
     clock: ClockArg,
+    /// Play the cues of this cue sheet in place of the file's, reloading it when it changes (repeatable).
+    #[arg(long = "cues", value_name = "SHEET")]
+    cues: Vec<PathBuf>,
     /// Render the frame at --at to this PNG without a window and exit.
     #[arg(long)]
     screenshot: Option<PathBuf>,
@@ -146,6 +149,52 @@ fn print_event(at: Duration, event: &Event) {
         other => format!("{other:?}").to_lowercase(),
     };
     println!("[{:>8.3}] {what}", at.as_secs_f64());
+}
+
+/// The `--cues` sheets (`docs/features/cue-preview.md`).
+struct CueSheets {
+    paths: Vec<PathBuf>,
+    /// Modification times when last read.
+    modified: Vec<Option<SystemTime>>,
+}
+
+impl CueSheets {
+    fn new(paths: Vec<PathBuf>) -> CueSheets {
+        let modified = vec![None; paths.len()];
+        CueSheets { paths, modified }
+    }
+
+    fn modified_now(&self) -> Vec<Option<SystemTime>> {
+        self.paths.iter().map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok()).collect()
+    }
+
+    /// Whether a sheet that exists now changed since it was last read. A sheet missing for
+    /// a moment, as editors replace files, is not a change.
+    fn changed(&self) -> bool {
+        self.modified_now().iter().zip(&self.modified).any(|(now, then)| now.is_some() && now != then)
+    }
+
+    /// Reads every sheet and hands their cues to `player`; on error the player keeps its cues.
+    fn load(&mut self, player: &mut FilePlayer) -> Result<(), String> {
+        // Taken before reading, so a save during the read triggers another load.
+        self.modified = self.modified_now();
+        let mut tracks: Vec<CueTrack> = Vec::new();
+        for path in &self.paths {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            tracks.extend(praxi::format::cue_sheet::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?);
+        }
+        let cues: usize = tracks.iter().map(|t| t.cues.len()).sum();
+        let duration = player.duration().as_micros() as u64;
+        let late = tracks.iter().flat_map(|t| &t.cues).filter(|c| c.time_us.saturating_add(c.cue.duration) > duration).count();
+        let names: Vec<String> = self.paths.iter().map(|p| p.display().to_string()).collect();
+        let mut summary = format!("cues: {} streams, {cues} cues from {}", tracks.len(), names.join(", "));
+        if late > 0 {
+            summary += &format!("; {late} end after the file (import would extend its duration)");
+        }
+        println!("{summary}");
+        player.replace_cues(tracks);
+        Ok(())
+    }
 }
 
 /// A render pass that clears `view` to transparent black.
@@ -340,6 +389,7 @@ struct Viewer {
     player: FilePlayer,
     name: String,
     muted: Arc<AtomicBool>,
+    sheets: Option<CueSheets>,
     #[cfg(feature = "audio")]
     audio: Option<audio::Stream>,
     /// Whether audio track 0 drives the clock.
@@ -371,6 +421,10 @@ impl Viewer {
         };
         let mut player = open_player(args, &caps)?;
         describe_tracks(&player);
+        let mut sheets = (!args.cues.is_empty()).then(|| CueSheets::new(args.cues.clone()));
+        if let Some(sheets) = &mut sheets {
+            sheets.load(&mut player)?;
+        }
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("praxi-viewer"),
@@ -418,6 +472,7 @@ impl Viewer {
             player,
             name,
             muted,
+            sheets,
             #[cfg(feature = "audio")]
             audio,
             #[cfg(feature = "audio")]
@@ -460,10 +515,20 @@ impl Viewer {
                 let muted = !self.muted.fetch_xor(true, Ordering::Relaxed);
                 println!("{}", if muted { "muted" } else { "unmuted" });
             }
+            Key::Character(c) if c.eq_ignore_ascii_case("r") => self.reload_cues(),
             _ => {}
         }
         self.drain_events();
         Ok(false)
+    }
+
+    /// Reloads the `--cues` sheets, printing errors.
+    fn reload_cues(&mut self) {
+        if let Some(sheets) = &mut self.sheets
+            && let Err(e) = sheets.load(&mut self.player)
+        {
+            println!("cues: {e}; keeping the previous cues");
+        }
     }
 
     fn drain_events(&mut self) {
@@ -521,6 +586,10 @@ impl Viewer {
         if now - self.title_at >= Duration::from_millis(250) {
             self.title_at = now;
             self.window.set_title(&self.title());
+            if self.sheets.as_ref().is_some_and(CueSheets::changed) {
+                self.reload_cues();
+                self.drain_events();
+            }
         }
         self.window.request_redraw();
         Ok(())

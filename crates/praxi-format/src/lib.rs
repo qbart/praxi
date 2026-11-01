@@ -2,6 +2,8 @@
 
 pub mod adpcm;
 mod cue;
+#[cfg(feature = "cue-sheet")]
+pub mod cue_sheet;
 mod huffman;
 mod planes;
 mod reader;
