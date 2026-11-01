@@ -22,6 +22,7 @@ Edit cues after encoding, without re-encoding video ([cue-editing.md](docs/featu
 ./target/release/praxi cues export intro.praxi -o intro.cues.json
 ./target/release/praxi cues srt subtitles.en.srt --field lang=en -o subs.en.json
 ./target/release/praxi-viewer intro.praxi --cues intro.cues.json --cues subs.en.json  # live preview, reloads on save
+./target/release/praxi-editor intro.praxi intro.cues.json  # timeline editor with waveform
 ./target/release/praxi cues import intro.praxi intro.cues.json subs.en.json -o intro.praxi
 ```
 

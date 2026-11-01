@@ -24,6 +24,10 @@ praxi-editor intro.praxi subs.en.json      # edits another sheet
 | `cpal` (feature `audio`, default) | Audio output, through the viewer's output module (`crates/praxi-viewer/src/audio.rs`, included by path) |
 | `clap` | Arguments |
 
+The video is drawn into an `Rgba8UnormSrgb` texture and copied into the `Rgba8Unorm`
+texture egui samples, since egui expects sRGB-encoded bytes in a linear format and GL
+backends cannot give one texture both views.
+
 egui rather than a game engine such as Bevy: the editor is panels, text fields and a
 timeline, which egui provides directly, and eframe's renderer uses the same `wgpu` and
 `winit` versions as `praxi-wgpu`, so the video goes through the same upload path as in
@@ -51,7 +55,7 @@ the viewer.
   playhead with their fields, as the player emits them, and **Events**, the last 200
   player events.
 - **Timeline** (bottom): a time ruler, a waveform of audio track 0 (peaks per pixel, all
-  channels), and one lane per cue stream with its name. Cues with a duration are bars,
+  channels, scaled to the loudest peak), and one lane per cue stream with its name. Cues with a duration are bars,
   instantaneous cues are diamonds; each shows its type and its first string field (a
   subtitle's text, for example). The playhead is a vertical line.
 
