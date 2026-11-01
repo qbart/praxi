@@ -1,8 +1,8 @@
 # Cue sheet format
 
 Version 1. File extension `.json` (suggested: `NAME.cues.json`). Written by
-`praxi cues export` and `praxi cues srt`, read by `praxi cues import` and
-`praxi-viewer --cues` ([cue-editing.md](../features/cue-editing.md),
+`praxi cues export`, `praxi cues srt` and `praxi-editor`, read by `praxi cues import`,
+`praxi-editor` and `praxi-viewer --cues` ([cue-editing.md](../features/cue-editing.md),
 [cue-preview.md](../features/cue-preview.md)). The `praxi_format::cue_sheet` module
 (feature `cue-sheet`) reads and writes it.
 

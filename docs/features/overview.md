@@ -46,6 +46,7 @@ Cargo workspace under `crates/`:
 | `praxi-cli` | `praxi` command line tool (encode via ffmpeg, inspect files, edit cues) | `praxi-encoder`, `clap`, `serde_json` |
 | `praxi-wgpu` | Texture upload and drawing for `wgpu` engines ([engine-integration.md](engine-integration.md)) | `praxi`, `wgpu` |
 | `praxi-viewer` | GPU viewer: plays files in a window, screenshots ([viewer.md](viewer.md)) | `praxi-wgpu`, `winit`, `cpal` |
+| `praxi-editor` | Cue editor: timeline, waveform, inspector ([cue-editor.md](cue-editor.md)) | `praxi-wgpu`, `eframe`, `cpal` |
 
 The runtime (`praxi`, `praxi-format`) does not depend on `ktx-rs`. Only the encoder does,
 with default features off (no Vulkan loader). See [video-codec.md](video-codec.md) and
@@ -87,4 +88,5 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
    windowed examples ([engine-integration.md](engine-integration.md)).
 6. **M5** Authoring: cue sheets to edit the cues of encoded files, subtitle conversion
    ([cue-editing.md](cue-editing.md)), live preview of cue sheets in the viewer
-   ([cue-preview.md](cue-preview.md)).
+   ([cue-preview.md](cue-preview.md)), a cue editor with a timeline
+   ([cue-editor.md](cue-editor.md)).

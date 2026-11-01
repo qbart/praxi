@@ -92,4 +92,8 @@ The CLI is built on `praxi_format`, so an editor application can do the same in 
 - `cue_sheet::parse` and `cue_sheet::write` (feature `cue-sheet`) read and write cue
   sheets.
 
-To watch edits to a sheet without importing it, see [cue-preview.md](cue-preview.md).
+- `replace_cues_in_file(input, output, tracks)`: the same through a temporary file, as
+  `cues import` does.
+
+To watch edits to a sheet without importing it, see [cue-preview.md](cue-preview.md). To
+edit cues on a timeline, see [cue-editor.md](cue-editor.md).
