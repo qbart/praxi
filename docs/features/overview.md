@@ -28,8 +28,9 @@ upload: no YUV conversion and no per-pixel CPU work. Frames stay compressed in V
 
 ## Non-goals
 
-- Competing with H.264/AV1 on file size. praxi trades size for decode cost; see
-  [Baseline measurements](#baseline-measurements).
+- Competing with H.265/AV1 on file size. The block formats trade size for decode cost (see
+  [Baseline measurements](#baseline-measurements)); the planned motion codec
+  ([motion-codec.md](motion-codec.md)) aims at H.264-class sizes at high quality.
 - Real-time encoding. Encoding is an offline asset-pipeline step and may be slow.
 - Container compatibility with KTX2, MP4 or Matroska. praxi has its own container
   ([docs/spec/PRAXI.md](../spec/PRAXI.md)) without per-frame overhead.
@@ -112,10 +113,7 @@ Not scheduled; smallest first.
 - **Real hardware**: measure on discrete and integrated GPUs, macOS and a phone (ASTC);
   everything so far ran on llvmpipe/lavapipe.
 - **Engine plugins**: Bevy or Godot integration on top of `praxi-wgpu`.
-- **Transform video codec**: a much smaller variant next to BC7/ASTC, decoded on the GPU
-  into RGBA textures (Bink 2's approach). Block transform plus motion compensation;
-  quality set by bitrate, aiming for BC7's PSNR or better at a fraction of its size.
-  Entropy decoding is serial, so it may stay on the CPU with the rest in compute shaders.
-  Needs its own feature spec and a new frame format in [PRAXI.md](../spec/PRAXI.md).
+- **Motion codec**: transform coding with motion compensation, decoded on the GPU, for
+  files several times smaller than BC7 at equal quality ([motion-codec.md](motion-codec.md)).
 - **Perceptual audio**: Opus, smaller than ADPCM at a higher decode cost
   ([audio.md](audio.md)).
