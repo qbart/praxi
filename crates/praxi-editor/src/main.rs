@@ -391,19 +391,13 @@ impl Editor {
         self.player.pause();
         let tb = self.frame_base;
         let shown = self.player.video_frame(0).map_or(0, |f| f.time.as_micros() as u64);
-        let pts = (shown as u128 * tb.den as u128 / (tb.num as u128 * 1_000_000)) as i64;
-        // Move past frames whose start rounds to the same microsecond.
-        let mut next = (pts + frames).max(0) as u64;
-        while tb.to_micros(next) < shown && frames > 0 {
-            next += 1;
-        }
+        let next = (frame_index(tb, shown) as i64 + frames).max(0) as u64;
         self.seek(tb.to_micros(next).min(self.player.duration().as_micros() as u64));
     }
 
     /// The start of the video frame nearest to `us`.
     fn snap_to_frame(tb: TimeBase, us: u64) -> u64 {
-        let unit = tb.num as f64 * 1e6 / tb.den as f64;
-        tb.to_micros((us as f64 / unit).round() as u64)
+        tb.to_micros(frame_index(tb, us))
     }
 
     fn tick(&mut self) {
@@ -531,14 +525,14 @@ impl Editor {
 
     fn transport(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if ui.button("⏮").on_hover_text("Previous frame (Left)").clicked() {
+            if ui.button("|<").on_hover_text("Previous frame (Left)").clicked() {
                 self.step(-1);
             }
-            let label = if self.player.is_playing() { "⏸ Pause" } else { "▶ Play" };
+            let label = if self.player.is_playing() { "Pause" } else { "Play" };
             if ui.button(label).on_hover_text("Space").clicked() {
                 self.toggle_play();
             }
-            if ui.button("⏭").on_hover_text("Next frame (Right)").clicked() {
+            if ui.button(">|").on_hover_text("Next frame (Right)").clicked() {
                 self.step(1);
             }
             ui.monospace(format!("{} / {}", clock(self.player.position().as_micros() as u64), clock(self.player.duration().as_micros() as u64)));
@@ -695,6 +689,13 @@ impl Editor {
     }
 }
 
+/// The frame whose start is nearest to `us`. Frame starts are rounded down to whole
+/// microseconds, so rounding here maps a frame's start back to its own index.
+fn frame_index(tb: TimeBase, us: u64) -> u64 {
+    let unit = tb.num as f64 * 1e6 / tb.den as f64;
+    (us as f64 / unit).round() as u64
+}
+
 fn open_player(file: &Path, caps: &Capabilities) -> Result<FilePlayer, String> {
     let reader = BufReader::new(File::open(file).map_err(|e| format!("{}: {e}", file.display()))?);
     let player = Player::open(reader, caps).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -757,5 +758,21 @@ impl eframe::App for Editor {
         if self.player.is_playing() {
             ctx.request_repaint();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_index_inverts_frame_starts() {
+        for tb in [TimeBase::new(1, 60), TimeBase::new(1001, 30000), TimeBase::new(1, 24)] {
+            for n in 0..10_000 {
+                assert_eq!(frame_index(tb, tb.to_micros(n)), n, "{tb:?} frame {n}");
+            }
+        }
+        assert_eq!(Editor::snap_to_frame(TimeBase::new(1, 60), 2_000_010), 2_000_000);
+        assert_eq!(default_sheet(Path::new("a/intro.praxi")), Path::new("a/intro.cues.json"));
     }
 }

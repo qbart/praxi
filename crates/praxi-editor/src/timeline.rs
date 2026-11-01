@@ -132,7 +132,7 @@ impl Timeline {
 
         let painter = ui.painter_at(full);
         let visuals = ui.visuals().clone();
-        let text_color = visuals.text_color();
+        let text_color = visuals.strong_text_color();
         let weak = visuals.weak_text_color();
         painter.rect_filled(full, 0.0, visuals.extreme_bg_color);
         let end_x = x_of(view.duration as f64, self);
@@ -159,7 +159,8 @@ impl Timeline {
         painter.text(Pos2::new(full.left() + 6.0, wave.center().y), Align2::LEFT_CENTER, "audio", FontId::proportional(12.0), weak);
         if let Some(w) = view.waveform {
             let mid = wave.center().y;
-            let half = wave.height() / 2.0 - 2.0;
+            // Scaled to the loudest peak.
+            let half = (wave.height() / 2.0 - 2.0) / w.peak;
             let mut x = wave.left();
             while x < wave.right() {
                 let (a, b) = (t_of(x, self) as u64, t_of(x + 1.0, self) as u64);

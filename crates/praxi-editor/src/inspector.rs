@@ -219,10 +219,10 @@ impl CueDraft {
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(4.0);
-                    if ui.add_enabled(i > 0, egui::Button::new("⏶").small()).clicked() {
+                    if ui.add_enabled(i > 0, egui::Button::new("Up").small()).clicked() {
                         swap = Some(i - 1);
                     }
-                    if ui.add_enabled(i + 1 < count, egui::Button::new("⏷").small()).clicked() {
+                    if ui.add_enabled(i + 1 < count, egui::Button::new("Down").small()).clicked() {
                         swap = Some(i);
                     }
                     if ui.small_button("Remove").clicked() {

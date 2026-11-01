@@ -11,6 +11,8 @@ pub const BUCKET_US: u64 = 5_000;
 /// Minimum and maximum sample of every channel per bucket.
 pub struct Waveform {
     peaks: Vec<(f32, f32)>,
+    /// Largest absolute sample, at least 1/64, so quiet audio still shows.
+    pub peak: f32,
 }
 
 impl Waveform {
@@ -41,7 +43,8 @@ impl Waveform {
                 }
             }
         }
-        Ok(Waveform { peaks })
+        let peak = peaks.iter().fold(1.0f32 / 64.0, |m, p| m.max(-p.0).max(p.1));
+        Ok(Waveform { peaks, peak })
     }
 
     /// Minimum and maximum over `[from_us, to_us)`, or `None` without audio there.
