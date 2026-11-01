@@ -43,6 +43,9 @@ The byte layout is in [PRAXI.md](../spec/PRAXI.md#cue-payload).
 - **Looping** ends every active cue before `Looped`.
 - **Finishing** ends every cue still active before `Finished`.
 - Disabling a cue stream ends its active cues immediately (emitting `CueEnd`).
+- `replace_cues(tracks)` plays other cues in place of the file's cue streams, for example
+  from cue sheets; their streams are numbered after the file's streams and their ids are
+  `2^63` and above ([cue-preview.md](cue-preview.md#player)).
 
 ## Authoring
 
@@ -52,4 +55,5 @@ The byte layout is in [PRAXI.md](../spec/PRAXI.md#cue-payload).
 - Encoder library: any number of cue streams, typed field values.
 - Cue sheets: `praxi cues export` and `praxi cues import` rewrite the cue streams of an
   existing file without re-encoding video; `praxi cues srt` converts subtitles to cues
-  ([cue-editing.md](cue-editing.md)).
+  ([cue-editing.md](cue-editing.md)). The viewer previews sheets live
+  ([cue-preview.md](cue-preview.md)).

@@ -89,3 +89,7 @@ The CLI is built on `praxi_format`, so an editor application can do the same in 
 - `CueTrack { name, cues: Vec<TimedCue> }`, `TimedCue { time_us, cue }`; the `Cue`'s
   `duration` is in microseconds.
 - `Reader::read_stored` and `Writer::copy_chunk` copy chunks in their stored form.
+- `cue_sheet::parse` and `cue_sheet::write` (feature `cue-sheet`) read and write cue
+  sheets.
+
+To watch edits to a sheet without importing it, see [cue-preview.md](cue-preview.md).

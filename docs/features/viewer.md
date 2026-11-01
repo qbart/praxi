@@ -22,6 +22,8 @@ runtime crates do not depend on a GPU stack.
 | `png` | Screenshots |
 | `clap` | Arguments |
 
+The viewer enables the `cue-sheet` feature of `praxi` to read cue sheets.
+
 ## Usage
 
 ```sh
@@ -38,6 +40,7 @@ praxi-viewer intro.praxi --screenshot frame.png --at 2.5
 | `--at <SECONDS>` | `0` | Start position. |
 | `--no-audio` | | Do not open an audio device. |
 | `--clock <C>` | `audio` | `audio`: the clock follows the audio output while audio plays; `game`: the wall clock is master ([audio.md](audio.md#audio-master-clock)). |
+| `--cues <SHEET>` (repeatable) | | Play the cues of these cue sheets in place of the file's, reloading them when they change ([cue-preview.md](cue-preview.md)). |
 | `--screenshot <PNG>` | | Render the frame at `--at` without a window, write it and exit. |
 | `--size <WxH>` | video size | Screenshot size. |
 
@@ -96,6 +99,7 @@ adapter, backend and the selected variant of every track at start-up.
 | Home | Seek to the start |
 | L | Toggle looping |
 | M | Mute / unmute |
+| R | Reload the `--cues` sheets |
 | Esc, Q | Quit |
 
 On exit the viewer prints the number of frames presented and the average and maximum time

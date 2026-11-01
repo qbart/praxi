@@ -51,6 +51,8 @@ for track in 0..player.tracks().len() {
   frame): texture format, sRGB flag, width, height, block data, frame index and timestamp.
   `index` changes only when a new frame was decoded, so engines can skip redundant uploads.
 - `cue_streams()` and `set_cue_stream_enabled(stream, bool)`: see [cues.md](cues.md).
+- `replace_cues(tracks)`: play these cues in place of the file's cue streams
+  ([cue-preview.md](cue-preview.md#player)).
 - `audio_tracks()`, `audio_output(track)`, `set_audio_track_enabled(track, bool)` and
   `set_audio_sync_tolerance(d)`: see [audio.md](audio.md).
 - `set_clock(Clock::Game)` (default): the clock advances by `dt`, audio follows it.

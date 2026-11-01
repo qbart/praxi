@@ -40,7 +40,7 @@ Cargo workspace under `crates/`:
 
 | Crate | Role | Notable dependencies |
 |---|---|---|
-| `praxi-format` | Container reader and writer, chunk compression | `lz4_flex` |
+| `praxi-format` | Container reader and writer, chunk compression, cue sheets (feature `cue-sheet`) | `lz4_flex`, optional `serde_json` |
 | `praxi` | Runtime player: variant selection, frame reconstruction, clock, events | `praxi-format` |
 | `praxi-encoder` | Encoder library: RGBA frames to `.praxi` | `ktx-rs`, `praxi-format` |
 | `praxi-cli` | `praxi` command line tool (encode via ffmpeg, inspect files, edit cues) | `praxi-encoder`, `clap`, `serde_json` |
@@ -86,4 +86,5 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
 5. **M4** Engine integration examples: integration guide, `praxi-wgpu`, headless and
    windowed examples ([engine-integration.md](engine-integration.md)).
 6. **M5** Authoring: cue sheets to edit the cues of encoded files, subtitle conversion
-   ([cue-editing.md](cue-editing.md)).
+   ([cue-editing.md](cue-editing.md)), live preview of cue sheets in the viewer
+   ([cue-preview.md](cue-preview.md)).

@@ -1,8 +1,10 @@
 # Cue sheet format
 
 Version 1. File extension `.json` (suggested: `NAME.cues.json`). Written by
-`praxi cues export` and `praxi cues srt`, read by `praxi cues import`
-([cue-editing.md](../features/cue-editing.md)).
+`praxi cues export` and `praxi cues srt`, read by `praxi cues import` and
+`praxi-viewer --cues` ([cue-editing.md](../features/cue-editing.md),
+[cue-preview.md](../features/cue-preview.md)). The `praxi_format::cue_sheet` module
+(feature `cue-sheet`) reads and writes it.
 
 A cue sheet is a UTF-8 JSON document ([RFC 8259](https://www.rfc-editor.org/rfc/rfc8259))
 holding the cue streams of a praxi file ([PRAXI.md](PRAXI.md#cue-payload)).
