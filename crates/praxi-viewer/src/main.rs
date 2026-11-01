@@ -189,7 +189,7 @@ impl CueSheets {
         let names: Vec<String> = self.paths.iter().map(|p| p.display().to_string()).collect();
         let mut summary = format!("cues: {} streams, {cues} cues from {}", tracks.len(), names.join(", "));
         if late > 0 {
-            summary += &format!("; {late} end after the file (import would extend its duration)");
+            summary += &format!("; {late} past the end of the file (import would extend its duration)");
         }
         println!("{summary}");
         player.replace_cues(tracks);
