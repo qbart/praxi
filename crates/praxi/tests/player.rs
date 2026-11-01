@@ -1,5 +1,5 @@
 use praxi::format::{COLOR_FLAG_SRGB, Cue, StreamInfo, TimeBase, Value, VideoParams, Writer};
-use praxi::{Capabilities, CueStreamInfo, Error, Event, Player, TextureFormat};
+use praxi::{Capabilities, CueStreamInfo, CueTrack, Error, Event, Player, TextureFormat, TimedCue};
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::time::Duration;
@@ -264,4 +264,159 @@ fn sub_microsecond_steps_add_up() {
         p.advance(Duration::from_nanos(500)).unwrap();
     }
     assert_eq!(p.position(), Duration::from_micros(250_999));
+}
+
+/// Two cue streams for `replace_cues`, unsorted, with cues on chunk times (0, 100, 300 ms),
+/// at the same time in both streams (300 ms) and overlapping, all ending by 500 ms.
+fn replacement_tracks() -> Vec<CueTrack> {
+    let cue = |ms: u64, c: Cue| TimedCue { time_us: ms * 1000, cue: c };
+    vec![
+        CueTrack {
+            name: "subtitles".into(),
+            cues: vec![
+                cue(300, Cue { fields: vec![("text".into(), Value::from("two"))], ..Cue { duration: 150_000, ..Cue::new("subtitle") } }),
+                cue(0, Cue { fields: vec![("text".into(), Value::from("one"))], ..Cue { duration: 250_000, ..Cue::new("subtitle") } }),
+            ],
+        },
+        CueTrack {
+            name: "cues".into(),
+            cues: vec![cue(100, Cue::new("hit")), cue(300, flash("green", 200)), cue(300, Cue::new("tie")), cue(490, Cue::new("last"))],
+        },
+    ]
+}
+
+/// Plays through a fixed script of transport calls and records every event (cue ids by
+/// first appearance, streams by name) and the frame after each call.
+fn script_trace(p: &mut Player<Cursor<Vec<u8>>>) -> Vec<String> {
+    let mut ids: Vec<u64> = Vec::new();
+    let mut trace = Vec::new();
+    let mut record = |p: &mut Player<Cursor<Vec<u8>>>, step: &str| {
+        let names: HashMap<u16, String> = p.cue_streams().iter().map(|c| (c.stream, c.name.clone())).collect();
+        let mut id = |raw: u64| match ids.iter().position(|&i| i == raw) {
+            Some(n) => n,
+            None => {
+                ids.push(raw);
+                ids.len() - 1
+            }
+        };
+        while let Some(e) = p.poll_event() {
+            trace.push(match e {
+                Event::Cue(c) => format!(
+                    "{step}: cue #{} {} {}@{} +{} {:?}",
+                    id(c.id),
+                    names[&c.stream],
+                    c.kind,
+                    c.time.as_millis(),
+                    c.duration.as_millis(),
+                    c.fields
+                ),
+                Event::CueEnd { id: raw, stream } => format!("{step}: end #{} {}", id(raw), names[&stream]),
+                other => format!("{step}: {other:?}"),
+            });
+        }
+        trace.push(format!("{step}: frame {:?} at {:?}", p.video_frame(0).map(|f| f.data[0]), p.position()));
+    };
+    p.play().unwrap();
+    record(p, "play");
+    for i in 0..8 {
+        p.advance(37 * MS).unwrap();
+        record(p, &format!("advance {i}"));
+    }
+    p.seek(320 * MS).unwrap();
+    record(p, "seek 320");
+    p.set_looping(true);
+    for i in 0..10 {
+        p.advance(45 * MS).unwrap();
+        record(p, &format!("loop {i}"));
+    }
+    p.set_looping(false);
+    p.advance(Duration::from_secs(1)).unwrap();
+    record(p, "finish");
+    trace
+}
+
+#[test]
+fn replaced_cues_play_like_an_imported_file() {
+    let caps = Capabilities::new([TextureFormat::Bc1]);
+    let mut preview = Player::open(Cursor::new(sample_file()), &caps).unwrap();
+    preview.replace_cues(replacement_tracks());
+    let reader = praxi::format::Reader::new(Cursor::new(sample_file())).unwrap();
+    let imported = praxi::format::replace_cues(reader, Cursor::new(Vec::new()), &replacement_tracks()).unwrap();
+    let mut imported = Player::open(Cursor::new(imported.into_inner()), &caps).unwrap();
+    assert_eq!(imported.duration(), preview.duration());
+
+    let expected = script_trace(&mut imported);
+    assert!(expected.iter().any(|l| l.contains("cue #0 subtitles subtitle@0")), "{expected:#?}");
+    assert!(expected.iter().any(|l| l.starts_with("loop") && l.contains("Looped")), "{expected:#?}");
+    assert_eq!(script_trace(&mut preview), expected);
+}
+
+#[test]
+fn replace_cues_acts_like_a_seek_for_cues() {
+    let mut log = Log::default();
+    let mut p = open(&[TextureFormat::Bc1]);
+    p.play().unwrap();
+    p.advance(260 * MS).unwrap();
+    assert_eq!(log.take(&mut p), ["started", "cue red@120", "cue a@150", "cue blue@250"]);
+    let frame = p.video_frame(0).unwrap().index;
+
+    let cue = |ms: u64, c: Cue| TimedCue { time_us: ms * 1000, cue: c };
+    p.replace_cues(vec![CueTrack {
+        name: "edited".into(),
+        cues: vec![cue(100, Cue::new("passed")), cue(200, Cue { duration: 200_000, ..Cue::new("held") }), cue(300, Cue::new("later"))],
+    }]);
+    assert_eq!(log.take(&mut p), ["end red", "end blue", "cue held@200"], "active cues end, active new ones start");
+    assert_eq!(p.cue_streams(), [CueStreamInfo { stream: 4, name: "edited".into() }], "numbered after the file's streams");
+    assert_eq!(p.video_frame(0).unwrap().index, frame, "video is untouched");
+    assert_eq!(p.position(), 260 * MS);
+
+    p.advance(60 * MS).unwrap();
+    let ids: Vec<u64> = std::iter::from_fn(|| p.poll_event())
+        .filter_map(|e| match e {
+            Event::Cue(c) => Some(c.id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids, [(1 << 63) + 2], "later is the third cue; ids start at 2^63");
+    p.advance(200 * MS).unwrap();
+    assert!(log.take(&mut p).iter().all(|e| !e.contains("@4")), "file cues b and long stay replaced");
+
+    p.set_cue_stream_enabled(2, false);
+    p.set_cue_stream_enabled(4, false);
+    p.seek(250 * MS).unwrap();
+    assert_eq!(log.take(&mut p), ["seeked@250"], "disabled replaced streams emit nothing");
+
+    // Before `play()` decodes the start, cues at 0 are still ahead.
+    let mut p = open(&[TextureFormat::Bc1]);
+    p.replace_cues(vec![CueTrack { name: "s".into(), cues: vec![cue(0, Cue::new("zero"))] }]);
+    assert_eq!(log.take(&mut p), Vec::<String>::new());
+    p.play().unwrap();
+    assert_eq!(log.take(&mut p), ["started", "cue zero@0"]);
+}
+
+#[test]
+fn replaced_cues_stop_at_the_duration() {
+    let mut log = Log::default();
+    let cue = |ms: u64, c: Cue| TimedCue { time_us: ms * 1000, cue: c };
+    let tracks = vec![CueTrack {
+        name: "s".into(),
+        cues: vec![cue(450, Cue { duration: 200_000, ..Cue::new("over") }), cue(500, Cue::new("end")), cue(520, Cue::new("after"))],
+    }];
+    let mut p = open(&[TextureFormat::Bc1]);
+    p.replace_cues(tracks.clone());
+    p.set_looping(true);
+    p.play().unwrap();
+    p.advance(480 * MS).unwrap();
+    assert_eq!(log.take(&mut p), ["started", "cue over@450"]);
+    p.advance(60 * MS).unwrap();
+    assert_eq!(log.take(&mut p), ["cue end@500", "end over", "looped"], "the clock overshoots to 540 ms but after stays unplayed");
+
+    let mut p = open(&[TextureFormat::Bc1]);
+    p.replace_cues(tracks);
+    p.play().unwrap();
+    p.advance(Duration::from_secs(1)).unwrap();
+    assert_eq!(log.take(&mut p), ["started", "cue over@450", "cue end@500", "end over", "finished"]);
+    p.replace_cues(Vec::new());
+    assert_eq!(log.take(&mut p), Vec::<String>::new(), "finished players start no cues");
+    assert!(p.cue_streams().is_empty());
 }
