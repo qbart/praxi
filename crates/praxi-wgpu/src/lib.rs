@@ -5,10 +5,19 @@ use praxi::{Capabilities, Player, TextureFormat};
 use std::io::{Read, Seek};
 
 /// BC formats in order of preference, then ASTC.
-const BC: [TextureFormat; 5] =
-    [TextureFormat::Bc7, TextureFormat::Bc3, TextureFormat::Bc1, TextureFormat::Bc5, TextureFormat::Bc4];
-const ASTC: [TextureFormat; 4] =
-    [TextureFormat::Astc4x4, TextureFormat::Astc5x5, TextureFormat::Astc6x6, TextureFormat::Astc8x8];
+const BC: [TextureFormat; 5] = [
+    TextureFormat::Bc7,
+    TextureFormat::Bc3,
+    TextureFormat::Bc1,
+    TextureFormat::Bc5,
+    TextureFormat::Bc4,
+];
+const ASTC: [TextureFormat; 4] = [
+    TextureFormat::Astc4x4,
+    TextureFormat::Astc5x5,
+    TextureFormat::Astc6x6,
+    TextureFormat::Astc8x8,
+];
 
 const SHADER: &str = r#"
 struct Params {
@@ -60,7 +69,10 @@ pub fn supported_formats(features: wgpu::Features) -> Vec<TextureFormat> {
 }
 
 /// The player capabilities for an adapter, restricted to `only` when given.
-pub fn capabilities(adapter: &wgpu::Adapter, only: Option<TextureFormat>) -> Result<Capabilities, String> {
+pub fn capabilities(
+    adapter: &wgpu::Adapter,
+    only: Option<TextureFormat>,
+) -> Result<Capabilities, String> {
     let supported = supported_formats(adapter.features());
     match only {
         Some(f) if !supported.contains(&f) => Err(format!("the GPU cannot sample {f}")),
@@ -72,14 +84,19 @@ pub fn capabilities(adapter: &wgpu::Adapter, only: Option<TextureFormat>) -> Res
 
 /// The compression features to request from `adapter`.
 pub fn required_features(adapter: &wgpu::Adapter) -> wgpu::Features {
-    adapter.features() & (wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TEXTURE_COMPRESSION_ASTC)
+    adapter.features()
+        & (wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TEXTURE_COMPRESSION_ASTC)
 }
 
 pub fn wgpu_format(format: TextureFormat, srgb: bool) -> wgpu::TextureFormat {
     use wgpu::TextureFormat as W;
     let astc = |block| W::Astc {
         block,
-        channel: if srgb { wgpu::AstcChannel::UnormSrgb } else { wgpu::AstcChannel::Unorm },
+        channel: if srgb {
+            wgpu::AstcChannel::UnormSrgb
+        } else {
+            wgpu::AstcChannel::Unorm
+        },
     };
     match format {
         TextureFormat::Bc1 if srgb => W::Bc1RgbaUnormSrgb,
@@ -94,6 +111,8 @@ pub fn wgpu_format(format: TextureFormat, srgb: bool) -> wgpu::TextureFormat {
         TextureFormat::Astc5x5 => astc(wgpu::AstcBlock::B5x5),
         TextureFormat::Astc6x6 => astc(wgpu::AstcBlock::B6x6),
         TextureFormat::Astc8x8 => astc(wgpu::AstcBlock::B8x8),
+        // Decoded into RGBA holding sRGB-encoded bytes (storage textures cannot be sRGB).
+        TextureFormat::Motion => W::Rgba8Unorm,
     }
 }
 
@@ -110,8 +129,16 @@ impl Rect {
     /// The largest rectangle with the aspect ratio of `width x height` centred in the target.
     pub fn fit(width: u32, height: u32, target_w: u32, target_h: u32) -> Rect {
         let scale = (target_w as f32 / width as f32).min(target_h as f32 / height as f32);
-        let (w, h) = ((width as f32 * scale).round().max(1.0), (height as f32 * scale).round().max(1.0));
-        Rect { x: ((target_w as f32 - w) / 2.0).floor(), y: ((target_h as f32 - h) / 2.0).floor(), w, h }
+        let (w, h) = (
+            (width as f32 * scale).round().max(1.0),
+            (height as f32 * scale).round().max(1.0),
+        );
+        Rect {
+            x: ((target_w as f32 - w) / 2.0).floor(),
+            y: ((target_h as f32 - h) / 2.0).floor(),
+            w,
+            h,
+        }
     }
 }
 
@@ -137,7 +164,11 @@ pub struct VideoRenderer {
 
 impl VideoRenderer {
     /// Creates pipelines drawing into `target` and one texture per video track of `player`.
-    pub fn new<R: Read + Seek>(device: &wgpu::Device, target: wgpu::TextureFormat, player: &Player<R>) -> VideoRenderer {
+    pub fn new<R: Read + Seek>(
+        device: &wgpu::Device,
+        target: wgpu::TextureFormat,
+        player: &Player<R>,
+    ) -> VideoRenderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("praxi"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -236,7 +267,13 @@ impl VideoRenderer {
         };
         for info in player.tracks() {
             let p = &info.params;
-            renderer.tracks.push(renderer.track_texture(device, p.format, p.srgb(), p.width, p.height));
+            renderer.tracks.push(renderer.track_texture(
+                device,
+                p.format,
+                p.srgb(),
+                p.width,
+                p.height,
+            ));
         }
         renderer
     }
@@ -254,7 +291,11 @@ impl VideoRenderer {
         let (padded_w, padded_h) = (blocks.0 * bw, blocks.1 * bh);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("track"),
-            size: wgpu::Extent3d { width: padded_w, height: padded_h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: padded_w,
+                height: padded_h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -286,18 +327,43 @@ impl VideoRenderer {
             label: Some("track"),
             layout: &self.layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params.as_entire_binding(),
+                },
             ],
         });
-        TrackTexture { texture, params, bind_group, format, blocks, uploaded: None }
+        TrackTexture {
+            texture,
+            params,
+            bind_group,
+            format,
+            blocks,
+            uploaded: None,
+        }
     }
 
     /// Uploads the frames that changed since the last call and sets the opacity (clamped to
     /// 0..=1) of the next draws. Returns how many frames were uploaded.
-    pub fn prepare<R: Read + Seek>(&mut self, queue: &wgpu::Queue, player: &Player<R>, opacity: f32) -> usize {
-        let opacity = if opacity.is_nan() { 1.0 } else { opacity.clamp(0.0, 1.0) };
+    pub fn prepare<R: Read + Seek>(
+        &mut self,
+        queue: &wgpu::Queue,
+        player: &Player<R>,
+        opacity: f32,
+    ) -> usize {
+        let opacity = if opacity.is_nan() {
+            1.0
+        } else {
+            opacity.clamp(0.0, 1.0)
+        };
         if opacity != self.opacity {
             self.opacity = opacity;
             for t in &self.tracks {
@@ -306,7 +372,9 @@ impl VideoRenderer {
         }
         let mut uploaded = 0;
         for (i, t) in self.tracks.iter_mut().enumerate() {
-            let Some(frame) = player.video_frame(i) else { continue };
+            let Some(frame) = player.video_frame(i) else {
+                continue;
+            };
             if t.uploaded == Some(frame.index) {
                 continue;
             }
@@ -324,7 +392,11 @@ impl VideoRenderer {
                     bytes_per_row: Some(t.blocks.0 * t.format.block_bytes()),
                     rows_per_image: Some(t.blocks.1),
                 },
-                wgpu::Extent3d { width: t.blocks.0 * bw, height: t.blocks.1 * bh, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width: t.blocks.0 * bw,
+                    height: t.blocks.1 * bh,
+                    depth_or_array_layers: 1,
+                },
             );
             t.uploaded = Some(frame.index);
             uploaded += 1;
@@ -346,8 +418,17 @@ impl VideoRenderer {
 
     fn draw_tracks(&self, pass: &mut wgpu::RenderPass<'_>, rect: Rect, replace_first: bool) {
         pass.set_viewport(rect.x, rect.y, rect.w, rect.h, 0.0, 1.0);
-        for (i, t) in self.tracks.iter().enumerate().filter(|(_, t)| t.uploaded.is_some()) {
-            pass.set_pipeline(if replace_first && i == 0 { &self.replace } else { &self.blend });
+        for (i, t) in self
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.uploaded.is_some())
+        {
+            pass.set_pipeline(if replace_first && i == 0 {
+                &self.replace
+            } else {
+                &self.blend
+            });
             pass.set_bind_group(0, &t.bind_group, &[]);
             pass.draw(0..4, 0..1);
         }
@@ -364,7 +445,11 @@ mod tests {
             for srgb in [false, true] {
                 let w = wgpu_format(format, srgb);
                 assert_eq!(w.block_dimensions(), format.block_size(), "{format}");
-                assert_eq!(w.block_copy_size(None), Some(format.block_bytes()), "{format}");
+                assert_eq!(
+                    w.block_copy_size(None),
+                    Some(format.block_bytes()),
+                    "{format}"
+                );
                 let has_srgb = !matches!(format, TextureFormat::Bc4 | TextureFormat::Bc5);
                 assert_eq!(w.is_srgb(), srgb && has_srgb, "{format}");
             }
@@ -379,7 +464,10 @@ mod tests {
         );
         assert_eq!(both[0], TextureFormat::Bc7);
         assert_eq!(both.len(), 9);
-        assert_eq!(supported_formats(wgpu::Features::TEXTURE_COMPRESSION_ASTC), ASTC);
+        assert_eq!(
+            supported_formats(wgpu::Features::TEXTURE_COMPRESSION_ASTC),
+            ASTC
+        );
     }
 
     #[test]

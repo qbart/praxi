@@ -1,7 +1,9 @@
 use crate::{
-    CHUNK_HEADER_SIZE, ChunkHeader, Compression, Error, HEADER_SIZE, Header, INDEX_ENTRY_SIZE,
-    IndexEntry, MAGIC, Result, AUDIO_NAME_SIZE, AudioParams, CUE_NAME_SIZE, CueParams, SampleFormat, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
-    TimeBase, VERSION_MAJOR, VideoParams, corrupt, from_planes, planes::decode_sections, le_u16, le_u32, le_u64,
+    AUDIO_NAME_SIZE, AudioParams, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, Chroma, ChunkHeader,
+    Compression, CueParams, Error, HEADER_SIZE, Header, INDEX_ENTRY_SIZE, IndexEntry, MAGIC,
+    Result, STREAM_ENTRY_SIZE, SampleFormat, StreamInfo, StreamParams, TextureFormat, TimeBase,
+    VERSION_MAJOR, VERSION_MINOR, VideoParams, corrupt, from_planes, le_u16, le_u32, le_u64,
+    planes::decode_sections,
 };
 use std::io::{Read, Seek, SeekFrom};
 
@@ -33,7 +35,10 @@ impl<R: Read + Seek> Reader<R> {
             index_count: le_u32(&h, 40),
         };
         if (header.version_major, header.version_minor) != (VERSION_MAJOR, VERSION_MINOR) {
-            return Err(Error::UnsupportedVersion { major: header.version_major, minor: header.version_minor });
+            return Err(Error::UnsupportedVersion {
+                major: header.version_major,
+                minor: header.version_minor,
+            });
         }
         let stream_count = le_u16(&h, 16) as usize;
         if stream_count == 0 {
@@ -48,9 +53,20 @@ impl<R: Read + Seek> Reader<R> {
         }
         let data_start = HEADER_SIZE + STREAM_ENTRY_SIZE * stream_count as u64;
         if header.index_offset < data_start {
-            return corrupt(format!("index offset {} inside stream table", header.index_offset));
+            return corrupt(format!(
+                "index offset {} inside stream table",
+                header.index_offset
+            ));
         }
-        Ok(Reader { inner, header, streams, data_start, pos: data_start, scratch: Vec::new(), planes: Vec::new() })
+        Ok(Reader {
+            inner,
+            header,
+            streams,
+            data_start,
+            pos: data_start,
+            scratch: Vec::new(),
+            planes: Vec::new(),
+        })
     }
 
     pub fn header(&self) -> &Header {
@@ -113,20 +129,33 @@ impl<R: Read + Seek> Reader<R> {
             pts: le_u64(&h, 16),
         };
         if chunk.stream as usize >= self.streams.len() {
-            return corrupt(format!("chunk at {} has unknown stream {}", chunk.offset, chunk.stream));
+            return corrupt(format!(
+                "chunk at {} has unknown stream {}",
+                chunk.offset, chunk.stream
+            ));
         }
         if compression == Compression::Planes {
             let Some(v) = self.streams[chunk.stream as usize].video_params() else {
-                return corrupt(format!("chunk at {offset} uses byte planes outside a video stream"));
+                return corrupt(format!(
+                    "chunk at {offset} uses byte planes outside a video stream"
+                ));
             };
             let prefix = v.plane_prefix(chunk.keyframe());
             let raw = chunk.raw_size as usize;
-            if raw < prefix || !(raw - prefix).is_multiple_of(v.format.block_bytes() as usize) {
-                return corrupt(format!("chunk at {offset} has no whole blocks for byte planes"));
+            if v.format == TextureFormat::Motion
+                || raw < prefix
+                || !(raw - prefix).is_multiple_of(v.format.block_bytes() as usize)
+            {
+                return corrupt(format!(
+                    "chunk at {offset} has no whole blocks for byte planes"
+                ));
             }
         }
         if compression == Compression::None && chunk.stored_size != chunk.raw_size {
-            return corrupt(format!("uncompressed chunk at {} has mismatched sizes", chunk.offset));
+            return corrupt(format!(
+                "uncompressed chunk at {} has mismatched sizes",
+                chunk.offset
+            ));
         }
         if offset + CHUNK_HEADER_SIZE + chunk.stored_size as u64 > self.header.index_offset {
             return corrupt(format!("chunk at {offset} runs past the index"));
@@ -136,7 +165,8 @@ impl<R: Read + Seek> Reader<R> {
 
     /// Reads and decompresses the payload of `chunk` into `out` (resized to `raw_size`).
     pub fn read_payload(&mut self, chunk: &ChunkHeader, out: &mut Vec<u8>) -> Result<()> {
-        self.inner.seek(SeekFrom::Start(chunk.offset + CHUNK_HEADER_SIZE))?;
+        self.inner
+            .seek(SeekFrom::Start(chunk.offset + CHUNK_HEADER_SIZE))?;
         out.resize(chunk.raw_size as usize, 0);
         match chunk.compression {
             Compression::None => self.inner.read_exact(out)?,
@@ -150,10 +180,14 @@ impl<R: Read + Seek> Reader<R> {
                 self.inner.read_exact(&mut self.scratch)?;
                 self.planes.resize(out.len(), 0);
                 // chunk_at checked that this is a video stream with whole blocks.
-                let v = self.streams[chunk.stream as usize].video_params().expect("video stream");
+                let v = self.streams[chunk.stream as usize]
+                    .video_params()
+                    .expect("video stream");
                 let prefix = v.plane_prefix(chunk.keyframe());
                 let block_bytes = v.format.block_bytes() as usize;
-                if let Err(e) = decode_sections(&self.scratch, prefix, block_bytes, &mut self.planes) {
+                if let Err(e) =
+                    decode_sections(&self.scratch, prefix, block_bytes, &mut self.planes)
+                {
                     return corrupt(format!("chunk at {}: {e}", chunk.offset));
                 }
                 out[..prefix].copy_from_slice(&self.planes[..prefix]);
@@ -166,7 +200,8 @@ impl<R: Read + Seek> Reader<R> {
     /// Reads the stored (possibly compressed) bytes of `chunk` into `out`, for copying the
     /// chunk with [`crate::Writer::copy_chunk`].
     pub fn read_stored(&mut self, chunk: &ChunkHeader, out: &mut Vec<u8>) -> Result<()> {
-        self.inner.seek(SeekFrom::Start(chunk.offset + CHUNK_HEADER_SIZE))?;
+        self.inner
+            .seek(SeekFrom::Start(chunk.offset + CHUNK_HEADER_SIZE))?;
         out.resize(chunk.stored_size as usize, 0);
         self.inner.read_exact(out)?;
         Ok(())
@@ -180,8 +215,15 @@ impl<R: Read + Seek> Reader<R> {
         self.inner.read_exact(&mut buf)?;
         let mut out = Vec::with_capacity(count);
         for b in buf.as_chunks::<{ INDEX_ENTRY_SIZE as usize }>().0 {
-            let e = IndexEntry { stream: le_u16(b, 0), pts: le_u64(b, 8), offset: le_u64(b, 16) };
-            if e.stream as usize >= self.streams.len() || e.offset < self.data_start || e.offset >= self.header.index_offset {
+            let e = IndexEntry {
+                stream: le_u16(b, 0),
+                pts: le_u64(b, 8),
+                offset: le_u64(b, 16),
+            };
+            if e.stream as usize >= self.streams.len()
+                || e.offset < self.data_start
+                || e.offset >= self.header.index_offset
+            {
                 return corrupt(format!("bad index entry {e:?}"));
             }
             out.push(e);
@@ -195,7 +237,10 @@ impl<R: Read + Seek> Reader<R> {
 }
 
 fn decode_stream(i: usize, b: &[u8]) -> Result<StreamInfo> {
-    let time_base = TimeBase { num: le_u32(b, 4), den: le_u32(b, 8) };
+    let time_base = TimeBase {
+        num: le_u32(b, 4),
+        den: le_u32(b, 8),
+    };
     if time_base.num == 0 || time_base.den == 0 {
         return corrupt(format!("stream {i}: zero time base"));
     }
@@ -209,7 +254,16 @@ fn decode_stream(i: usize, b: &[u8]) -> Result<StreamInfo> {
             if (b[28] as u32, b[29] as u32, b[30] as u32) != (bw, bh, format.block_bytes()) {
                 return corrupt(format!("stream {i}: block fields do not match {format}"));
             }
-            let v = VideoParams { width: le_u32(b, 16), height: le_u32(b, 20), format, color_flags: le_u16(b, 26) };
+            let mut v = VideoParams::new(le_u32(b, 16), le_u32(b, 20), format, le_u16(b, 26));
+            if format == TextureFormat::Motion {
+                v.motion.chroma = match b[31] {
+                    0 => Chroma::C420,
+                    1 => Chroma::C444,
+                    c => return corrupt(format!("stream {i}: unknown chroma layout {c}")),
+                };
+                v.motion.chroma_qp_offset = b[32] as i8;
+                v.motion.alpha_qp_offset = b[33] as i8;
+            }
             if v.width == 0 || v.height == 0 {
                 return corrupt(format!("stream {i}: zero frame size"));
             }
@@ -235,7 +289,10 @@ fn decode_stream(i: usize, b: &[u8]) -> Result<StreamInfo> {
                 return corrupt(format!("stream {i}: audio time base is not 1/sample_rate"));
             }
             if a.channel_mask != 0 && a.channel_mask.count_ones() != a.channels as u32 {
-                return corrupt(format!("stream {i}: channel mask does not match {} channels", a.channels));
+                return corrupt(format!(
+                    "stream {i}: channel mask does not match {} channels",
+                    a.channels
+                ));
             }
             StreamParams::Audio(a)
         }
@@ -245,7 +302,12 @@ fn decode_stream(i: usize, b: &[u8]) -> Result<StreamInfo> {
         }),
         kind => StreamParams::Unknown(kind),
     };
-    Ok(StreamInfo { group: le_u16(b, 2), time_base, chunk_count: le_u32(b, 12), params })
+    Ok(StreamInfo {
+        group: le_u16(b, 2),
+        time_base,
+        chunk_count: le_u32(b, 12),
+        params,
+    })
 }
 
 fn padded_text(i: usize, b: &[u8]) -> Result<String> {
@@ -259,7 +321,11 @@ fn padded_text(i: usize, b: &[u8]) -> Result<String> {
 fn decompress(stored: &[u8], out: &mut [u8], chunk: &ChunkHeader) -> Result<()> {
     match lz4_flex::block::decompress_into(stored, out) {
         Ok(n) if n == out.len() => Ok(()),
-        Ok(n) => corrupt(format!("chunk at {} decompressed to {n} bytes, expected {}", chunk.offset, out.len())),
+        Ok(n) => corrupt(format!(
+            "chunk at {} decompressed to {n} bytes, expected {}",
+            chunk.offset,
+            out.len()
+        )),
         Err(e) => corrupt(format!("chunk at {}: {e}", chunk.offset)),
     }
 }

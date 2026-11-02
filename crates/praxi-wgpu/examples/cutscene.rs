@@ -59,9 +59,13 @@ type FilePlayer = Player<BufReader<File>>;
 enum Phase {
     Gameplay,
     /// The cutscene plays; `fade` goes from 0 to 1 over `FADE` after it starts.
-    Cutscene { since: Instant },
+    Cutscene {
+        since: Instant,
+    },
     /// Fading out since `since`.
-    Ending { since: Instant },
+    Ending {
+        since: Instant,
+    },
 }
 
 struct Game {
@@ -86,15 +90,29 @@ struct Game {
 }
 
 impl Game {
-    fn new(event_loop: &ActiveEventLoop, instance: &wgpu::Instance, path: &str, auto: bool) -> Result<Game, String> {
+    fn new(
+        event_loop: &ActiveEventLoop,
+        instance: &wgpu::Instance,
+        path: &str,
+        auto: bool,
+    ) -> Result<Game, String> {
         let window = Arc::new(
             event_loop
-                .create_window(Window::default_attributes().with_title("praxi cutscene").with_inner_size(winit::dpi::LogicalSize::new(1280, 720)))
+                .create_window(
+                    Window::default_attributes()
+                        .with_title("praxi cutscene")
+                        .with_inner_size(winit::dpi::LogicalSize::new(1280, 720)),
+                )
                 .map_err(|e| e.to_string())?,
         );
-        let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
-        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(instance, Some(&surface)))
+        let surface = instance
+            .create_surface(window.clone())
             .map_err(|e| e.to_string())?;
+        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
+            instance,
+            Some(&surface),
+        ))
+        .map_err(|e| e.to_string())?;
         // The player picks the variant the GPU samples.
         let caps = praxi_wgpu::capabilities(&adapter, None)?;
         let file = File::open(path).map_err(|e| format!("{path}: {e}"))?;
@@ -109,7 +127,12 @@ impl Game {
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("the window surface is not supported")?;
-        if let Some(&srgb) = surface.get_capabilities(&adapter).formats.iter().find(|f| f.is_srgb()) {
+        if let Some(&srgb) = surface
+            .get_capabilities(&adapter)
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+        {
             config.format = srgb;
         }
         surface.configure(&device, &config);
@@ -129,15 +152,27 @@ impl Game {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(fragment),
                 layout: None,
-                vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
-                primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleStrip, ..Default::default() },
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
                 depth_stencil: None,
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some(fragment),
                     compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState { format: config.format, blend, write_mask: wgpu::ColorWrites::ALL })],
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
                 }),
                 multiview_mask: None,
                 cache: None,
@@ -156,10 +191,14 @@ impl Game {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scene"),
                 layout: &pipeline.get_bind_group_layout(0),
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: scene_uniform.as_entire_binding() }],
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: scene_uniform.as_entire_binding(),
+                }],
             })
         };
-        let (scene_bind_group, flash_bind_group) = (bind_group(&scene_pipeline), bind_group(&flash_pipeline));
+        let (scene_bind_group, flash_bind_group) =
+            (bind_group(&scene_pipeline), bind_group(&flash_pipeline));
 
         let now = Instant::now();
         let mut game = Game {
@@ -191,7 +230,9 @@ impl Game {
         if self.phase == Phase::Gameplay {
             println!("cutscene: start");
             self.player.play().map_err(|e| e.to_string())?;
-            self.phase = Phase::Cutscene { since: Instant::now() };
+            self.phase = Phase::Cutscene {
+                since: Instant::now(),
+            };
         }
         Ok(())
     }
@@ -199,7 +240,9 @@ impl Game {
     fn end_cutscene(&mut self) {
         if let Phase::Cutscene { .. } = self.phase {
             println!("cutscene: fade out");
-            self.phase = Phase::Ending { since: Instant::now() };
+            self.phase = Phase::Ending {
+                since: Instant::now(),
+            };
         }
     }
 
@@ -220,7 +263,11 @@ impl Game {
                         Some("blue") => [0.1, 0.2, 1.0],
                         _ => [1.0, 1.0, 1.0],
                     };
-                    let length = if cue.duration.is_zero() { Duration::from_millis(300) } else { cue.duration };
+                    let length = if cue.duration.is_zero() {
+                        Duration::from_millis(300)
+                    } else {
+                        cue.duration
+                    };
                     self.flash = Some((color, now, length));
                 }
                 Event::Finished => self.end_cutscene(),
@@ -231,13 +278,17 @@ impl Game {
 
         let opacity = match self.phase {
             Phase::Gameplay => 0.0,
-            Phase::Cutscene { since } => ((now - since).as_secs_f32() / FADE.as_secs_f32()).min(1.0),
+            Phase::Cutscene { since } => {
+                ((now - since).as_secs_f32() / FADE.as_secs_f32()).min(1.0)
+            }
             Phase::Ending { since } if now - since >= FADE => {
                 // Back to gameplay; preroll again for the next time.
                 println!("cutscene: done");
                 self.phase = Phase::Gameplay;
                 self.player.pause();
-                self.player.seek(Duration::ZERO).map_err(|e| e.to_string())?;
+                self.player
+                    .seek(Duration::ZERO)
+                    .map_err(|e| e.to_string())?;
                 while self.player.poll_event().is_some() {}
                 if self.auto {
                     return Ok(true);
@@ -249,15 +300,27 @@ impl Game {
         self.video.prepare(&self.queue, &self.player, opacity);
 
         let flash = match self.flash {
-            Some((color, at, length)) if now - at < length => (color, 1.0 - (now - at).as_secs_f32() / length.as_secs_f32()),
+            Some((color, at, length)) if now - at < length => {
+                (color, 1.0 - (now - at).as_secs_f32() / length.as_secs_f32())
+            }
             _ => ([0.0; 3], 0.0),
         };
-        let scene = [(now - self.started).as_secs_f32(), flash.1 * 0.8, flash.0[0], flash.0[1], flash.0[2], 0.0, 0.0, 0.0];
+        let scene = [
+            (now - self.started).as_secs_f32(),
+            flash.1 * 0.8,
+            flash.0[0],
+            flash.0[1],
+            flash.0[2],
+            0.0,
+            0.0,
+            0.0,
+        ];
         let bytes: Vec<u8> = scene.iter().flat_map(|v| v.to_le_bytes()).collect();
         self.queue.write_buffer(&self.scene_uniform, 0, &bytes);
 
         let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             _ => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(false);
@@ -272,7 +335,10 @@ impl Game {
                     view: &view,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 ..Default::default()
             });
@@ -282,11 +348,26 @@ impl Game {
             pass.draw(0..4, 0..1);
             if opacity > 0.0 {
                 let video = self.player.tracks()[0].params;
-                self.video.draw(&mut pass, Rect::fit(video.width, video.height, self.config.width, self.config.height));
+                self.video.draw(
+                    &mut pass,
+                    Rect::fit(
+                        video.width,
+                        video.height,
+                        self.config.width,
+                        self.config.height,
+                    ),
+                );
             }
             if flash.1 > 0.0 {
                 // `VideoRenderer::draw` set the viewport to the video rectangle.
-                pass.set_viewport(0.0, 0.0, self.config.width as f32, self.config.height as f32, 0.0, 1.0);
+                pass.set_viewport(
+                    0.0,
+                    0.0,
+                    self.config.width as f32,
+                    self.config.height as f32,
+                    0.0,
+                    1.0,
+                );
                 pass.set_pipeline(&self.flash_pipeline);
                 pass.set_bind_group(0, &self.flash_bind_group, &[]);
                 pass.draw(0..4, 0..1);
@@ -330,7 +411,9 @@ impl ApplicationHandler for App {
                 game.config.height = size.height.max(1);
                 game.surface.configure(&game.device, &game.config);
             }
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed && !event.repeat => {
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed && !event.repeat =>
+            {
                 match event.logical_key {
                     Key::Named(NamedKey::Space) => {
                         if let Err(e) = game.start_cutscene() {
@@ -338,7 +421,9 @@ impl ApplicationHandler for App {
                             event_loop.exit();
                         }
                     }
-                    Key::Named(NamedKey::Escape) if game.phase == Phase::Gameplay => event_loop.exit(),
+                    Key::Named(NamedKey::Escape) if game.phase == Phase::Gameplay => {
+                        event_loop.exit()
+                    }
                     Key::Named(NamedKey::Escape) => game.end_cutscene(),
                     _ => {}
                 }
@@ -361,10 +446,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = args.next().ok_or("usage: cutscene FILE [--auto]")?;
     let auto = args.next().as_deref() == Some("--auto");
     let event_loop = EventLoop::new()?;
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
-        event_loop.owned_display_handle(),
-    )));
-    let mut app = App { instance, path, auto, game: None, error: None };
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
+        Box::new(event_loop.owned_display_handle()),
+    ));
+    let mut app = App {
+        instance,
+        path,
+        auto,
+        game: None,
+        error: None,
+    };
     event_loop.run_app(&mut app)?;
     match app.error {
         Some(e) => Err(e.into()),

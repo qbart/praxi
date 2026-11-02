@@ -20,15 +20,21 @@ pub(crate) fn encode_sections(
     huff: &mut Vec<u8>,
 ) {
     let n = (planes.len() - prefix) / block_bytes;
-    let sections = std::iter::once(&planes[..prefix]).chain(planes[prefix..].chunks_exact(n.max(1)).take(block_bytes));
+    let sections = std::iter::once(&planes[..prefix])
+        .chain(planes[prefix..].chunks_exact(n.max(1)).take(block_bytes));
     for section in sections {
         let lz4 = lz4_flex::block::compress(section);
-        let (mut codec, mut data) =
-            if lz4.len() < section.len() { (SECTION_LZ4, &lz4[..]) } else { (SECTION_RAW, section) };
+        let (mut codec, mut data) = if lz4.len() < section.len() {
+            (SECTION_LZ4, &lz4[..])
+        } else {
+            (SECTION_RAW, section)
+        };
         if !section.is_empty() && min_saving < 100.0 {
             huff.clear();
             huffman::encode(section, huff);
-            if huff.len() < data.len() && huff.len() as f64 <= data.len() as f64 * (1.0 - min_saving / 100.0) {
+            if huff.len() < data.len()
+                && huff.len() as f64 <= data.len() as f64 * (1.0 - min_saving / 100.0)
+            {
                 (codec, data) = (SECTION_HUFFMAN, &huff[..]);
             }
         }
@@ -39,7 +45,12 @@ pub(crate) fn encode_sections(
 }
 
 /// Decodes the sections in `stored` into `out` (the prefix followed by the planes).
-pub(crate) fn decode_sections(stored: &[u8], prefix: usize, block_bytes: usize, out: &mut [u8]) -> Result<(), String> {
+pub(crate) fn decode_sections(
+    stored: &[u8],
+    prefix: usize,
+    block_bytes: usize,
+    out: &mut [u8],
+) -> Result<(), String> {
     let n = (out.len() - prefix) / block_bytes;
     let (head, planes) = out.split_at_mut(prefix);
     let sections = std::iter::once(head).chain(planes.chunks_exact_mut(n.max(1)).take(block_bytes));
@@ -54,13 +65,25 @@ pub(crate) fn decode_sections(stored: &[u8], prefix: usize, block_bytes: usize, 
         };
         match rest[0] {
             SECTION_RAW if size == section.len() => section.copy_from_slice(data),
-            SECTION_RAW => return Err(format!("raw section {i} has {size} bytes, expected {}", section.len())),
+            SECTION_RAW => {
+                return Err(format!(
+                    "raw section {i} has {size} bytes, expected {}",
+                    section.len()
+                ));
+            }
             SECTION_LZ4 => match lz4_flex::block::decompress_into(data, section) {
                 Ok(len) if len == section.len() => {}
-                Ok(len) => return Err(format!("section {i} decompressed to {len} bytes, expected {}", section.len())),
+                Ok(len) => {
+                    return Err(format!(
+                        "section {i} decompressed to {len} bytes, expected {}",
+                        section.len()
+                    ));
+                }
                 Err(e) => return Err(format!("section {i}: {e}")),
             },
-            SECTION_HUFFMAN => huffman::decode(data, section).map_err(|e| format!("section {i}: {e}"))?,
+            SECTION_HUFFMAN => {
+                huffman::decode(data, section).map_err(|e| format!("section {i}: {e}"))?
+            }
             codec => return Err(format!("section {i} has unknown codec {codec}")),
         }
         rest = &rest[SECTION_HEADER_SIZE + size..];
@@ -103,7 +126,11 @@ pub fn from_planes(planes: &[u8], block_bytes: usize, out: &mut [u8]) {
 }
 
 /// Transposes whole groups of 8 blocks of `B = 8 * T` bytes; returns the blocks done.
-fn from_planes_swar<const B: usize, const T: usize>(planes: &[u8], n: usize, out: &mut [u8]) -> usize {
+fn from_planes_swar<const B: usize, const T: usize>(
+    planes: &[u8],
+    n: usize,
+    out: &mut [u8],
+) -> usize {
     let groups = n / 8;
     for (g, dst) in out[..groups * 8 * B].chunks_exact_mut(8 * B).enumerate() {
         let at = g * 8;
@@ -182,11 +209,17 @@ mod tests {
                     let codecs = section_codecs(&stored);
                     assert_eq!(codecs.len(), 17);
                     assert_eq!(codecs[1], SECTION_LZ4, "constant plane");
-                    assert_eq!(codecs[2] == SECTION_HUFFMAN, min_saving < 100.0, "skewed plane");
+                    assert_eq!(
+                        codecs[2] == SECTION_HUFFMAN,
+                        min_saving < 100.0,
+                        "skewed plane"
+                    );
                     assert_eq!(codecs[3], SECTION_RAW, "noise plane");
                 }
                 if n > 0 {
-                    assert!(decode_sections(&stored[..stored.len() - 1], prefix, 16, &mut out).is_err());
+                    assert!(
+                        decode_sections(&stored[..stored.len() - 1], prefix, 16, &mut out).is_err()
+                    );
                     let mut extra = stored.clone();
                     extra.push(0);
                     assert!(decode_sections(&extra, prefix, 16, &mut out).is_err());
@@ -203,7 +236,10 @@ mod tests {
                 let mut planes = vec![0; blocks.len()];
                 to_planes(&blocks, block_bytes, &mut planes);
                 if n > 1 {
-                    assert_eq!(planes[1], blocks[block_bytes], "plane 0 holds byte 0 of each block");
+                    assert_eq!(
+                        planes[1], blocks[block_bytes],
+                        "plane 0 holds byte 0 of each block"
+                    );
                 }
                 let mut back = vec![0; blocks.len()];
                 from_planes(&planes, block_bytes, &mut back);

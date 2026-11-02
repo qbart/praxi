@@ -5,6 +5,7 @@ mod cue;
 #[cfg(feature = "cue-sheet")]
 pub mod cue_sheet;
 mod huffman;
+pub mod motion;
 mod planes;
 mod reader;
 mod remux;
@@ -21,7 +22,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 7;
+pub const VERSION_MINOR: u16 = 8;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;
@@ -40,7 +41,10 @@ pub const COLOR_FLAG_ALPHA: u16 = 2;
 pub enum Error {
     Io(std::io::Error),
     BadMagic,
-    UnsupportedVersion { major: u16, minor: u16 },
+    UnsupportedVersion {
+        major: u16,
+        minor: u16,
+    },
     Corrupt(String),
     /// The writer was used against the spec (bad stream table, out-of-order chunks...).
     Invalid(String),
@@ -51,7 +55,9 @@ impl fmt::Display for Error {
         match self {
             Error::Io(e) => write!(f, "i/o error: {e}"),
             Error::BadMagic => write!(f, "not a praxi file"),
-            Error::UnsupportedVersion { major, minor } => write!(f, "unsupported format version {major}.{minor}"),
+            Error::UnsupportedVersion { major, minor } => {
+                write!(f, "unsupported format version {major}.{minor}")
+            }
             Error::Corrupt(msg) => write!(f, "corrupt praxi file: {msg}"),
             Error::Invalid(msg) => write!(f, "invalid praxi output: {msg}"),
         }
@@ -79,7 +85,8 @@ pub(crate) fn corrupt<T>(msg: impl Into<String>) -> Result<T> {
     Err(Error::Corrupt(msg.into()))
 }
 
-/// GPU texture formats a video stream can be stored in.
+/// Formats a video stream can be stored in: GPU texture formats, and the motion codec
+/// (`docs/features/motion-codec.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextureFormat {
     Bc1,
@@ -91,9 +98,12 @@ pub enum TextureFormat {
     Astc5x5,
     Astc6x6,
     Astc8x8,
+    /// The motion codec: not a GPU texture format; decoded into RGBA on the GPU.
+    Motion,
 }
 
 impl TextureFormat {
+    /// The GPU texture formats (every format but `Motion`).
     pub const ALL: [TextureFormat; 9] = [
         TextureFormat::Bc1,
         TextureFormat::Bc3,
@@ -117,26 +127,33 @@ impl TextureFormat {
             TextureFormat::Astc5x5 => 0x0102,
             TextureFormat::Astc6x6 => 0x0103,
             TextureFormat::Astc8x8 => 0x0104,
+            TextureFormat::Motion => 0x0201,
         }
     }
 
     pub fn from_id(id: u16) -> Option<TextureFormat> {
-        Self::ALL.into_iter().find(|f| f.id() == id)
+        Self::ALL
+            .into_iter()
+            .chain([TextureFormat::Motion])
+            .find(|f| f.id() == id)
     }
 
-    /// Block width and height in pixels.
+    /// Block width and height in pixels; the macroblock for `Motion`.
     pub fn block_size(self) -> (u32, u32) {
         match self {
             TextureFormat::Astc5x5 => (5, 5),
             TextureFormat::Astc6x6 => (6, 6),
             TextureFormat::Astc8x8 => (8, 8),
+            TextureFormat::Motion => (16, 16),
             _ => (4, 4),
         }
     }
 
+    /// Bytes per block; `0` for `Motion`, whose frames are not made of fixed-size blocks.
     pub fn block_bytes(self) -> u32 {
         match self {
             TextureFormat::Bc1 | TextureFormat::Bc4 => 8,
+            TextureFormat::Motion => 0,
             _ => 16,
         }
     }
@@ -152,6 +169,7 @@ impl TextureFormat {
             TextureFormat::Astc5x5 => "ASTC 5x5",
             TextureFormat::Astc6x6 => "ASTC 6x6",
             TextureFormat::Astc8x8 => "ASTC 8x8",
+            TextureFormat::Motion => "motion",
         }
     }
 }
@@ -162,6 +180,27 @@ impl fmt::Display for TextureFormat {
     }
 }
 
+/// Chroma resolution of a motion stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Chroma {
+    /// Half width and height.
+    #[default]
+    C420,
+    /// Full resolution.
+    C444,
+}
+
+/// Parameters of a motion stream (`docs/spec/PRAXI.md#motion-parameters`); all zero for
+/// other formats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MotionParams {
+    pub chroma: Chroma,
+    /// Added to a frame's `qp` for the chroma planes.
+    pub chroma_qp_offset: i8,
+    /// Added to a frame's `qp` for the alpha plane.
+    pub alpha_qp_offset: i8,
+}
+
 /// Parameters of a video stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VideoParams {
@@ -169,9 +208,20 @@ pub struct VideoParams {
     pub height: u32,
     pub format: TextureFormat,
     pub color_flags: u16,
+    pub motion: MotionParams,
 }
 
 impl VideoParams {
+    pub fn new(width: u32, height: u32, format: TextureFormat, color_flags: u16) -> VideoParams {
+        VideoParams {
+            width,
+            height,
+            format,
+            color_flags,
+            motion: MotionParams::default(),
+        }
+    }
+
     pub fn blocks_x(&self) -> u32 {
         self.width.div_ceil(self.format.block_size().0)
     }
@@ -292,19 +342,41 @@ impl AudioParams {
             return adpcm::frames(payload, channels);
         };
         let frame_bytes = channels * sample_bytes;
-        (!payload.is_empty() && payload.len().is_multiple_of(frame_bytes)).then(|| (payload.len() / frame_bytes) as u64)
+        (!payload.is_empty() && payload.len().is_multiple_of(frame_bytes))
+            .then(|| (payload.len() / frame_bytes) as u64)
     }
 
     /// Decodes a decompressed chunk payload into `out`: interleaved samples in `[-1, 1]`
     /// (nominally, for `f32`).
-    pub fn decode_payload(&self, payload: &[u8], out: &mut Vec<f32>) -> std::result::Result<(), String> {
+    pub fn decode_payload(
+        &self,
+        payload: &[u8],
+        out: &mut Vec<f32>,
+    ) -> std::result::Result<(), String> {
         if self.payload_frames(payload).is_none() {
-            return Err(format!("{} bytes is not a valid {} payload of {} channels", payload.len(), self.format, self.channels));
+            return Err(format!(
+                "{} bytes is not a valid {} payload of {} channels",
+                payload.len(),
+                self.format,
+                self.channels
+            ));
         }
         out.clear();
         match self.format {
-            SampleFormat::S16 => out.extend(payload.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b) as f32 / 32768.0)),
-            SampleFormat::F32 => out.extend(payload.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b))),
+            SampleFormat::S16 => out.extend(
+                payload
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|b| i16::from_le_bytes(*b) as f32 / 32768.0),
+            ),
+            SampleFormat::F32 => out.extend(
+                payload
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|b| f32::from_le_bytes(*b)),
+            ),
             SampleFormat::Adpcm => adpcm::decode(payload, self.channels as usize, out)?,
         }
         Ok(())
@@ -341,7 +413,10 @@ pub struct TimeBase {
 }
 
 impl TimeBase {
-    pub const MICROS: TimeBase = TimeBase { num: 1, den: 1_000_000 };
+    pub const MICROS: TimeBase = TimeBase {
+        num: 1,
+        den: 1_000_000,
+    };
 
     pub fn new(num: u32, den: u32) -> TimeBase {
         TimeBase { num, den }
@@ -364,7 +439,12 @@ pub struct StreamInfo {
 
 impl StreamInfo {
     pub fn video(group: u16, time_base: TimeBase, params: VideoParams) -> StreamInfo {
-        StreamInfo { group, time_base, chunk_count: 0, params: StreamParams::Video(params) }
+        StreamInfo {
+            group,
+            time_base,
+            chunk_count: 0,
+            params: StreamParams::Video(params),
+        }
     }
 
     /// An audio stream with a time base of `1 / sample_rate`.
@@ -383,7 +463,10 @@ impl StreamInfo {
             group: 0,
             time_base: TimeBase::MICROS,
             chunk_count: 0,
-            params: StreamParams::Cues(CueParams { max_duration: 0, name: name.into() }),
+            params: StreamParams::Cues(CueParams {
+                max_duration: 0,
+                name: name.into(),
+            }),
         }
     }
 

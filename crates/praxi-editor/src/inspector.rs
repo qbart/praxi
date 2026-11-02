@@ -18,7 +18,13 @@ pub enum ValueType {
 }
 
 impl ValueType {
-    const ALL: [ValueType; 5] = [ValueType::String, ValueType::Int, ValueType::Float, ValueType::Bool, ValueType::Bytes];
+    const ALL: [ValueType; 5] = [
+        ValueType::String,
+        ValueType::Int,
+        ValueType::Float,
+        ValueType::Bool,
+        ValueType::Bytes,
+    ];
 
     fn name(self) -> &'static str {
         match self {
@@ -69,7 +75,10 @@ fn value_text(v: &Value) -> (ValueType, String) {
         Value::Int(i) => (ValueType::Int, i.to_string()),
         Value::Float(f) => (ValueType::Float, format!("{f:?}")),
         Value::Bool(b) => (ValueType::Bool, b.to_string()),
-        Value::Bytes(b) => (ValueType::Bytes, b.iter().map(|b| format!("{b:02x}")).collect()),
+        Value::Bytes(b) => (
+            ValueType::Bytes,
+            b.iter().map(|b| format!("{b:02x}")).collect(),
+        ),
     }
 }
 
@@ -84,7 +93,12 @@ fn parse_value(ty: ValueType, s: &str) -> Option<Value> {
             if !s.len().is_multiple_of(2) || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return None;
             }
-            Value::Bytes((0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex")).collect())
+            Value::Bytes(
+                (0..s.len())
+                    .step_by(2)
+                    .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
+                    .collect(),
+            )
         }
     })
 }
@@ -113,7 +127,11 @@ impl CueDraft {
                 .iter()
                 .map(|(k, v)| {
                     let (ty, value) = value_text(v);
-                    FieldDraft { key: k.clone(), ty, value }
+                    FieldDraft {
+                        key: k.clone(),
+                        ty,
+                        value,
+                    }
                 })
                 .collect(),
         }
@@ -138,45 +156,64 @@ impl CueDraft {
             }
             fields.push((f.key.clone(), parse_value(f.ty, &f.value)?));
         }
-        Some((self.stream, EditCue { uid: self.uid, time_us, cue: Cue { duration, kind: self.kind.clone(), fields } }))
+        Some((
+            self.stream,
+            EditCue {
+                uid: self.uid,
+                time_us,
+                cue: Cue {
+                    duration,
+                    kind: self.kind.clone(),
+                    fields,
+                },
+            },
+        ))
     }
 
     /// Shows the draft; returns true when an edit finished (a field left, a choice made).
     pub fn ui(&mut self, ui: &mut egui::Ui, streams: &[String]) -> bool {
         let mut done = false;
         let red = ui.visuals().error_fg_color;
-        egui::Grid::new("cue").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            ui.label("Stream");
-            egui::ComboBox::from_id_salt("stream").selected_text(streams.get(self.stream).map_or("", |s| s.as_str())).show_ui(
-                ui,
-                |ui| {
-                    for (i, name) in streams.iter().enumerate() {
-                        done |= ui.selectable_value(&mut self.stream, i, if name.is_empty() { "(unnamed)" } else { name }).changed();
-                    }
-                },
-            );
-            ui.end_row();
-
-            let mut text = |ui: &mut egui::Ui, label: &str, value: &mut String, ok: bool| {
-                ui.label(label);
-                let edit = egui::TextEdit::singleline(value).desired_width(f32::INFINITY);
-                let edit = if ok { edit } else { edit.text_color(red) };
-                done |= ui.add(edit).lost_focus();
+        egui::Grid::new("cue")
+            .num_columns(2)
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                ui.label("Stream");
+                egui::ComboBox::from_id_salt("stream")
+                    .selected_text(streams.get(self.stream).map_or("", |s| s.as_str()))
+                    .show_ui(ui, |ui| {
+                        for (i, name) in streams.iter().enumerate() {
+                            done |= ui
+                                .selectable_value(
+                                    &mut self.stream,
+                                    i,
+                                    if name.is_empty() { "(unnamed)" } else { name },
+                                )
+                                .changed();
+                        }
+                    });
                 ui.end_row();
-            };
-            let time_ok = parse_seconds(&self.time).is_some();
-            text(ui, "Start (s)", &mut self.time, time_ok);
-            let duration_ok = parse_seconds(&self.duration).is_some();
-            text(ui, "Duration (s)", &mut self.duration, duration_ok);
-            ui.label("End (s)");
-            match (parse_seconds(&self.time), parse_seconds(&self.duration)) {
-                (Some(t), Some(d)) => ui.label(seconds(t.saturating_add(d))),
-                _ => ui.label("-"),
-            };
-            ui.end_row();
-            let kind_ok = valid_text16(&self.kind);
-            text(ui, "Type", &mut self.kind, kind_ok);
-        });
+
+                let mut text = |ui: &mut egui::Ui, label: &str, value: &mut String, ok: bool| {
+                    ui.label(label);
+                    let edit = egui::TextEdit::singleline(value).desired_width(f32::INFINITY);
+                    let edit = if ok { edit } else { edit.text_color(red) };
+                    done |= ui.add(edit).lost_focus();
+                    ui.end_row();
+                };
+                let time_ok = parse_seconds(&self.time).is_some();
+                text(ui, "Start (s)", &mut self.time, time_ok);
+                let duration_ok = parse_seconds(&self.duration).is_some();
+                text(ui, "Duration (s)", &mut self.duration, duration_ok);
+                ui.label("End (s)");
+                match (parse_seconds(&self.time), parse_seconds(&self.duration)) {
+                    (Some(t), Some(d)) => ui.label(seconds(t.saturating_add(d))),
+                    _ => ui.label("-"),
+                };
+                ui.end_row();
+                let kind_ok = valid_text16(&self.kind);
+                text(ui, "Type", &mut self.kind, kind_ok);
+            });
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -186,7 +223,11 @@ impl CueDraft {
                 while self.fields.iter().any(|f| f.key == format!("key{n}")) {
                     n += 1;
                 }
-                self.fields.push(FieldDraft { key: format!("key{n}"), ty: ValueType::String, value: String::new() });
+                self.fields.push(FieldDraft {
+                    key: format!("key{n}"),
+                    ty: ValueType::String,
+                    value: String::new(),
+                });
                 done = true;
             }
         });
@@ -199,13 +240,20 @@ impl CueDraft {
             let value_ok = parse_value(f.ty, &f.value).is_some();
             ui.push_id(i, |ui| {
                 ui.horizontal(|ui| {
-                    let key = egui::TextEdit::singleline(&mut f.key).desired_width(90.0).hint_text("key");
-                    done |= ui.add(if key_ok { key } else { key.text_color(red) }).lost_focus();
-                    egui::ComboBox::from_id_salt("type").width(64.0).selected_text(f.ty.name()).show_ui(ui, |ui| {
-                        for ty in ValueType::ALL {
-                            done |= ui.selectable_value(&mut f.ty, ty, ty.name()).changed();
-                        }
-                    });
+                    let key = egui::TextEdit::singleline(&mut f.key)
+                        .desired_width(90.0)
+                        .hint_text("key");
+                    done |= ui
+                        .add(if key_ok { key } else { key.text_color(red) })
+                        .lost_focus();
+                    egui::ComboBox::from_id_salt("type")
+                        .width(64.0)
+                        .selected_text(f.ty.name())
+                        .show_ui(ui, |ui| {
+                            for ty in ValueType::ALL {
+                                done |= ui.selectable_value(&mut f.ty, ty, ty.name()).changed();
+                            }
+                        });
                     if f.ty == ValueType::Bool {
                         let mut b = f.value == "true";
                         if ui.checkbox(&mut b, "").changed() {
@@ -213,16 +261,29 @@ impl CueDraft {
                         }
                         f.value = b.to_string();
                     } else {
-                        let value = egui::TextEdit::singleline(&mut f.value).desired_width(f32::INFINITY);
-                        done |= ui.add(if value_ok { value } else { value.text_color(red) }).lost_focus();
+                        let value =
+                            egui::TextEdit::singleline(&mut f.value).desired_width(f32::INFINITY);
+                        done |= ui
+                            .add(if value_ok {
+                                value
+                            } else {
+                                value.text_color(red)
+                            })
+                            .lost_focus();
                     }
                 });
                 ui.horizontal(|ui| {
                     ui.add_space(4.0);
-                    if ui.add_enabled(i > 0, egui::Button::new("Up").small()).clicked() {
+                    if ui
+                        .add_enabled(i > 0, egui::Button::new("Up").small())
+                        .clicked()
+                    {
                         swap = Some(i - 1);
                     }
-                    if ui.add_enabled(i + 1 < count, egui::Button::new("Down").small()).clicked() {
+                    if ui
+                        .add_enabled(i + 1 < count, egui::Button::new("Down").small())
+                        .clicked()
+                    {
                         swap = Some(i);
                     }
                     if ui.small_button("Remove").clicked() {
@@ -297,7 +358,15 @@ mod tests {
         }
         let mut d = CueDraft::new(0, &cue());
         d.fields[1].ty = ValueType::Float;
-        assert_eq!(d.parse().unwrap().1.cue.fields[1].1, Value::Float(-2.0), "ints read as floats");
-        assert!(valid_stream_name(&"n".repeat(32)) && !valid_stream_name(&"n".repeat(33)) && !valid_stream_name("a\0"));
+        assert_eq!(
+            d.parse().unwrap().1.cue.fields[1].1,
+            Value::Float(-2.0),
+            "ints read as floats"
+        );
+        assert!(
+            valid_stream_name(&"n".repeat(32))
+                && !valid_stream_name(&"n".repeat(33))
+                && !valid_stream_name("a\0")
+        );
     }
 }

@@ -1,6 +1,7 @@
 use praxi_format::{
-    AudioParams, COLOR_FLAG_SRGB, ChunkHeader, Compression, CueTrack, TimedCue, adpcm, read_cues, replace_cues, Cue, CueParams, Error, Reader, SampleFormat,
-    StreamInfo, StreamParams, TextureFormat, TimeBase, Value, VideoParams, Writer,
+    AudioParams, COLOR_FLAG_SRGB, ChunkHeader, Compression, Cue, CueParams, CueTrack, Error,
+    Reader, SampleFormat, StreamInfo, StreamParams, TextureFormat, TimeBase, TimedCue, Value,
+    VideoParams, Writer, adpcm, read_cues, replace_cues,
 };
 use std::io::Cursor;
 
@@ -8,20 +9,28 @@ fn video(format: TextureFormat) -> StreamInfo {
     StreamInfo::video(
         0,
         TimeBase::new(1, 30),
-        VideoParams { width: 10, height: 6, format, color_flags: COLOR_FLAG_SRGB },
+        VideoParams::new(10, 6, format, COLOR_FLAG_SRGB),
     )
 }
 
 fn sample_file() -> Vec<u8> {
-    let streams = vec![video(TextureFormat::Bc7), video(TextureFormat::Astc6x6), StreamInfo::cues("gameplay")];
+    let streams = vec![
+        video(TextureFormat::Bc7),
+        video(TextureFormat::Astc6x6),
+        StreamInfo::cues("gameplay"),
+    ];
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     let compressible = vec![7u8; 96];
-    let noise: Vec<u8> = (0..32u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8).collect();
+    let noise: Vec<u8> = (0..32u32)
+        .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+        .collect();
     w.write_cue(2, 0, &Cue::new("start")).unwrap();
     w.write_chunk(0, 0, true, &compressible, None).unwrap();
     w.write_chunk(1, 0, true, &noise, None).unwrap();
-    w.write_chunk(0, 1, false, &noise, Some(Compression::Lz4)).unwrap();
-    w.write_chunk(1, 1, false, &compressible, Some(Compression::None)).unwrap();
+    w.write_chunk(0, 1, false, &noise, Some(Compression::Lz4))
+        .unwrap();
+    w.write_chunk(1, 1, false, &compressible, Some(Compression::None))
+        .unwrap();
     w.write_cue(2, 50_000, &sample_cue()).unwrap();
     w.write_chunk(0, 2, true, &compressible, None).unwrap();
     w.finish(100_000).unwrap().into_inner()
@@ -51,10 +60,16 @@ fn roundtrip() {
     assert_eq!(r.streams()[2].chunk_count, 2);
     assert_eq!(
         r.streams()[2].params,
-        StreamParams::Cues(CueParams { max_duration: 40_000, name: "gameplay".into() })
+        StreamParams::Cues(CueParams {
+            max_duration: 40_000,
+            name: "gameplay".into()
+        })
     );
     let v = r.streams()[1].video_params().unwrap();
-    assert_eq!((v.width, v.height, v.format, v.srgb(), v.alpha()), (10, 6, TextureFormat::Astc6x6, true, false));
+    assert_eq!(
+        (v.width, v.height, v.format, v.srgb(), v.alpha()),
+        (10, 6, TextureFormat::Astc6x6, true, false)
+    );
     assert_eq!((v.blocks_x(), v.blocks_y(), v.frame_size()), (2, 1, 32));
 
     let mut chunks = Vec::new();
@@ -64,15 +79,26 @@ fn roundtrip() {
         chunks.push((c, payload.clone()));
     }
     let order: Vec<(u16, u64)> = chunks.iter().map(|(c, _)| (c.stream, c.pts)).collect();
-    assert_eq!(order, [(2, 0), (0, 0), (1, 0), (0, 1), (1, 1), (2, 50_000), (0, 2)]);
+    assert_eq!(
+        order,
+        [(2, 0), (0, 0), (1, 0), (0, 1), (1, 1), (2, 50_000), (0, 2)]
+    );
     assert_eq!(Cue::decode(&chunks[0].1).unwrap(), Cue::new("start"));
     let sub = Cue::decode(&chunks[5].1).unwrap();
     assert_eq!(sub, sample_cue());
     assert_eq!(sub.get_str("label"), Some("Olá\nmundo"));
     assert_eq!(sub.get("offset"), Some(&Value::Int(-3)));
     assert_eq!(chunks[1].1, vec![7u8; 96]);
-    assert_eq!(chunks[1].0.compression, Compression::Lz4, "auto picks LZ4 when smaller");
-    assert_eq!(chunks[2].0.compression, Compression::None, "auto stores incompressible data");
+    assert_eq!(
+        chunks[1].0.compression,
+        Compression::Lz4,
+        "auto picks LZ4 when smaller"
+    );
+    assert_eq!(
+        chunks[2].0.compression,
+        Compression::None,
+        "auto stores incompressible data"
+    );
     assert_eq!(chunks[3].0.compression, Compression::Lz4, "forced LZ4");
     assert_eq!(chunks[4].0.compression, Compression::None, "forced none");
     assert_eq!(chunks[4].1, vec![7u8; 96]);
@@ -80,7 +106,11 @@ fn roundtrip() {
 
     let index = r.read_index().unwrap();
     let keyframes: Vec<(u16, u64)> = index.iter().map(|e| (e.stream, e.pts)).collect();
-    assert_eq!(keyframes, [(2, 0), (0, 0), (1, 0), (2, 50_000), (0, 2)], "video keyframes and cues");
+    assert_eq!(
+        keyframes,
+        [(2, 0), (0, 0), (1, 0), (2, 50_000), (0, 2)],
+        "video keyframes and cues"
+    );
     r.seek_to(index[4].offset).unwrap();
     let c = r.next_chunk().unwrap().unwrap();
     assert_eq!((c.stream, c.pts), (0, 2));
@@ -91,15 +121,24 @@ fn roundtrip() {
 fn rejects_bad_magic_and_version() {
     let mut file = sample_file();
     file[0] = 0;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::BadMagic)));
+    assert!(matches!(
+        Reader::new(Cursor::new(file)),
+        Err(Error::BadMagic)
+    ));
 
     let mut file = sample_file();
     file[8] = 1;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 7 })));
+    assert!(matches!(
+        Reader::new(Cursor::new(file)),
+        Err(Error::UnsupportedVersion { major: 1, minor: 7 })
+    ));
 
     let mut file = sample_file();
     file[10] = 1;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 0, minor: 1 })));
+    assert!(matches!(
+        Reader::new(Cursor::new(file)),
+        Err(Error::UnsupportedVersion { major: 0, minor: 1 })
+    ));
 }
 
 #[test]
@@ -119,7 +158,10 @@ fn rejects_corrupt_lz4() {
     let mut r = Reader::new(Cursor::new(file)).unwrap();
     r.seek_to(c.offset).unwrap();
     let c = r.next_chunk().unwrap().unwrap();
-    assert!(matches!(r.read_payload(&c, &mut Vec::new()), Err(Error::Corrupt(_))));
+    assert!(matches!(
+        r.read_payload(&c, &mut Vec::new()),
+        Err(Error::Corrupt(_))
+    ));
 }
 
 #[test]
@@ -127,19 +169,49 @@ fn writer_enforces_order() {
     let streams = vec![video(TextureFormat::Bc7), StreamInfo::cues("cues")];
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     w.write_chunk(0, 3, true, &[0; 16], None).unwrap();
-    assert!(matches!(w.write_chunk(0, 3, false, &[0; 16], None), Err(Error::Invalid(_))));
-    assert!(matches!(w.write_cue(1, 10, &Cue::new("early")), Err(Error::Invalid(_))));
-    assert!(matches!(w.write_chunk(5, 10, true, b"x", None), Err(Error::Invalid(_))));
-    assert!(matches!(w.write_chunk(1, 200_000, true, b"x", None), Err(Error::Invalid(_))), "cue streams take write_cue");
-    assert!(matches!(w.write_cue(0, 9, &Cue::new("x")), Err(Error::Invalid(_))), "video streams take write_chunk");
+    assert!(matches!(
+        w.write_chunk(0, 3, false, &[0; 16], None),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        w.write_cue(1, 10, &Cue::new("early")),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        w.write_chunk(5, 10, true, b"x", None),
+        Err(Error::Invalid(_))
+    ));
+    assert!(
+        matches!(
+            w.write_chunk(1, 200_000, true, b"x", None),
+            Err(Error::Invalid(_))
+        ),
+        "cue streams take write_cue"
+    );
+    assert!(
+        matches!(w.write_cue(0, 9, &Cue::new("x")), Err(Error::Invalid(_))),
+        "video streams take write_chunk"
+    );
     w.write_cue(1, 200_000, &Cue::new("a")).unwrap();
     w.write_cue(1, 200_000, &Cue::new("b")).unwrap();
-    let dup = Cue { fields: vec![("k".into(), Value::Int(1)), ("k".into(), Value::Int(2))], ..Cue::new("c") };
-    assert!(matches!(w.write_cue(1, 300_000, &dup), Err(Error::Invalid(_))));
-    assert!(matches!(w.write_cue(1, 300_000, &Cue::new("")), Err(Error::Invalid(_))));
+    let dup = Cue {
+        fields: vec![("k".into(), Value::Int(1)), ("k".into(), Value::Int(2))],
+        ..Cue::new("c")
+    };
+    assert!(matches!(
+        w.write_cue(1, 300_000, &dup),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        w.write_cue(1, 300_000, &Cue::new("")),
+        Err(Error::Invalid(_))
+    ));
 
     let long_name = StreamInfo::cues("x".repeat(33));
-    assert!(matches!(Writer::new(Cursor::new(Vec::new()), vec![long_name]), Err(Error::Invalid(_))));
+    assert!(matches!(
+        Writer::new(Cursor::new(Vec::new()), vec![long_name]),
+        Err(Error::Invalid(_))
+    ));
 }
 
 #[test]
@@ -153,7 +225,12 @@ fn rejects_bad_cue_payloads() {
     trailing.push(0);
     assert!(Cue::decode(&trailing).is_err());
     let mut bad_type = Vec::new();
-    Cue { fields: vec![("k".into(), Value::Bool(true))], ..Cue::new("t") }.encode(&mut bad_type).unwrap();
+    Cue {
+        fields: vec![("k".into(), Value::Bool(true))],
+        ..Cue::new("t")
+    }
+    .encode(&mut bad_type)
+    .unwrap();
     let ty_at = bad_type.len() - 2;
     bad_type[ty_at] = 9;
     assert!(Cue::decode(&bad_type).is_err());
@@ -185,14 +262,38 @@ fn audio_roundtrip_and_decode_time_order() {
     // Due at 300 - 200 = 100 ms, before the video frame at 133 ms.
     w.write_audio(1, 300, &samples(100)).unwrap();
     w.write_chunk(0, 4, true, &[0; 32], None).unwrap();
-    assert!(matches!(w.write_audio(1, 350, &samples(10)), Err(Error::Invalid(_))), "overlap");
-    assert!(matches!(w.write_audio(1, 400, &samples(10)[..6]), Err(Error::Invalid(_))), "partial frame");
-    assert!(matches!(w.write_audio(1, 400, &[]), Err(Error::Invalid(_))), "empty");
-    assert!(matches!(w.write_chunk(1, 400, true, &samples(10), None), Err(Error::Invalid(_))));
-    assert!(matches!(w.write_audio(0, 400, &samples(10)), Err(Error::Invalid(_))));
+    assert!(
+        matches!(w.write_audio(1, 350, &samples(10)), Err(Error::Invalid(_))),
+        "overlap"
+    );
+    assert!(
+        matches!(
+            w.write_audio(1, 400, &samples(10)[..6]),
+            Err(Error::Invalid(_))
+        ),
+        "partial frame"
+    );
+    assert!(
+        matches!(w.write_audio(1, 400, &[]), Err(Error::Invalid(_))),
+        "empty"
+    );
+    assert!(matches!(
+        w.write_chunk(1, 400, true, &samples(10), None),
+        Err(Error::Invalid(_))
+    ));
+    assert!(matches!(
+        w.write_audio(0, 400, &samples(10)),
+        Err(Error::Invalid(_))
+    ));
     // A gap is allowed; due at 600 - 200 = 400 ms.
     w.write_audio(1, 600, &samples(50)).unwrap();
-    assert!(matches!(w.write_chunk(0, 10, true, &[0; 32], None), Err(Error::Invalid(_))), "frame at 333 ms after 400 ms");
+    assert!(
+        matches!(
+            w.write_chunk(0, 10, true, &[0; 32], None),
+            Err(Error::Invalid(_))
+        ),
+        "frame at 333 ms after 400 ms"
+    );
     let file = w.finish(650_000).unwrap().into_inner();
 
     let mut r = Reader::new(Cursor::new(file)).unwrap();
@@ -206,7 +307,14 @@ fn audio_roundtrip_and_decode_time_order() {
     assert_eq!(r.streams()[1].decode_time_us(100), 0);
     assert_eq!(r.streams()[0].decode_time_us(4), 133_333);
     let index = r.read_index().unwrap();
-    assert_eq!(index.iter().filter(|e| e.stream == 1).map(|e| e.pts).collect::<Vec<_>>(), [0, 100, 200, 300, 600]);
+    assert_eq!(
+        index
+            .iter()
+            .filter(|e| e.stream == 1)
+            .map(|e| e.pts)
+            .collect::<Vec<_>>(),
+        [0, 100, 200, 300, 600]
+    );
     let mut payload = Vec::new();
     let mut order = Vec::new();
     while let Some(c) = r.next_chunk().unwrap() {
@@ -217,7 +325,18 @@ fn audio_roundtrip_and_decode_time_order() {
         }
         order.push((c.stream, c.pts));
     }
-    assert_eq!(order, [(1, 0), (1, 100), (1, 200), (0, 0), (1, 300), (0, 4), (1, 600)]);
+    assert_eq!(
+        order,
+        [
+            (1, 0),
+            (1, 100),
+            (1, 200),
+            (0, 0),
+            (1, 300),
+            (0, 4),
+            (1, 600)
+        ]
+    );
 }
 
 #[test]
@@ -233,9 +352,18 @@ fn adpcm_audio_chunks() {
     let mut payload = Vec::new();
     encoder.encode(&samples, &mut payload);
     assert_eq!(params.payload_frames(&payload), Some(37));
-    assert!(matches!(w.write_audio(0, 0, &payload[..payload.len() - 1]), Err(Error::Invalid(_))), "size");
+    assert!(
+        matches!(
+            w.write_audio(0, 0, &payload[..payload.len() - 1]),
+            Err(Error::Invalid(_))
+        ),
+        "size"
+    );
     w.write_audio(0, 0, &payload).unwrap();
-    assert!(matches!(w.write_audio(0, 36, &payload), Err(Error::Invalid(_))), "overlap: 37 frames");
+    assert!(
+        matches!(w.write_audio(0, 36, &payload), Err(Error::Invalid(_))),
+        "overlap: 37 frames"
+    );
     w.write_audio(0, 37, &payload).unwrap();
     let file = w.finish(74_000).unwrap().into_inner();
 
@@ -258,19 +386,31 @@ fn rejects_bad_audio_streams() {
     let bad = |f: fn(&mut StreamInfo)| {
         let mut s = audio("music");
         f(&mut s);
-        matches!(Writer::new(Cursor::new(Vec::new()), vec![s]), Err(Error::Invalid(_)))
+        matches!(
+            Writer::new(Cursor::new(Vec::new()), vec![s]),
+            Err(Error::Invalid(_))
+        )
     };
     assert!(bad(|s| s.time_base = TimeBase::new(1, 48_000)));
-    assert!(bad(|s| if let StreamParams::Audio(a) = &mut s.params { a.channel_mask = 0x7 }));
-    assert!(bad(|s| if let StreamParams::Audio(a) = &mut s.params { a.name = "x".repeat(33) }));
-    assert!(bad(|s| if let StreamParams::Audio(a) = &mut s.params { a.channels = 0 }));
+    assert!(bad(|s| if let StreamParams::Audio(a) = &mut s.params {
+        a.channel_mask = 0x7
+    }));
+    assert!(bad(|s| if let StreamParams::Audio(a) = &mut s.params {
+        a.name = "x".repeat(33)
+    }));
+    assert!(bad(|s| if let StreamParams::Audio(a) = &mut s.params {
+        a.channels = 0
+    }));
 
     // Unknown sample format in the file.
     let mut w = Writer::new(Cursor::new(Vec::new()), vec![audio("music")]).unwrap();
     w.write_audio(0, 0, &[0; 8]).unwrap();
     let mut file = w.finish(2_000).unwrap().into_inner();
     file[48 + 22] = 9;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::Corrupt(_))));
+    assert!(matches!(
+        Reader::new(Cursor::new(file)),
+        Err(Error::Corrupt(_))
+    ));
 }
 
 /// BC7 blocks whose bytes 0, 6 and 7 are the same everywhere and whose other bytes are
@@ -305,8 +445,11 @@ fn chunk_offsets(file: &[u8]) -> Vec<praxi_format::ChunkHeader> {
 #[test]
 fn byte_planes() {
     // 64x32 BC7: 16x8 = 128 blocks, mask of 16 bytes.
-    let params = VideoParams { width: 64, height: 32, format: TextureFormat::Bc7, color_flags: COLOR_FLAG_SRGB };
-    let streams = vec![StreamInfo::video(0, TimeBase::new(1, 30), params), StreamInfo::cues("c")];
+    let params = VideoParams::new(64, 32, TextureFormat::Bc7, COLOR_FLAG_SRGB);
+    let streams = vec![
+        StreamInfo::video(0, TimeBase::new(1, 30), params),
+        StreamInfo::cues("c"),
+    ];
     let key = structured_blocks(128, 1);
     let mut delta = vec![0u8; 16];
     delta[0] = 0b1000_0101;
@@ -315,9 +458,13 @@ fn byte_planes() {
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     w.write_cue(1, 0, &Cue::new("start")).unwrap();
     w.write_chunk(0, 0, true, &key, None).unwrap();
-    w.write_chunk(0, 1, false, &delta, Some(Compression::Planes)).unwrap();
+    w.write_chunk(0, 1, false, &delta, Some(Compression::Planes))
+        .unwrap();
     let err = w.write_chunk(0, 2, false, &delta[..30], Some(Compression::Planes));
-    assert!(matches!(err, Err(Error::Invalid(_))), "not whole blocks after the mask: {err:?}");
+    assert!(
+        matches!(err, Err(Error::Invalid(_))),
+        "not whole blocks after the mask: {err:?}"
+    );
     let file = w.finish(100_000).unwrap().into_inner();
 
     // The saving threshold: planes save about 13% here (three constant planes as LZ4, minus
@@ -333,14 +480,26 @@ fn byte_planes() {
     };
     assert_eq!(auto_compression(0.0), Compression::Planes);
     assert_eq!(auto_compression(10.0), Compression::Planes);
-    assert_eq!(auto_compression(15.0), Compression::None, "saving below the threshold");
-    assert_eq!(auto_compression(100.0), Compression::None, "never byte planes");
+    assert_eq!(
+        auto_compression(15.0),
+        Compression::None,
+        "saving below the threshold"
+    );
+    assert_eq!(
+        auto_compression(100.0),
+        Compression::None,
+        "never byte planes"
+    );
 
     let mut r = Reader::new(Cursor::new(file.clone())).unwrap();
     let mut payload = Vec::new();
     r.next_chunk().unwrap().unwrap();
     let c = r.next_chunk().unwrap().unwrap();
-    assert_eq!(c.compression, Compression::Planes, "auto picks byte planes for structured blocks");
+    assert_eq!(
+        c.compression,
+        Compression::Planes,
+        "auto picks byte planes for structured blocks"
+    );
     assert!(c.stored_size < c.raw_size);
     r.read_payload(&c, &mut payload).unwrap();
     assert_eq!(payload, key);
@@ -384,31 +543,91 @@ fn stored_chunks(file: &[u8]) -> Vec<(u16, u64, u8, Compression, u32, Vec<u8>)> 
 #[test]
 fn replaces_cue_streams() {
     // A cue stream between video and audio, so the audio stream moves from 2 to 1.
-    let streams = vec![video(TextureFormat::Bc7), StreamInfo::cues("old"), audio("music")];
+    let streams = vec![
+        video(TextureFormat::Bc7),
+        StreamInfo::cues("old"),
+        audio("music"),
+    ];
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
     w.write_audio(2, 0, &[1; 400]).unwrap();
     w.write_audio(2, 100, &[2; 400]).unwrap(); // due at 100 - 200 ms preload
     w.write_chunk(0, 0, true, &[7; 64], None).unwrap();
-    w.write_cue(1, 10_000, &Cue { duration: 5_000, ..Cue::new("gone") }).unwrap();
+    w.write_cue(
+        1,
+        10_000,
+        &Cue {
+            duration: 5_000,
+            ..Cue::new("gone")
+        },
+    )
+    .unwrap();
     w.write_chunk(0, 1, false, &[0; 4], None).unwrap();
     w.write_chunk(0, 2, true, &[9; 64], None).unwrap();
     let file = w.finish(100_000).unwrap().into_inner();
 
     let mut r = Reader::new(Cursor::new(file.clone())).unwrap();
     let old = read_cues(&mut r).unwrap();
-    assert_eq!(old, [CueTrack { name: "old".into(), cues: vec![TimedCue { time_us: 10_000, cue: Cue { duration: 5_000, ..Cue::new("gone") } }] }]);
+    assert_eq!(
+        old,
+        [CueTrack {
+            name: "old".into(),
+            cues: vec![TimedCue {
+                time_us: 10_000,
+                cue: Cue {
+                    duration: 5_000,
+                    ..Cue::new("gone")
+                }
+            }]
+        }]
+    );
 
-    let flash = |ms: u64| TimedCue { time_us: ms * 1000, cue: Cue { duration: 0, ..Cue::new("flash") } };
+    let flash = |ms: u64| TimedCue {
+        time_us: ms * 1000,
+        cue: Cue {
+            duration: 0,
+            ..Cue::new("flash")
+        },
+    };
     let tracks = vec![
-        CueTrack { name: "a".into(), cues: vec![flash(40), flash(0), flash(40)] },
-        CueTrack { name: "b".into(), cues: vec![TimedCue { time_us: 90_000, cue: Cue { duration: 60_000, ..Cue::new("long") } }] },
+        CueTrack {
+            name: "a".into(),
+            cues: vec![flash(40), flash(0), flash(40)],
+        },
+        CueTrack {
+            name: "b".into(),
+            cues: vec![TimedCue {
+                time_us: 90_000,
+                cue: Cue {
+                    duration: 60_000,
+                    ..Cue::new("long")
+                },
+            }],
+        },
     ];
-    let out = replace_cues(Reader::new(Cursor::new(file.clone())).unwrap(), Cursor::new(Vec::new()), &tracks).unwrap().into_inner();
+    let out = replace_cues(
+        Reader::new(Cursor::new(file.clone())).unwrap(),
+        Cursor::new(Vec::new()),
+        &tracks,
+    )
+    .unwrap()
+    .into_inner();
 
     let mut r = Reader::new(Cursor::new(out.clone())).unwrap();
-    let names: Vec<_> = r.streams().iter().map(|s| (s.params.kind(), s.chunk_count)).collect();
-    assert_eq!(names, [(1, 3), (2, 2), (3, 3), (3, 1)], "video, audio, then the new cue streams");
-    assert_eq!(r.header().duration_us, 150_000, "extended to the end of the long cue");
+    let names: Vec<_> = r
+        .streams()
+        .iter()
+        .map(|s| (s.params.kind(), s.chunk_count))
+        .collect();
+    assert_eq!(
+        names,
+        [(1, 3), (2, 2), (3, 3), (3, 1)],
+        "video, audio, then the new cue streams"
+    );
+    assert_eq!(
+        r.header().duration_us,
+        150_000,
+        "extended to the end of the long cue"
+    );
     let mut sorted = tracks.clone();
     sorted[0].cues.sort_by_key(|c| c.time_us);
     assert_eq!(read_cues(&mut r).unwrap(), sorted);
@@ -417,7 +636,10 @@ fn replaces_cue_streams() {
         c.0 = if c.0 == 2 { 1 } else { c.0 };
     }
     let copied = stored_chunks(&out);
-    assert_eq!(copied, renumbered, "video and audio copied byte for byte, in order");
+    assert_eq!(
+        copied, renumbered,
+        "video and audio copied byte for byte, in order"
+    );
     // Index: video keyframes, audio and cue chunks.
     assert_eq!(r.read_index().unwrap().len(), 2 + 2 + 4);
 
@@ -427,10 +649,29 @@ fn replaces_cue_streams() {
     while let Some(c) = r.next_chunk().unwrap() {
         order.push((c.stream, c.pts));
     }
-    assert_eq!(order, [(2, 0), (1, 0), (1, 100), (0, 0), (0, 1), (2, 40_000), (2, 40_000), (0, 2), (3, 90_000)]);
+    assert_eq!(
+        order,
+        [
+            (2, 0),
+            (1, 0),
+            (1, 100),
+            (0, 0),
+            (0, 1),
+            (2, 40_000),
+            (2, 40_000),
+            (0, 2),
+            (3, 90_000)
+        ]
+    );
 
     // No tracks: no cue streams, duration kept.
-    let bare = replace_cues(Reader::new(Cursor::new(file)).unwrap(), Cursor::new(Vec::new()), &[]).unwrap().into_inner();
+    let bare = replace_cues(
+        Reader::new(Cursor::new(file)).unwrap(),
+        Cursor::new(Vec::new()),
+        &[],
+    )
+    .unwrap()
+    .into_inner();
     let r = Reader::new(Cursor::new(bare)).unwrap();
     assert_eq!(r.streams().len(), 2);
     assert_eq!(r.header().duration_us, 100_000);
@@ -448,8 +689,20 @@ fn copy_chunk_checks_stream_and_size() {
     r.read_stored(&c, &mut stored).unwrap();
 
     let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
-    assert!(matches!(w.copy_chunk(&c, &stored[1..]), Err(Error::Invalid(_))), "size");
-    assert!(matches!(w.copy_chunk(&ChunkHeader { stream: 1, ..c }, &stored), Err(Error::Invalid(_))), "cue stream");
+    assert!(
+        matches!(w.copy_chunk(&c, &stored[1..]), Err(Error::Invalid(_))),
+        "size"
+    );
+    assert!(
+        matches!(
+            w.copy_chunk(&ChunkHeader { stream: 1, ..c }, &stored),
+            Err(Error::Invalid(_))
+        ),
+        "cue stream"
+    );
     w.copy_chunk(&c, &stored).unwrap();
-    assert!(matches!(w.copy_chunk(&c, &stored), Err(Error::Invalid(_))), "same pts again");
+    assert!(
+        matches!(w.copy_chunk(&c, &stored), Err(Error::Invalid(_))),
+        "same pts again"
+    );
 }

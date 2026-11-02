@@ -1,7 +1,8 @@
 use praxi::format::{Cue, Reader, StreamParams};
 use praxi::{Capabilities, Event, Player, TextureFormat};
 use praxi_encoder::{
-    AudioTrackConfig, CueConfig, CueStreamConfig, Encoder, EncoderConfig, SampleFormat, Stats, Value, VariantConfig,
+    AudioTrackConfig, CueConfig, CueStreamConfig, Encoder, EncoderConfig, SampleFormat, Stats,
+    Value, VariantConfig,
 };
 use std::io::Cursor;
 use std::time::Duration;
@@ -24,7 +25,14 @@ fn frames() -> Vec<Vec<u8>> {
             changed[i..i + 4].copy_from_slice(&[255, 0, 0, 128]);
         }
     }
-    vec![base.clone(), base.clone(), base.clone(), changed.clone(), changed.clone(), changed]
+    vec![
+        base.clone(),
+        base.clone(),
+        base.clone(),
+        changed.clone(),
+        changed.clone(),
+        changed,
+    ]
 }
 
 fn encode(config: EncoderConfig) -> (Vec<u8>, Stats) {
@@ -37,7 +45,9 @@ fn encode(config: EncoderConfig) -> (Vec<u8>, Stats) {
 }
 
 fn config() -> EncoderConfig {
-    EncoderConfig::new(W, H, 10, 1).variant(VariantConfig::bc7()).variant(VariantConfig::astc(6))
+    EncoderConfig::new(W, H, 10, 1)
+        .variant(VariantConfig::bc7())
+        .variant(VariantConfig::astc(6))
 }
 
 /// Every frame of `file` for `format`, as reconstructed by the player.
@@ -60,8 +70,12 @@ fn play_all(file: Vec<u8>, format: TextureFormat) -> (Vec<Vec<u8>>, Vec<Event>) 
 
 #[test]
 fn writes_streams_cues_and_deltas() {
-    let gameplay = CueStreamConfig::new("gameplay")
-        .cue(CueConfig::new(0.2, "camera.shake").duration(0.15).field("axis", "x").field("level", 2i64));
+    let gameplay = CueStreamConfig::new("gameplay").cue(
+        CueConfig::new(0.2, "camera.shake")
+            .duration(0.15)
+            .field("axis", "x")
+            .field("level", 2i64),
+    );
     let config = config()
         .keyint(4)
         .skip_threshold(0)
@@ -76,9 +90,15 @@ fn writes_streams_cues_and_deltas() {
     let streams = r.streams().to_vec();
     assert_eq!(streams.len(), 4);
     let bc7 = streams[0].video_params().unwrap();
-    assert_eq!((bc7.format, bc7.width, bc7.height, bc7.block_count()), (TextureFormat::Bc7, W, H, 5 * 3));
+    assert_eq!(
+        (bc7.format, bc7.width, bc7.height, bc7.block_count()),
+        (TextureFormat::Bc7, W, H, 5 * 3)
+    );
     assert!(bc7.srgb() && !bc7.alpha());
-    assert_eq!(streams[1].video_params().unwrap().format, TextureFormat::Astc6x6);
+    assert_eq!(
+        streams[1].video_params().unwrap().format,
+        TextureFormat::Astc6x6
+    );
     let counts: Vec<u32> = streams.iter().map(|s| s.chunk_count).collect();
     assert_eq!(counts, [6, 6, 2, 1]);
     let cue_names: Vec<(&str, u64)> = streams[2..]
@@ -100,24 +120,47 @@ fn writes_streams_cues_and_deltas() {
     let keys: Vec<bool> = bc7_chunks.iter().map(|(c, _)| c.keyframe()).collect();
     assert_eq!(keys, [true, false, false, false, true, false]);
     for n in [1, 2, 5] {
-        assert_eq!(bc7_chunks[n].1, vec![0u8; bc7.mask_size()], "static frame {n} skips every block");
+        assert_eq!(
+            bc7_chunks[n].1,
+            vec![0u8; bc7.mask_size()],
+            "static frame {n} skips every block"
+        );
     }
-    let changed: u32 = bc7_chunks[3].1[..bc7.mask_size()].iter().map(|b| b.count_ones()).sum();
-    assert!(changed > 0 && changed < 15, "frame 3 updates only the changed square ({changed} blocks)");
+    let changed: u32 = bc7_chunks[3].1[..bc7.mask_size()]
+        .iter()
+        .map(|b| b.count_ones())
+        .sum();
+    assert!(
+        changed > 0 && changed < 15,
+        "frame 3 updates only the changed square ({changed} blocks)"
+    );
 
-    let cues: Vec<(u16, u64, Cue)> =
-        chunks.iter().filter(|(c, _)| c.stream >= 2).map(|(c, p)| (c.stream, c.pts, Cue::decode(p).unwrap())).collect();
+    let cues: Vec<(u16, u64, Cue)> = chunks
+        .iter()
+        .filter(|(c, _)| c.stream >= 2)
+        .map(|(c, p)| (c.stream, c.pts, Cue::decode(p).unwrap()))
+        .collect();
     let shake = Cue {
         duration: 150_000,
         kind: "camera.shake".into(),
-        fields: vec![("axis".into(), Value::from("x")), ("level".into(), Value::Int(2))],
+        fields: vec![
+            ("axis".into(), Value::from("x")),
+            ("level".into(), Value::Int(2)),
+        ],
     };
     assert_eq!(
         cues,
         [
             (2, 50_000, Cue::new("m1")),
             (3, 200_000, shake),
-            (2, 1_000_000, Cue { duration: 500_000, ..Cue::new("end") }),
+            (
+                2,
+                1_000_000,
+                Cue {
+                    duration: 500_000,
+                    ..Cue::new("end")
+                }
+            ),
         ],
         "cues sorted by time across streams"
     );
@@ -127,11 +170,19 @@ fn writes_streams_cues_and_deltas() {
 #[test]
 fn player_reconstructs_keyframe_encoding() {
     for format in [TextureFormat::Bc7, TextureFormat::Astc6x6] {
-        let (deltas, events) = play_all(encode(config().keyint(4).skip_threshold(0).cue(0.25, "m")).0, format);
+        let (deltas, events) = play_all(
+            encode(config().keyint(4).skip_threshold(0).cue(0.25, "m")).0,
+            format,
+        );
         let (keys, _) = play_all(encode(config().keyint(1)).0, format);
         assert_eq!(deltas.len(), 6);
-        assert_eq!(deltas, keys, "{format}: delta reconstruction matches all-keyframe encoding");
-        assert!(events.iter().any(|e| matches!(e, Event::Cue(c) if c.kind == "m" && c.time == Duration::from_millis(250))));
+        assert_eq!(
+            deltas, keys,
+            "{format}: delta reconstruction matches all-keyframe encoding"
+        );
+        assert!(events.iter().any(
+            |e| matches!(e, Event::Cue(c) if c.kind == "m" && c.time == Duration::from_millis(250))
+        ));
     }
 }
 
@@ -141,13 +192,27 @@ fn rejects_bad_config() {
         EncoderConfig::new(0, 4, 30, 1).variant(VariantConfig::bc7()),
         EncoderConfig::new(4, 4, 30, 1),
         EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::astc(5)),
-        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue(-1.0, "a"),
-        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue(1.0, ""),
-        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue_with(CueConfig::new(1.0, "a").duration(f64::NAN)),
-        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).cue_stream(CueStreamConfig::new("x".repeat(40)).cue(CueConfig::new(0.0, "a"))),
-        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).plane_min_saving(-1.0),
-        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).plane_min_saving(f64::NAN),
-        EncoderConfig::new(4, 4, 30, 1).variant(VariantConfig::bc7()).plane_min_saving(101.0),
+        EncoderConfig::new(4, 4, 30, 1)
+            .variant(VariantConfig::bc7())
+            .cue(-1.0, "a"),
+        EncoderConfig::new(4, 4, 30, 1)
+            .variant(VariantConfig::bc7())
+            .cue(1.0, ""),
+        EncoderConfig::new(4, 4, 30, 1)
+            .variant(VariantConfig::bc7())
+            .cue_with(CueConfig::new(1.0, "a").duration(f64::NAN)),
+        EncoderConfig::new(4, 4, 30, 1)
+            .variant(VariantConfig::bc7())
+            .cue_stream(CueStreamConfig::new("x".repeat(40)).cue(CueConfig::new(0.0, "a"))),
+        EncoderConfig::new(4, 4, 30, 1)
+            .variant(VariantConfig::bc7())
+            .plane_min_saving(-1.0),
+        EncoderConfig::new(4, 4, 30, 1)
+            .variant(VariantConfig::bc7())
+            .plane_min_saving(f64::NAN),
+        EncoderConfig::new(4, 4, 30, 1)
+            .variant(VariantConfig::bc7())
+            .plane_min_saving(101.0),
     ];
     for config in bad {
         assert!(Encoder::new(Cursor::new(Vec::new()), config).is_err());
@@ -159,7 +224,11 @@ fn decodes_frames_close_to_source() {
     let source = frames();
     // The synthetic gradient is steep (14-25 levels per pixel), hard for block formats; the
     // threshold catches decode bugs (channel order, block placement), not codec quality.
-    for format in [TextureFormat::Bc7, TextureFormat::Astc4x4, TextureFormat::Astc6x6] {
+    for format in [
+        TextureFormat::Bc7,
+        TextureFormat::Astc4x4,
+        TextureFormat::Astc6x6,
+    ] {
         let variant = match format {
             TextureFormat::Bc7 => VariantConfig::bc7(),
             TextureFormat::Astc4x4 => VariantConfig::astc(4),
@@ -170,8 +239,16 @@ fn decodes_frames_close_to_source() {
         p.seek(Duration::from_millis(300)).unwrap();
         let params = p.tracks()[0].params;
         let rgba = praxi_encoder::decode_frame(&params, p.video_frame(0).unwrap().data).unwrap();
-        assert_eq!(rgba.len(), (W * H * 4) as usize, "{format}: padding cropped");
-        let se: f64 = rgba.iter().zip(&source[3]).map(|(a, b)| (*a as f64 - *b as f64).powi(2)).sum();
+        assert_eq!(
+            rgba.len(),
+            (W * H * 4) as usize,
+            "{format}: padding cropped"
+        );
+        let se: f64 = rgba
+            .iter()
+            .zip(&source[3])
+            .map(|(a, b)| (*a as f64 - *b as f64).powi(2))
+            .sum();
         let psnr = 10.0 * (255.0f64.powi(2) / (se / rgba.len() as f64)).log10();
         assert!(psnr > 25.0, "{format}: PSNR {psnr:.1} dB");
     }
@@ -179,10 +256,16 @@ fn decodes_frames_close_to_source() {
 
 #[test]
 fn decode_rejects_unsupported_formats() {
-    let params = praxi::VideoParams { width: 4, height: 4, format: TextureFormat::Bc3, color_flags: 0 };
+    let params = praxi::VideoParams::new(4, 4, TextureFormat::Bc3, 0);
     assert!(praxi_encoder::decode_frame(&params, &[0; 16]).is_err());
-    let params = praxi::VideoParams { format: TextureFormat::Bc7, ..params };
-    assert!(praxi_encoder::decode_frame(&params, &[0; 8]).is_err(), "wrong data size");
+    let params = praxi::VideoParams {
+        format: TextureFormat::Bc7,
+        ..params
+    };
+    assert!(
+        praxi_encoder::decode_frame(&params, &[0; 8]).is_err(),
+        "wrong data size"
+    );
 }
 
 /// `seconds` of interleaved audio at 8 kHz: a different sine per channel, past full scale
@@ -190,14 +273,20 @@ fn decode_rejects_unsupported_formats() {
 fn tone(channels: u16, seconds: f64) -> Vec<f32> {
     let frames = (8000.0 * seconds) as usize;
     (0..frames)
-        .flat_map(|i| (0..channels).map(move |c| (i as f32 * 0.01 * (c + 1) as f32).sin() * if c == 0 { 1.2 } else { 0.5 }))
+        .flat_map(|i| {
+            (0..channels).map(move |c| {
+                (i as f32 * 0.01 * (c + 1) as f32).sin() * if c == 0 { 1.2 } else { 0.5 }
+            })
+        })
         .collect()
 }
 
 /// Plays `file` to the end, reading every audio track as it decodes.
 fn play_audio(file: Vec<u8>, caps: Capabilities) -> (Player<Cursor<Vec<u8>>>, Vec<Vec<f32>>) {
     let mut p = Player::open(Cursor::new(file), &caps).unwrap();
-    let outputs: Vec<_> = (0..p.audio_tracks().len()).map(|t| p.audio_output(t).unwrap()).collect();
+    let outputs: Vec<_> = (0..p.audio_tracks().len())
+        .map(|t| p.audio_output(t).unwrap())
+        .collect();
     let mut heard = vec![Vec::new(); outputs.len()];
     p.play().unwrap();
     while !p.is_finished() {
@@ -215,13 +304,34 @@ fn play_audio(file: Vec<u8>, caps: Capabilities) -> (Player<Cursor<Vec<u8>>>, Ve
 fn encodes_audio_tracks() {
     let config = config()
         .audio(AudioTrackConfig::from_samples("music", 8000, 2, tone(2, 1.0)).channel_mask(0x3))
-        .audio(AudioTrackConfig::from_samples("voice", 8000, 1, tone(1, 0.3)).group(0).format(SampleFormat::F32))
-        .audio(AudioTrackConfig::from_samples("music", 8000, 1, tone(1, 1.0)).format(SampleFormat::F32))
+        .audio(
+            AudioTrackConfig::from_samples("voice", 8000, 1, tone(1, 0.3))
+                .group(0)
+                .format(SampleFormat::F32),
+        )
+        .audio(
+            AudioTrackConfig::from_samples("music", 8000, 1, tone(1, 1.0))
+                .format(SampleFormat::F32),
+        )
         .cue(0.2, "m");
     let (file, stats) = encode(config);
-    assert_eq!(stats.duration_us, 1_000_000, "audio outlasts the 600 ms of video");
-    let audio: Vec<_> = stats.audio.iter().map(|a| (a.name.as_str(), a.channels, a.frames, a.chunks)).collect();
-    assert_eq!(audio, [("music", 2, 8000, 10), ("voice", 1, 2400, 3), ("music", 1, 8000, 10)]);
+    assert_eq!(
+        stats.duration_us, 1_000_000,
+        "audio outlasts the 600 ms of video"
+    );
+    let audio: Vec<_> = stats
+        .audio
+        .iter()
+        .map(|a| (a.name.as_str(), a.channels, a.frames, a.chunks))
+        .collect();
+    assert_eq!(
+        audio,
+        [
+            ("music", 2, 8000, 10),
+            ("voice", 1, 2400, 3),
+            ("music", 1, 8000, 10)
+        ]
+    );
 
     let r = Reader::new(Cursor::new(file.clone())).unwrap();
     let kinds: Vec<_> = r
@@ -229,7 +339,9 @@ fn encodes_audio_tracks() {
         .iter()
         .map(|s| match &s.params {
             StreamParams::Video(_) => ("video".to_string(), s.group),
-            StreamParams::Audio(a) => (format!("{} {}ch {}", a.name, a.channels, a.format), s.group),
+            StreamParams::Audio(a) => {
+                (format!("{} {}ch {}", a.name, a.channels, a.format), s.group)
+            }
             StreamParams::Cues(c) => (c.name.clone(), s.group),
             StreamParams::Unknown(_) => ("?".to_string(), s.group),
         })
@@ -247,34 +359,61 @@ fn encodes_audio_tracks() {
         "same names share a group; explicit group 0 pushes music to group 1"
     );
     let a = r.streams()[2].audio_params().unwrap();
-    assert_eq!((a.sample_rate, a.channel_mask, a.preload_us), (8000, 0x3, 250_000));
+    assert_eq!(
+        (a.sample_rate, a.channel_mask, a.preload_us),
+        (8000, 0x3, 250_000)
+    );
 
     let (p, heard) = play_audio(file.clone(), Capabilities::new([TextureFormat::Bc7]));
-    let names: Vec<_> = p.audio_tracks().iter().map(|t| (t.params.name.as_str(), t.stream)).collect();
-    assert_eq!(names, [("voice", 3), ("music", 2)], "audio tracks in group order");
+    let names: Vec<_> = p
+        .audio_tracks()
+        .iter()
+        .map(|t| (t.params.name.as_str(), t.stream))
+        .collect();
+    assert_eq!(
+        names,
+        [("voice", 3), ("music", 2)],
+        "audio tracks in group order"
+    );
     assert_eq!(heard[0], tone(1, 0.3), "f32 is stored exactly");
     let source = tone(2, 1.0);
     assert_eq!(heard[1].len(), source.len());
     for (got, want) in heard[1].iter().zip(&source) {
         // s16 tops out at 32767 / 32768.
-        assert!((got - want.clamp(-1.0, 32767.0 / 32768.0)).abs() <= 0.5 / 32768.0 + 1e-6, "s16 {got} vs {want}");
+        assert!(
+            (got - want.clamp(-1.0, 32767.0 / 32768.0)).abs() <= 0.5 / 32768.0 + 1e-6,
+            "s16 {got} vs {want}"
+        );
     }
 
-    let (_, heard) = play_audio(file, Capabilities::new([TextureFormat::Bc7]).max_audio_channels(1));
+    let (_, heard) = play_audio(
+        file,
+        Capabilities::new([TextureFormat::Bc7]).max_audio_channels(1),
+    );
     assert_eq!(heard[1], tone(1, 1.0), "mono variant");
 }
 
 #[test]
 fn encodes_adpcm_audio() {
-    let config = config().audio(AudioTrackConfig::from_samples("music", 8000, 2, tone(2, 1.0)).format(SampleFormat::Adpcm));
+    let config = config().audio(
+        AudioTrackConfig::from_samples("music", 8000, 2, tone(2, 1.0)).format(SampleFormat::Adpcm),
+    );
     let (file, stats) = encode(config);
     // 10 chunks of 800 frames: 4 + 8 + 9 * 2 * 50 bytes each, unless LZ4 makes them smaller.
-    assert!(stats.audio[0].bytes <= 10 * (24 + 912), "{} bytes", stats.audio[0].bytes);
+    assert!(
+        stats.audio[0].bytes <= 10 * (24 + 912),
+        "{} bytes",
+        stats.audio[0].bytes
+    );
     let (_, heard) = play_audio(file, Capabilities::new([TextureFormat::Bc7]));
     let source: Vec<f32> = tone(2, 1.0).iter().map(|s| s.clamp(-1.0, 1.0)).collect();
     assert_eq!(heard[0].len(), source.len());
     let signal: f32 = source.iter().map(|s| s * s).sum();
-    let noise: f32 = heard[0].iter().zip(&source).map(|(a, b)| (a - b) * (a - b)).sum();
+    let noise: f32 = heard[0]
+        .iter()
+        .zip(&source)
+        .map(|(a, b)| (a - b) * (a - b))
+        .sum();
     let snr = 10.0 * (signal / noise).log10();
     assert!(snr > 40.0, "SNR {snr} dB");
 }
@@ -286,10 +425,86 @@ fn rejects_bad_audio_config() {
         base().audio(AudioTrackConfig::from_samples("a", 0, 2, vec![])),
         base().audio(AudioTrackConfig::from_samples("a", 8000, 0, vec![])),
         base().audio(AudioTrackConfig::from_samples("a", 8000, 2, vec![]).channel_mask(0x7)),
-        base().audio(AudioTrackConfig::from_samples("x".repeat(40), 8000, 2, vec![])),
-        base().audio(AudioTrackConfig::from_samples("a", 8000, 2, vec![])).audio_chunk(Duration::ZERO),
+        base().audio(AudioTrackConfig::from_samples(
+            "x".repeat(40),
+            8000,
+            2,
+            vec![],
+        )),
+        base()
+            .audio(AudioTrackConfig::from_samples("a", 8000, 2, vec![]))
+            .audio_chunk(Duration::ZERO),
     ];
     for config in bad {
         assert!(Encoder::new(Cursor::new(Vec::new()), config).is_err());
+    }
+}
+
+/// A textured 72x40 frame shifted right by `shift` pixels, with alpha.
+fn moving_frame(shift: usize) -> Vec<u8> {
+    let (w, h) = (72, 40);
+    (0..w * h)
+        .flat_map(|i| {
+            let (x, y) = ((i % w + 1000 - shift) % 1000, i / w);
+            let v = ((x * 7 + y * 3) % 64 * 3 + (x / 8 + y / 8) % 2 * 40) as u8;
+            // Detail in luma, smooth color, as in camera footage (4:2:0 keeps it).
+            [
+                v / 2 + (i % w) as u8,
+                v / 2 + 40,
+                v / 2 + (y * 3) as u8,
+                (y * 6) as u8,
+            ]
+        })
+        .collect()
+}
+
+#[test]
+fn motion_frames_decode_close_to_the_source() {
+    use praxi::format::motion;
+    let frames: Vec<Vec<u8>> = (0..7).map(|i| moving_frame(i * 3)).collect();
+    for chroma in [praxi_encoder::Chroma::C420, praxi_encoder::Chroma::C444] {
+        let config = EncoderConfig::new(72, 40, 10, 1)
+            .variant(VariantConfig::motion().qp(10).slices(2).chroma(chroma))
+            .keyint(4)
+            .alpha(true)
+            .threads(3);
+        let mut enc = Encoder::new(Cursor::new(Vec::new()), config).unwrap();
+        for f in &frames {
+            enc.push_frame(f).unwrap();
+        }
+        let (out, stats) = enc.finish().unwrap();
+        let m = stats.variants[0].motion.unwrap();
+        assert!(m.inter + m.skip > 0, "delta frames use motion: {m:?}");
+
+        let mut reader = Reader::new(Cursor::new(out.into_inner())).unwrap();
+        let params = *reader.streams()[0].video_params().unwrap();
+        assert_eq!(params.motion.chroma, chroma);
+        let mut decoder = motion::Decoder::new(&params);
+        let layout = decoder.layout().clone();
+        let (mut planes, mut reference) = (vec![0; layout.size], vec![0; layout.size]);
+        let (mut payload, mut coded, mut rgba) =
+            (Vec::new(), motion::CodedFrame::default(), Vec::new());
+        let mut keyframes = Vec::new();
+        while let Some(chunk) = reader.next_chunk().unwrap() {
+            reader.read_payload(&chunk, &mut payload).unwrap();
+            decoder
+                .decode(chunk.keyframe(), &payload, &mut coded)
+                .unwrap();
+            std::mem::swap(&mut planes, &mut reference);
+            motion::reconstruct(&layout, &coded, &reference, &mut planes);
+            motion::to_rgba(&layout, &planes, &mut rgba);
+            let source = &frames[chunk.pts as usize];
+            let mse = rgba
+                .iter()
+                .zip(source)
+                .map(|(&a, &b)| (a as f64 - b as f64).powi(2))
+                .sum::<f64>()
+                / rgba.len() as f64;
+            let psnr = 10.0 * (255.0f64 * 255.0 / mse.max(1e-9)).log10();
+            assert!(psnr > 44.0, "{chroma:?} frame {}: {psnr:.1} dB", chunk.pts);
+            keyframes.push(chunk.keyframe());
+        }
+        assert_eq!(keyframes.len(), 7);
+        assert!(keyframes[0] && keyframes[4], "{keyframes:?}");
     }
 }

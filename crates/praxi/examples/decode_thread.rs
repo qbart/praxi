@@ -27,8 +27,15 @@ enum ToWorker {
 
 enum ToGame {
     /// A new frame of video `video`'s track 0.
-    Frame { video: usize, index: u64, data: Vec<u8> },
-    Event { video: usize, event: Event },
+    Frame {
+        video: usize,
+        index: u64,
+        data: Vec<u8>,
+    },
+    Event {
+        video: usize,
+        event: Event,
+    },
     /// Everything for one `Advance` was sent.
     Advanced,
 }
@@ -98,7 +105,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("{frames} game frames, {frames_without_picture} without a picture on screen");
     // Near zero: the previous frame's decode finished during this frame's sleep.
-    println!("game thread waited for the worker {:.3} ms per frame", waited.as_secs_f64() * 1e3 / frames as f64);
+    println!(
+        "game thread waited for the worker {:.3} ms per frame",
+        waited.as_secs_f64() * 1e3 / frames as f64
+    );
     Ok(())
 }
 
@@ -111,7 +121,9 @@ fn decode(
 ) -> Result<(), String> {
     let mut sent: Vec<Option<u64>> = vec![None; players.len()];
     let send_frame = |player: &FilePlayer, video: usize, sent: &mut Vec<Option<u64>>| {
-        let Some(frame) = player.video_frame(0) else { return };
+        let Some(frame) = player.video_frame(0) else {
+            return;
+        };
         if sent[video] == Some(frame.index) {
             return;
         }
@@ -119,7 +131,11 @@ fn decode(
         let mut data = free_buffers.try_recv().unwrap_or_default();
         data.clear();
         data.extend_from_slice(frame.data);
-        let _ = results.send(ToGame::Frame { video, index: frame.index, data });
+        let _ = results.send(ToGame::Frame {
+            video,
+            index: frame.index,
+            data,
+        });
     };
 
     // Preroll every video: seeking decodes its first frame, which goes to the game thread
@@ -141,7 +157,10 @@ fn decode(
         let mut finished = false;
         while let Some(event) = player.poll_event() {
             finished |= event == Event::Finished;
-            let _ = results.send(ToGame::Event { video: current, event });
+            let _ = results.send(ToGame::Event {
+                video: current,
+                event,
+            });
         }
         send_frame(player, current, &mut sent);
         if finished && current + 1 < players.len() {
