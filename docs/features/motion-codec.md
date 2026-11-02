@@ -257,6 +257,24 @@ The encoder comes first in any order: nothing can be decoded before something is
 3. **Integration**: viewer, editor and `cutscene` example on `motion` tracks; engine guide
    and texture-variants pages updated.
 
+## Measurements
+
+First encoder (16x16 vectors, bilinear quarter-pel, no rate-distortion quantization),
+`make bench` input (Big Buck Bunny 1080p60, first 180 frames), keyframes every 60 frames.
+Decode is entropy decoding per frame on one core, including reading the chunk:
+
+| Variant | MB/s | PSNR | Entropy decode (mean) |
+|---|---|---|---|
+| BC7 | 55.6 | 41.0 dB | (1.9 ms full decode) |
+| motion `qp` 22 | 6.1 | 37.2 dB | 2.8 ms |
+| motion `qp` 16 | 15.0 | 40.4 dB | 5.3 ms |
+| motion `qp` 13 | 22.2 | 41.7 dB | 6.4 ms |
+
+At BC7's PSNR (about `qp` 14.5) the stream is about 18.5 MB/s, a third of BC7: the gate
+asks for a fifth. Delta frames are only about 3 times smaller than keyframes (300 KB
+against 920 KB at `qp` 14), so prediction is the weak part. Entropy decoding is 5-6 times
+over its budget. Neither goal is met yet.
+
 ## Open questions for phase 1
 
 - 8x8 motion vectors and 4x4 transforms: gain against syntax and GPU cost.
