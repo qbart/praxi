@@ -5,10 +5,9 @@ transform coding with motion compensation, the family of H.264, decoded mostly o
 GPU. It trades a little decode work for files several times smaller than BC7 at the
 same or better quality.
 
-Status: draft. Phase 1 (below) measures the design on the CPU before the GPU decoder is
-written; the exact byte layout goes into [PRAXI.md](../spec/PRAXI.md) (format 0.8) with
-the phase 1 implementation, and the constants marked *pinned in phase 1* may change until
-then.
+Status: draft. Playback decodes on the GPU only; there is no CPU playback path. The exact
+byte layout goes into [PRAXI.md](../spec/PRAXI.md) (format 0.8) with the phase 1
+implementation, and the constants marked *pinned in phase 1* may change until then.
 
 ## Why
 
@@ -25,8 +24,8 @@ quality (41 dB PSNR on the bench input) at a fraction of BC7's size.
 - **Size**: at most 1/5 of the BC7 variant at equal PSNR on the bench input. Phase 1
   stops the project if it cannot get there.
 - **Decode**: at 1080p, at most 1 ms of CPU per frame on one core (entropy decoding) and
-  at most 1 ms of GPU per frame on an integrated GPU. Exact output: the CPU and GPU
-  decoders produce identical pixels.
+  at most 1 ms of GPU per frame on an integrated GPU. Exact output: the GPU decoder
+  produces the same pixels as the encoder's reference reconstruction.
 - **Fits praxi**: one more variant of a video track, same container, cues, audio, seeking,
   looping and events. Pure Rust, no new runtime dependencies.
 
@@ -44,9 +43,9 @@ praxi encode intro.mp4 -o intro.praxi --variant motion --variant bc7   # both, p
 
 - A track can carry `motion` together with block variants. Variant selection works as
   today ([texture-variants.md](texture-variants.md#selection)): the engine lists the
-  formats it can play in order of preference, and lists `motion` only when it has a
-  decoder for it (the CPU reference decoder always works; the GPU decoder needs compute
-  shaders).
+  formats it can play in order of preference, and lists `motion` only when it has a GPU
+  decoder for it (compute shaders). A file meant to play everywhere also carries a block
+  variant.
 - Choose `motion` where size matters (downloads, mobile, long videos); choose `bc7` or
   `astc*` where decode cost must be close to zero (many videos at once, weak GPUs).
 
@@ -148,15 +147,17 @@ Decoding has two stages:
 
 1. **Entropy decoding** (CPU, in the player): the chunk becomes a **coded frame**: per
    macroblock its type and motion vector, and the list of coded transform blocks with their
-   dequantized coefficients (DC prediction resolved). This is the serial part.
-2. **Reconstruction**: per transform block, motion-compensated prediction (or 128), inverse
-   transform, add, clamp, into the frame's planes; then color conversion to RGBA for
-   display. Fully parallel over blocks. Two implementations with identical output:
-   - **CPU reference decoder** in `praxi` (portable safe Rust): used for tests, frame
-     export, headless playback and engines without compute shaders. Expected 10-20 ms per
-     1080p frame on one core, too slow for real-time 1080p on the game thread but fine for
-     tools and small videos.
-   - **GPU decoder** in `praxi-wgpu` (compute shaders, below).
+   dequantized coefficients (DC prediction resolved). This is the serial part, goal under
+   1 ms per 1080p frame.
+2. **Reconstruction** (GPU, in `praxi-wgpu` or the engine's own shaders): per transform
+   block, motion-compensated prediction (or 128), inverse transform, add, clamp, into the
+   frame's planes; then color conversion to RGBA for display. Fully parallel over blocks.
+
+There is no CPU playback path: reconstructing on the CPU would cost an estimated 10-20 ms
+per 1080p frame, too slow for a game. The same reconstruction exists on the CPU only as
+the **reference** in `praxi_format::motion`: the encoder needs it (it predicts from exactly
+what the decoder will show), the tests compare the GPU output with it, and offline tools
+use it (`praxi frame`, `praxi bench`).
 
 Seeking decodes every frame from the preceding keyframe through both stages. Only the last
 frame needs color conversion. With `keyint` 60 a worst-case 1080p seek costs about 60
@@ -166,22 +167,18 @@ hides it for transitions, and seek-heavy uses can encode with a shorter `keyint`
 ### Player API
 
 - `TextureFormat::Motion` (id `0x0201`) is selected through `Capabilities` like any other
-  format. It is not a GPU texture format; what the player hands out depends on the decode
-  mode, set with `Capabilities::motion_decode(MotionDecode::Cpu | MotionDecode::Gpu)`
-  (default `Cpu`).
-- **CPU mode**: the player reconstructs frames itself; `video_frame(track)` returns
-  `format: TextureFormat::Rgba8`, `data` holding `width * height * 4` bytes, rows top to
-  bottom, sRGB encoded, straight alpha (255 without an alpha plane). `Rgba8` is a new
-  format id that is never stored in files; the planned CPU fallback for block formats will
-  hand out the same.
-- **GPU mode**: the player stops after entropy decoding and queues coded frames.
-  `take_coded_frames(track)` returns the frames queued since the last call, oldest first;
+  format. It is not a GPU texture format: the player entropy-decodes its chunks and queues
+  coded frames for a GPU decoder.
+- `take_coded_frames(track)` returns the frames queued since the last call, oldest first;
   each must be reconstructed in order, since P frames build on the previous one. A keyframe
-  clears the queue, so it never holds more than `keyint` frames. `video_frame(track)` still
-  reports index, time and size, with empty `data`.
+  clears the queue, so it never holds more than `keyint` frames. `video_frame(track)`
+  reports index, time and size as for other formats, with empty `data`.
 - Coded frames live in buffers the player recycles; it allocates only when the queue grows
   past its previous high-water mark, keeping the no-allocation-per-frame property in steady
   playback.
+- The coded frame layout (macroblock records, coefficient blocks) is public and documented,
+  so an engine with its own renderer can write the reconstruction shaders itself, as it
+  uploads block textures itself today.
 
 ### GPU decoder (`praxi-wgpu`)
 
@@ -198,7 +195,7 @@ hides it for transitions, and seek-heavy uses can encode with a shorter `keyint`
 
 Requirements: compute shaders and storage buffers (`wgpu` downlevel `COMPUTE_SHADERS`):
 Vulkan, Metal, DX12 and GLES 3.1, not WebGL 2. `praxi_wgpu::capabilities` lists `motion`
-with `MotionDecode::Gpu` when the adapter qualifies and with `MotionDecode::Cpu` otherwise.
+only when the adapter qualifies.
 
 Upload sizes: a 1080p keyframe at high quality codes most of its 48,960 transform blocks,
 about 6 MB of coefficients; P frames code few blocks. Sparse coefficient lists (position
@@ -228,10 +225,11 @@ and value) would cut uploads further and are measured in phase 2.
 
 ## Tools
 
-- `praxi bench`: rows for `motion` with size, PSNR and decode time (entropy decoding and
-  CPU reconstruction separately); [BENCH.md](../spec/BENCH.md) gains the fields.
-- `praxi frame`, `praxi info`: as for other variants (frame export through the CPU decoder).
-- Viewer and editor: play `motion` tracks through `praxi-wgpu`, on the GPU where possible.
+- `praxi bench`: rows for `motion` with size, PSNR (of the reference reconstruction) and
+  entropy decode time; GPU time where a GPU is available. [BENCH.md](../spec/BENCH.md)
+  gains the fields.
+- `praxi frame` (through the reference reconstruction, offline), `praxi info`.
+- Viewer and editor: play `motion` tracks through `praxi-wgpu`.
 
 ## Format changes (0.8)
 
@@ -245,13 +243,16 @@ and value) would cut uploads further and are measured in phase 2.
 
 ## Phases
 
-1. **CPU codec and measurement**: encoder in `praxi-encoder`, entropy decoder and CPU
-   reference decoder in `praxi` (no new dependencies), format 0.8 in PRAXI.md, `--variant
-   motion`, bench rows. Measures size against PSNR next to BC7 on the bench input, and the
-   open questions below. **Gate**: continue only if `motion` reaches BC7's PSNR at no more
-   than 1/5 of its size with entropy decoding under 1 ms per 1080p frame.
-2. **GPU decoder**: compute shaders in `praxi-wgpu`, coded frame queue in the player,
-   tests that GPU output equals the CPU decoder's byte for byte (lavapipe in CI if the
+The encoder comes first in any order: nothing can be decoded before something is encoded.
+
+1. **Bitstream and encoder**: `praxi_format::motion` (syntax, entropy coding, reference
+   reconstruction; no new dependencies), the encoder in `praxi-encoder`, format 0.8 in
+   PRAXI.md, `--variant motion`, bench rows. Measures size against PSNR next to BC7 on the
+   bench input, entropy decode time, and the open questions below. **Gate**: continue only
+   if `motion` reaches BC7's PSNR at no more than 1/5 of its size with entropy decoding
+   under 1 ms per 1080p frame.
+2. **GPU decoder**: coded frame queue in the player, compute shaders in `praxi-wgpu`, tests
+   that GPU output equals the reference byte for byte (lavapipe locally, and in CI if the
    runner allows), GPU timing.
 3. **Integration**: viewer, editor and `cutscene` example on `motion` tracks; engine guide
    and texture-variants pages updated.
