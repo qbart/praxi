@@ -106,8 +106,8 @@ impl Layout {
             .into_iter()
             .map(|shift| {
                 let p = Plane {
-                    width: mbs_x * 16 >> shift,
-                    height: mbs_y * 16 >> shift,
+                    width: (mbs_x * 16) >> shift,
+                    height: (mbs_y * 16) >> shift,
                     offset,
                     first_block,
                     shift,
@@ -186,11 +186,14 @@ impl CodedFrame {
         (w[0], c)
     }
 
-    fn push_block(&mut self, index: u32, coeffs: &[i32; 64]) {
+    /// Appends a coded block: its index and row-major coefficients.
+    pub fn push_block(&mut self, index: u32, coeffs: &[i32; 64]) {
         self.blocks.push(index);
         self.blocks.extend(
             coeffs
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|c| (c[0] as u16 as u32) | (c[1] as u16 as u32) << 16),
         );
     }

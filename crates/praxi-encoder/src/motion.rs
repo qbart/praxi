@@ -1,7 +1,7 @@
 //! Encoder of the motion codec (`docs/features/motion-codec.md#encoder`).
 
 use praxi_format::motion::{
-    self, BLOCK_WORDS, Layout, MAX_LEVEL, MAX_MV, MB_INTER, MB_INTRA, MB_SKIP, Plane, TABLE_MB,
+    self, Layout, MAX_LEVEL, MAX_MV, MB_INTER, MB_INTRA, MB_SKIP, Plane, TABLE_MB,
     TABLE_MV, Token, ZIGZAG, block_tokens, class, dequantize, inverse_transform, mv_predictor,
     plane_qp, predict,
 };
@@ -129,23 +129,15 @@ impl MotionEncoder {
                     }
                     let plane = &self.layout.planes[p];
                     let qp = plane_qp(self.qp, p, &self.params);
-                    frame
-                        .blocks
-                        .push(plane.first_block + by * plane.blocks_x() + bx);
                     let mut natural = [0i32; 64];
                     for (k, &l) in levels.iter().enumerate() {
                         natural[ZIGZAG[k] as usize] = dequantize(l, qp);
                     }
-                    frame.blocks.extend(
-                        natural
-                            .chunks_exact(2)
-                            .map(|c| (c[0] as u16 as u32) | (c[1] as u16 as u32) << 16),
-                    );
+                    frame.push_block(plane.first_block + by * plane.blocks_x() + bx, &natural);
                 }
             }
             tokens.push(slice_tokens);
         }
-        debug_assert_eq!(frame.blocks.len() % BLOCK_WORDS, 0);
         frame.keyframe = keyframe;
         // Rebuild exactly as decoders will, and predict the next frame from that.
         motion::reconstruct(&self.layout, &frame, &self.reference, &mut recon);
