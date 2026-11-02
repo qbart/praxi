@@ -63,11 +63,7 @@ pub struct Cue {
 
 impl Cue {
     pub fn new(kind: impl Into<String>) -> Cue {
-        Cue {
-            duration: 0,
-            kind: kind.into(),
-            fields: Vec::new(),
-        }
+        Cue { duration: 0, kind: kind.into(), fields: Vec::new() }
     }
 
     pub fn get(&self, key: &str) -> Option<&Value> {
@@ -172,11 +168,7 @@ impl Cue {
         if r.at != payload.len() {
             return corrupt("trailing bytes after cue fields");
         }
-        Ok(Cue {
-            duration,
-            kind,
-            fields,
-        })
+        Ok(Cue { duration, kind, fields })
     }
 }
 
@@ -187,11 +179,7 @@ struct Cursor<'a> {
 
 impl<'a> Cursor<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let Some(s) = self
-            .at
-            .checked_add(n)
-            .and_then(|end| self.b.get(self.at..end))
-        else {
+        let Some(s) = self.at.checked_add(n).and_then(|end| self.b.get(self.at..end)) else {
             return corrupt("truncated cue payload");
         };
         self.at += n;

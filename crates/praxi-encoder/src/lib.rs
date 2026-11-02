@@ -13,12 +13,12 @@ use ktx::astcenc::{
 };
 use ktx::basisu::{uastc_bc7, uastc_enc};
 use praxi_format::{
-    AudioParams, COLOR_FLAG_ALPHA, COLOR_FLAG_SRGB, Compression, Cue, StreamInfo, TextureFormat,
-    TimeBase, VideoParams, Writer, adpcm,
+    AudioParams, COLOR_FLAG_ALPHA, adpcm, COLOR_FLAG_SRGB, Compression, Cue, StreamInfo, TextureFormat, TimeBase,
+    VideoParams, Writer,
 };
 
-use motion::MotionEncoder;
 pub use praxi_format::Chroma;
+use motion::MotionEncoder;
 
 pub use praxi_format::{SampleFormat, Value};
 use std::collections::BTreeSet;
@@ -86,29 +86,16 @@ pub struct VariantConfig {
 
 impl VariantConfig {
     pub fn bc7() -> VariantConfig {
-        VariantConfig {
-            kind: VariantKind::Bc7 { rdo_lambda: 0.0 },
-            quality: Quality::Fast,
-        }
+        VariantConfig { kind: VariantKind::Bc7 { rdo_lambda: 0.0 }, quality: Quality::Fast }
     }
 
     pub fn astc(block: u8) -> VariantConfig {
-        VariantConfig {
-            kind: VariantKind::Astc { block },
-            quality: Quality::Fast,
-        }
+        VariantConfig { kind: VariantKind::Astc { block }, quality: Quality::Fast }
     }
 
     /// The motion codec with `qp` 22, 4:2:0 chroma and 4 slices.
     pub fn motion() -> VariantConfig {
-        VariantConfig {
-            kind: VariantKind::Motion {
-                qp: 22,
-                chroma: Chroma::C420,
-                slices: 4,
-            },
-            quality: Quality::Fast,
-        }
+        VariantConfig { kind: VariantKind::Motion { qp: 22, chroma: Chroma::C420, slices: 4 }, quality: Quality::Fast }
     }
 
     /// Sets the quantizer of a motion variant (0 to 51); ignored by others.
@@ -171,12 +158,7 @@ pub struct CueConfig {
 
 impl CueConfig {
     pub fn new(time: f64, kind: impl Into<String>) -> CueConfig {
-        CueConfig {
-            time,
-            duration: 0.0,
-            kind: kind.into(),
-            fields: Vec::new(),
-        }
+        CueConfig { time, duration: 0.0, kind: kind.into(), fields: Vec::new() }
     }
 
     pub fn duration(mut self, seconds: f64) -> CueConfig {
@@ -198,10 +180,7 @@ pub struct CueStreamConfig {
 
 impl CueStreamConfig {
     pub fn new(name: impl Into<String>) -> CueStreamConfig {
-        CueStreamConfig {
-            name: name.into(),
-            cues: Vec::new(),
-        }
+        CueStreamConfig { name: name.into(), cues: Vec::new() }
     }
 
     pub fn cue(mut self, cue: CueConfig) -> CueStreamConfig {
@@ -224,12 +203,7 @@ pub struct AudioTrackConfig {
 }
 
 impl AudioTrackConfig {
-    pub fn from_samples(
-        name: impl Into<String>,
-        sample_rate: u32,
-        channels: u16,
-        samples: Vec<f32>,
-    ) -> AudioTrackConfig {
+    pub fn from_samples(name: impl Into<String>, sample_rate: u32, channels: u16, samples: Vec<f32>) -> AudioTrackConfig {
         let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
         AudioTrackConfig::from_reader(name, sample_rate, channels, Cursor::new(bytes))
     }
@@ -493,9 +467,7 @@ impl<W: Write + Seek> Encoder<W> {
             return Err(Error::Config("keyint must be at least 1".into()));
         }
         if !(0.0..=100.0).contains(&config.plane_min_saving) {
-            return Err(Error::Config(
-                "plane_min_saving must be between 0 and 100".into(),
-            ));
+            return Err(Error::Config("plane_min_saving must be between 0 and 100".into()));
         }
 
         let threads = match c.threads {
@@ -531,18 +503,15 @@ impl<W: Write + Seek> Encoder<W> {
                         Quality::Thorough => astcenc::ASTCENC_PRE_THOROUGH,
                     };
                     let b = block as u32;
-                    let cfg =
-                        astcenc::astcenc_config_init(AstcencProfile::LdrSrgb, b, b, 1, preset, 0)
-                            .map_err(|e| Error::Encode(format!("astcenc config: {e:?}")))?;
+                    let cfg = astcenc::astcenc_config_init(AstcencProfile::LdrSrgb, b, b, 1, preset, 0)
+                        .map_err(|e| Error::Encode(format!("astcenc config: {e:?}")))?;
                     let ctx = astcenc::astcenc_context_alloc(&cfg, threads as u32)
                         .map_err(|e| Error::Encode(format!("astcenc context: {e:?}")))?;
                     BlockEncoder::Astc { ctx }
                 }
                 VariantKind::Motion { qp, slices, .. } => {
                     if qp > praxi_format::motion::MAX_QP || slices == 0 {
-                        return Err(Error::Config(format!(
-                            "motion qp {qp} or slices {slices} out of range"
-                        )));
+                        return Err(Error::Config(format!("motion qp {qp} or slices {slices} out of range")));
                     }
                     BlockEncoder::Motion(Box::new(MotionEncoder::new(&params, qp, slices, threads)))
                 }
@@ -556,10 +525,7 @@ impl<W: Write + Seek> Encoder<W> {
                 src_blocks: Vec::new(),
                 encoded: Vec::new(),
                 payload: Vec::new(),
-                stats: VariantStats {
-                    format: Some(format),
-                    ..Default::default()
-                },
+                stats: VariantStats { format: Some(format), ..Default::default() },
             });
         }
         let preload_us = c.audio_preload.as_micros();
@@ -571,35 +537,22 @@ impl<W: Write + Seek> Encoder<W> {
         let mut named_groups: Vec<(String, u16)> = Vec::new();
         for a in audio_configs {
             if a.sample_rate == 0 || a.channels == 0 {
-                return Err(Error::Config(format!(
-                    "audio track {:?} has zero sample rate or channels",
-                    a.name
-                )));
+                return Err(Error::Config(format!("audio track {:?} has zero sample rate or channels", a.name)));
             }
             if a.channel_mask != 0 && a.channel_mask.count_ones() != a.channels as u32 {
-                return Err(Error::Config(format!(
-                    "audio track {:?}: channel mask does not match {} channels",
-                    a.name, a.channels
-                )));
+                return Err(Error::Config(format!("audio track {:?}: channel mask does not match {} channels", a.name, a.channels)));
             }
-            let chunk_frames =
-                (c.audio_chunk.as_micros() * a.sample_rate as u128 / 1_000_000) as usize;
+            let chunk_frames = (c.audio_chunk.as_micros() * a.sample_rate as u128 / 1_000_000) as usize;
             if chunk_frames == 0 {
-                return Err(Error::Config(
-                    "audio chunk is shorter than one sample frame".into(),
-                ));
+                return Err(Error::Config("audio chunk is shorter than one sample frame".into()));
             }
             let group = match a.group {
                 Some(g) => g,
                 None => match named_groups.iter().find(|(n, _)| *n == a.name) {
                     Some((_, g)) => *g,
                     None => {
-                        let used = |g: &u16| {
-                            explicit.contains(g) || named_groups.iter().any(|(_, n)| n == g)
-                        };
-                        let g = (0..=u16::MAX)
-                            .find(|g| !used(g))
-                            .ok_or_else(|| Error::Config("too many audio groups".into()))?;
+                        let used = |g: &u16| explicit.contains(g) || named_groups.iter().any(|(_, n)| n == g);
+                        let g = (0..=u16::MAX).find(|g| !used(g)).ok_or_else(|| Error::Config("too many audio groups".into()))?;
                         named_groups.push((a.name.clone(), g));
                         g
                     }
@@ -625,11 +578,7 @@ impl<W: Write + Seek> Encoder<W> {
                 pcm: Vec::new(),
                 adpcm: adpcm::Encoder::new(a.channels as usize),
                 payload: Vec::new(),
-                stats: AudioStats {
-                    name: a.name,
-                    channels: a.channels,
-                    ..Default::default()
-                },
+                stats: AudioStats { name: a.name, channels: a.channels, ..Default::default() },
             });
             streams.push(StreamInfo::audio(group, params));
         }
@@ -643,17 +592,10 @@ impl<W: Write + Seek> Encoder<W> {
                     if secs.is_finite() && secs >= 0.0 {
                         Ok((secs * 1e6).round() as u64)
                     } else {
-                        Err(Error::Config(format!(
-                            "cue {:?} has invalid {what} {secs}",
-                            cc.kind
-                        )))
+                        Err(Error::Config(format!("cue {:?} has invalid {what} {secs}", cc.kind)))
                     }
                 };
-                let cue = Cue {
-                    duration: micros(cc.duration, "duration")?,
-                    kind: cc.kind.clone(),
-                    fields: cc.fields.clone(),
-                };
+                let cue = Cue { duration: micros(cc.duration, "duration")?, kind: cc.kind.clone(), fields: cc.fields.clone() };
                 scratch.clear();
                 cue.encode(&mut scratch)?;
                 cues.push((micros(cc.time, "time")?, stream, cue));
@@ -662,28 +604,14 @@ impl<W: Write + Seek> Encoder<W> {
         cues.sort_by_key(|(at, _, _)| *at);
         let mut writer = Writer::new(out, streams)?;
         writer.set_plane_min_saving(config.plane_min_saving);
-        Ok(Encoder {
-            writer,
-            config,
-            threads,
-            variants,
-            audio,
-            time_base,
-            cues,
-            next_cue: 0,
-            frame: 0,
-        })
+        Ok(Encoder { writer, config, threads, variants, audio, time_base, cues, next_cue: 0, frame: 0 })
     }
 
     /// Encodes one frame: `width * height * 4` bytes of sRGB RGBA8, rows top to bottom.
     pub fn push_frame(&mut self, rgba: &[u8]) -> Result<()> {
         let (w, h) = (self.config.width as usize, self.config.height as usize);
         if rgba.len() != w * h * 4 {
-            return Err(Error::Config(format!(
-                "frame has {} bytes, expected {}",
-                rgba.len(),
-                w * h * 4
-            )));
+            return Err(Error::Config(format!("frame has {} bytes, expected {}", rgba.len(), w * h * 4)));
         }
         let pts = self.frame;
         self.write_due(self.time_base.to_micros(pts))?;
@@ -694,13 +622,7 @@ impl<W: Write + Seek> Encoder<W> {
                 v.payload.clear();
                 let keyframe = m.encode(rgba, w, h, keyframe, &mut v.payload);
                 let before = self.writer.bytes_written();
-                self.writer.write_chunk(
-                    v.stream,
-                    pts,
-                    keyframe,
-                    &v.payload,
-                    Some(Compression::None),
-                )?;
+                self.writer.write_chunk(v.stream, pts, keyframe, &v.payload, Some(Compression::None))?;
                 v.stats.bytes += self.writer.bytes_written() - before;
                 v.stats.frames += 1;
                 v.stats.keyframes += keyframe as u64;
@@ -712,22 +634,15 @@ impl<W: Write + Seek> Encoder<W> {
             let (bw, bh) = v.params.format.block_size();
             gather_blocks(rgba, w, h, bw as usize, bh as usize, &mut v.src_blocks);
             match &mut v.encoder {
-                BlockEncoder::Bc7 { level, rdo_lambda } => encode_bc7(
-                    &v.src_blocks,
-                    *level,
-                    *rdo_lambda,
-                    self.threads,
-                    &mut v.encoded,
-                ),
-                BlockEncoder::Astc { ctx } => {
-                    encode_astc(ctx, rgba, w, h, &v.params, self.threads, &mut v.encoded)?
+                BlockEncoder::Bc7 { level, rdo_lambda } => {
+                    encode_bc7(&v.src_blocks, *level, *rdo_lambda, self.threads, &mut v.encoded)
                 }
+                BlockEncoder::Astc { ctx } => encode_astc(ctx, rgba, w, h, &v.params, self.threads, &mut v.encoded)?,
                 BlockEncoder::Motion(_) => unreachable!("handled above"),
             }
             build_payload(v, keyframe, self.config.skip_threshold);
             let before = self.writer.bytes_written();
-            self.writer
-                .write_chunk(v.stream, pts, keyframe, &v.payload, None)?;
+            self.writer.write_chunk(v.stream, pts, keyframe, &v.payload, None)?;
             v.stats.bytes += self.writer.bytes_written() - before;
             v.stats.frames += 1;
             v.stats.keyframes += keyframe as u64;
@@ -742,15 +657,8 @@ impl<W: Write + Seek> Encoder<W> {
     pub fn finish(mut self) -> Result<(W, Stats)> {
         self.write_due(u64::MAX)?;
         let frames_end = self.time_base.to_micros(self.frame);
-        let cues_end = self
-            .cues
-            .iter()
-            .map(|(at, _, c)| at.saturating_add(c.duration));
-        let audio_end = self.audio.iter().map(|a| {
-            self.writer.streams()[a.stream as usize]
-                .time_base
-                .to_micros(a.next_pts)
-        });
+        let cues_end = self.cues.iter().map(|(at, _, c)| at.saturating_add(c.duration));
+        let audio_end = self.audio.iter().map(|a| self.writer.streams()[a.stream as usize].time_base.to_micros(a.next_pts));
         let duration_us = cues_end.chain(audio_end).fold(frames_end, u64::max);
         let out = self.writer.finish(duration_us)?;
         let stats = Stats {
@@ -772,12 +680,7 @@ impl<W: Write + Seek> Encoder<W> {
                 .iter()
                 .enumerate()
                 .filter(|(_, a)| !a.done)
-                .map(|(i, a)| {
-                    (
-                        self.writer.streams()[a.stream as usize].decode_time_us(a.next_pts),
-                        i,
-                    )
-                })
+                .map(|(i, a)| (self.writer.streams()[a.stream as usize].decode_time_us(a.next_pts), i))
                 .min();
             match (cue_at, audio_next) {
                 (Some(at), next) if at <= time_us && next.is_none_or(|(t, _)| at <= t) => {
@@ -807,11 +710,7 @@ impl<W: Write + Seek> Encoder<W> {
         }
         let input = &a.input[..frames * frame_in];
         a.payload.clear();
-        let to_s16 = |b: &[u8; 4]| {
-            (f32::from_le_bytes(*b) * 32768.0)
-                .round()
-                .clamp(-32768.0, 32767.0) as i16
-        };
+        let to_s16 = |b: &[u8; 4]| (f32::from_le_bytes(*b) * 32768.0).round().clamp(-32768.0, 32767.0) as i16;
         match a.format {
             SampleFormat::F32 => a.payload.extend_from_slice(input),
             SampleFormat::S16 => {
@@ -887,18 +786,8 @@ fn encode_bc7(src_blocks: &[u8], level: u32, rdo_lambda: f32, threads: usize, ou
     });
     if rdo_lambda > 0.0 {
         let pixels: Vec<[u8; 4]> = src_blocks.as_chunks::<4>().0.to_vec();
-        let params = uastc_enc::UastcRdoParams {
-            lambda: rdo_lambda,
-            ..Default::default()
-        };
-        uastc_enc::uastc_rdo(
-            n as u32,
-            &mut uastc,
-            &pixels,
-            &params,
-            flags,
-            threads as u32,
-        );
+        let params = uastc_enc::UastcRdoParams { lambda: rdo_lambda, ..Default::default() };
+        uastc_enc::uastc_rdo(n as u32, &mut uastc, &pixels, &params, flags, threads as u32);
     }
     out.resize(n * 16, 0);
     for (dst, src) in out.as_chunks_mut::<16>().0.iter_mut().zip(&uastc) {
@@ -929,28 +818,16 @@ fn encode_astc(
             let handles: Vec<_> = (0..threads)
                 .map(|t| {
                     let (image, work) = (&image, &work);
-                    s.spawn(move || {
-                        astcenc::astcenc_compress_image(
-                            ctx,
-                            image,
-                            &AstcencSwizzle::RGBA,
-                            work,
-                            t as u32,
-                        )
-                    })
+                    s.spawn(move || astcenc::astcenc_compress_image(ctx, image, &AstcencSwizzle::RGBA, work, t as u32))
                 })
                 .collect();
-            handles
-                .into_iter()
-                .map(|h| h.join().unwrap_or(Err(astcenc::AstcencError::BadContext)))
-                .collect::<Vec<_>>()
+            handles.into_iter().map(|h| h.join().unwrap_or(Err(astcenc::AstcencError::BadContext))).collect::<Vec<_>>()
         })
     };
     if let Some(Err(e)) = result.into_iter().find(|r| r.is_err()) {
         return Err(Error::Encode(format!("astcenc: {e:?}")));
     }
-    astcenc::astcenc_compress_reset(ctx)
-        .map_err(|e| Error::Encode(format!("astcenc reset: {e:?}")))?;
+    astcenc::astcenc_compress_reset(ctx).map_err(|e| Error::Encode(format!("astcenc reset: {e:?}")))?;
     Ok(())
 }
 
@@ -975,16 +852,11 @@ fn build_payload(v: &mut Variant, keyframe: bool, threshold: u8) {
         let ref_enc = &mut v.ref_enc[i * bb..(i + 1) * bb];
         if enc == ref_enc {
             ref_src.copy_from_slice(src);
-        } else if src
-            .iter()
-            .zip(ref_src.iter())
-            .all(|(a, b)| a.abs_diff(*b) <= threshold)
-        {
+        } else if src.iter().zip(ref_src.iter()).all(|(a, b)| a.abs_diff(*b) <= threshold) {
             // Close enough to what the decoder already shows.
         } else {
             v.payload[i / 8] |= 1 << (i % 8);
-            v.payload
-                .extend(enc.iter().zip(ref_enc.iter()).map(|(a, b)| a ^ b));
+            v.payload.extend(enc.iter().zip(ref_enc.iter()).map(|(a, b)| a ^ b));
             ref_src.copy_from_slice(src);
             ref_enc.copy_from_slice(enc);
             continue;

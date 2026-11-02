@@ -13,43 +13,28 @@ pub struct Device {
 impl Device {
     /// The default output device, if there is one.
     pub fn open_default() -> Option<Device> {
-        cpal::default_host()
-            .default_output_device()
-            .map(|device| Device { device })
+        cpal::default_host().default_output_device().map(|device| Device { device })
     }
 
     pub fn name(&self) -> String {
-        self.device
-            .description()
-            .map(|d| d.to_string())
-            .unwrap_or_else(|_| "unknown device".into())
+        self.device.description().map(|d| d.to_string()).unwrap_or_else(|_| "unknown device".into())
     }
 
     /// The channel count of the device's default configuration.
     pub fn channels(&self) -> Option<u16> {
-        self.device
-            .default_output_config()
-            .ok()
-            .map(|c| c.channels())
+        self.device.default_output_config().ok().map(|c| c.channels())
     }
 
     /// Starts a stream at `outputs[0]`'s rate and channel count that plays the sum of all
     /// `outputs`. The caller only passes outputs with that rate and channel count.
-    pub fn start(
-        &self,
-        outputs: Vec<AudioOutput>,
-        muted: Arc<AtomicBool>,
-    ) -> Result<Stream, String> {
+    pub fn start(&self, outputs: Vec<AudioOutput>, muted: Arc<AtomicBool>) -> Result<Stream, String> {
         let rate = outputs[0].sample_rate();
         let channels = u16::try_from(outputs[0].channels()).map_err(|_| "too many channels")?;
         let supported = self
             .device
             .supported_output_configs()
             .map_err(|e| e.to_string())?
-            .filter(|c| {
-                c.channels() == channels
-                    && (c.min_sample_rate()..=c.max_sample_rate()).contains(&rate)
-            })
+            .filter(|c| c.channels() == channels && (c.min_sample_rate()..=c.max_sample_rate()).contains(&rate))
             .min_by_key(|c| match c.sample_format() {
                 cpal::SampleFormat::F32 => 0,
                 cpal::SampleFormat::I16 => 1,
@@ -57,29 +42,16 @@ impl Device {
                 _ => 3,
             })
             .ok_or_else(|| format!("the device does not play {channels} channels at {rate} Hz"))?;
-        let config = cpal::StreamConfig {
-            channels,
-            sample_rate: rate,
-            buffer_size: cpal::BufferSize::Default,
-        };
+        let config = cpal::StreamConfig { channels, sample_rate: rate, buffer_size: cpal::BufferSize::Default };
         let latency_us = Arc::new(AtomicU64::new(0));
         let stream = match supported.sample_format() {
-            cpal::SampleFormat::F32 => {
-                self.build::<f32>(config, outputs, muted, latency_us.clone())
-            }
-            cpal::SampleFormat::I16 => {
-                self.build::<i16>(config, outputs, muted, latency_us.clone())
-            }
-            cpal::SampleFormat::I32 => {
-                self.build::<i32>(config, outputs, muted, latency_us.clone())
-            }
+            cpal::SampleFormat::F32 => self.build::<f32>(config, outputs, muted, latency_us.clone()),
+            cpal::SampleFormat::I16 => self.build::<i16>(config, outputs, muted, latency_us.clone()),
+            cpal::SampleFormat::I32 => self.build::<i32>(config, outputs, muted, latency_us.clone()),
             f => return Err(format!("unsupported device sample format {f}")),
         }?;
         stream.play().map_err(|e| e.to_string())?;
-        Ok(Stream {
-            _stream: stream,
-            latency_us,
-        })
+        Ok(Stream { _stream: stream, latency_us })
     }
 
     fn build<T>(
@@ -104,8 +76,7 @@ impl Device {
                     // starts, then the buffer itself.
                     let t = info.timestamp();
                     let buffer_us = (buf.len() / channels) as f64 * frame_us;
-                    let latency =
-                        t.playback.duration_since(t.callback).as_micros() as u64 + buffer_us as u64;
+                    let latency = t.playback.duration_since(t.callback).as_micros() as u64 + buffer_us as u64;
                     latency_us.store(latency, Ordering::Relaxed);
                     mix.clear();
                     mix.resize(buf.len(), 0.0f32);

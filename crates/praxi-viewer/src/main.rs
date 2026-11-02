@@ -4,12 +4,12 @@
 mod audio;
 mod checker;
 
-use checker::Checker;
 use clap::Parser;
+use checker::Checker;
+use praxi_wgpu::{Rect, VideoRenderer};
+use praxi::{Capabilities, CueTrack, Event, Player, TextureFormat, Value};
 #[cfg(feature = "audio")]
 use praxi::Clock;
-use praxi::{Capabilities, CueTrack, Event, Player, TextureFormat, Value};
-use praxi_wgpu::{Rect, VideoRenderer};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -27,11 +27,7 @@ type AnyResult<T> = Result<T, Box<dyn std::error::Error>>;
 type FilePlayer = Player<BufReader<File>>;
 
 #[derive(Parser)]
-#[command(
-    name = "praxi-viewer",
-    version,
-    about = "Plays a praxi file on the GPU"
-)]
+#[command(name = "praxi-viewer", version, about = "Plays a praxi file on the GPU")]
 struct Args {
     file: PathBuf,
     /// Only accept this texture format.
@@ -87,11 +83,7 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
 fn main() -> ExitCode {
     let args = Args::parse();
     let result = if args.at.is_finite() && args.at >= 0.0 {
-        if args.screenshot.is_some() {
-            screenshot(&args)
-        } else {
-            run_window(args)
-        }
+        if args.screenshot.is_some() { screenshot(&args) } else { run_window(args) }
     } else {
         Err(format!("invalid time {}", args.at).into())
     };
@@ -125,17 +117,11 @@ fn describe_tracks(player: &FilePlayer) {
     for (i, t) in player.tracks().iter().enumerate() {
         let p = &t.params;
         let alpha = if p.alpha() { ", alpha" } else { "" };
-        println!(
-            "video {i}: stream {}, {} {}x{}{alpha}",
-            t.stream, p.format, p.width, p.height
-        );
+        println!("video {i}: stream {}, {} {}x{}{alpha}", t.stream, p.format, p.width, p.height);
     }
     for (i, t) in player.audio_tracks().iter().enumerate() {
         let p = &t.params;
-        println!(
-            "audio {i}: stream {}, {:?}, {} Hz, {} ch, {}",
-            t.stream, p.name, p.sample_rate, p.channels, p.format
-        );
+        println!("audio {i}: stream {}, {:?}, {} Hz, {} ch, {}", t.stream, p.name, p.sample_rate, p.channels, p.format);
     }
 }
 
@@ -179,19 +165,13 @@ impl CueSheets {
     }
 
     fn modified_now(&self) -> Vec<Option<SystemTime>> {
-        self.paths
-            .iter()
-            .map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
-            .collect()
+        self.paths.iter().map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok()).collect()
     }
 
     /// Whether a sheet that exists now changed since it was last read. A sheet missing for
     /// a moment, as editors replace files, is not a change.
     fn changed(&self) -> bool {
-        self.modified_now()
-            .iter()
-            .zip(&self.modified)
-            .any(|(now, then)| now.is_some() && now != then)
+        self.modified_now().iter().zip(&self.modified).any(|(now, then)| now.is_some() && now != then)
     }
 
     /// Reads every sheet and hands their cues to `player`; on error the player keeps its cues.
@@ -200,29 +180,16 @@ impl CueSheets {
         self.modified = self.modified_now();
         let mut tracks: Vec<CueTrack> = Vec::new();
         for path in &self.paths {
-            let text =
-                std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-            tracks.extend(
-                praxi::format::cue_sheet::parse(&text)
-                    .map_err(|e| format!("{}: {e}", path.display()))?,
-            );
+            let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            tracks.extend(praxi::format::cue_sheet::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?);
         }
         let cues: usize = tracks.iter().map(|t| t.cues.len()).sum();
         let duration = player.duration().as_micros() as u64;
-        let late = tracks
-            .iter()
-            .flat_map(|t| &t.cues)
-            .filter(|c| c.time_us.saturating_add(c.cue.duration) > duration)
-            .count();
+        let late = tracks.iter().flat_map(|t| &t.cues).filter(|c| c.time_us.saturating_add(c.cue.duration) > duration).count();
         let names: Vec<String> = self.paths.iter().map(|p| p.display().to_string()).collect();
-        let mut summary = format!(
-            "cues: {} streams, {cues} cues from {}",
-            tracks.len(),
-            names.join(", ")
-        );
+        let mut summary = format!("cues: {} streams, {cues} cues from {}", tracks.len(), names.join(", "));
         if late > 0 {
-            summary +=
-                &format!("; {late} past the end of the file (import would extend its duration)");
+            summary += &format!("; {late} past the end of the file (import would extend its duration)");
         }
         println!("{summary}");
         player.replace_cues(tracks);
@@ -231,20 +198,14 @@ impl CueSheets {
 }
 
 /// A render pass that clears `view` to transparent black.
-fn begin_pass<'a>(
-    encoder: &'a mut wgpu::CommandEncoder,
-    view: &'a wgpu::TextureView,
-) -> wgpu::RenderPass<'a> {
+fn begin_pass<'a>(encoder: &'a mut wgpu::CommandEncoder, view: &'a wgpu::TextureView) -> wgpu::RenderPass<'a> {
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("praxi-viewer"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view,
             depth_slice: None,
             resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                store: wgpu::StoreOp::Store,
-            },
+            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
         })],
         ..Default::default()
     })
@@ -254,11 +215,8 @@ fn begin_pass<'a>(
 
 fn screenshot(args: &Args) -> AnyResult<()> {
     let output = args.screenshot.as_ref().expect("screenshot path");
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
-        &instance, None,
-    ))?;
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None))?;
     describe_adapter(&adapter);
     let player = open_player(args, &praxi_wgpu::capabilities(&adapter, args.format)?)?;
     describe_tracks(&player);
@@ -275,11 +233,7 @@ fn screenshot(args: &Args) -> AnyResult<()> {
     let (width, height) = args.size.unwrap_or((video.width, video.height));
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("screenshot"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -312,16 +266,10 @@ fn screenshot(args: &Args) -> AnyResult<()> {
                 rows_per_image: Some(height),
             },
         },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
     );
     queue.submit([encoder.finish()]);
-    buffer
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, |r| r.expect("map screenshot buffer"));
+    buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map screenshot buffer"));
     device.poll(wgpu::PollType::wait_indefinitely())?;
 
     let mapped = buffer.slice(..).get_mapped_range()?;
@@ -334,11 +282,7 @@ fn screenshot(args: &Args) -> AnyResult<()> {
     encoder.set_depth(png::BitDepth::Eight);
     encoder.write_header()?.write_image_data(&rgba)?;
     let at = player.video_frame(0).map_or(Duration::ZERO, |f| f.time);
-    println!(
-        "{}: frame at {:.3} s, {width}x{height}",
-        output.display(),
-        at.as_secs_f64()
-    );
+    println!("{}: frame at {:.3} s, {width}x{height}", output.display(), at.as_secs_f64());
     Ok(())
 }
 
@@ -346,15 +290,10 @@ fn screenshot(args: &Args) -> AnyResult<()> {
 
 fn run_window(args: Args) -> AnyResult<()> {
     let event_loop = EventLoop::new()?;
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(
-        Box::new(event_loop.owned_display_handle()),
-    ));
-    let mut app = App {
-        args,
-        instance,
-        viewer: None,
-        error: None,
-    };
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
+        event_loop.owned_display_handle(),
+    )));
+    let mut app = App { args, instance, viewer: None, error: None };
     event_loop.run_app(&mut app)?;
     if let Some(viewer) = &app.viewer {
         viewer.stats.print();
@@ -390,9 +329,7 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let Some(viewer) = &mut self.viewer else {
-            return;
-        };
+        let Some(viewer) = &mut self.viewer else { return };
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => viewer.resize(size.width, size.height),
@@ -465,31 +402,17 @@ struct Viewer {
 }
 
 impl Viewer {
-    fn new(
-        args: &Args,
-        instance: &wgpu::Instance,
-        event_loop: &ActiveEventLoop,
-    ) -> AnyResult<Viewer> {
-        let name = args.file.file_name().map_or_else(
-            || args.file.display().to_string(),
-            |n| n.to_string_lossy().into(),
+    fn new(args: &Args, instance: &wgpu::Instance, event_loop: &ActiveEventLoop) -> AnyResult<Viewer> {
+        let name = args.file.file_name().map_or_else(|| args.file.display().to_string(), |n| n.to_string_lossy().into());
+        let window = Arc::new(
+            event_loop.create_window(Window::default_attributes().with_title(format!("praxi-viewer — {name}")))?,
         );
-        let window = Arc::new(event_loop.create_window(
-            Window::default_attributes().with_title(format!("praxi-viewer — {name}")),
-        )?);
         let surface = instance.create_surface(window.clone())?;
-        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
-            instance,
-            Some(&surface),
-        ))?;
+        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(instance, Some(&surface)))?;
         describe_adapter(&adapter);
 
         #[cfg(feature = "audio")]
-        let device_audio = if args.no_audio {
-            None
-        } else {
-            audio::Device::open_default()
-        };
+        let device_audio = if args.no_audio { None } else { audio::Device::open_default() };
         let caps = praxi_wgpu::capabilities(&adapter, args.format)?;
         #[cfg(feature = "audio")]
         let caps = match device_audio.as_ref().and_then(|d| d.channels()) {
@@ -503,12 +426,11 @@ impl Viewer {
             sheets.load(&mut player)?;
         }
 
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                label: Some("praxi-viewer"),
-                required_features: praxi_wgpu::required_features(&adapter),
-                ..Default::default()
-            }))?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("praxi-viewer"),
+            required_features: praxi_wgpu::required_features(&adapter),
+            ..Default::default()
+        }))?;
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
@@ -621,10 +543,7 @@ impl Viewer {
         self.last = now;
         #[cfg(feature = "audio")]
         if let Some(audio) = self.audio.as_ref().filter(|_| self.audio_clock) {
-            self.player.set_clock(Clock::Audio {
-                track: 0,
-                latency: audio.latency(),
-            });
+            self.player.set_clock(Clock::Audio { track: 0, latency: audio.latency() });
         }
         self.player.advance(dt)?;
         let advanced = Instant::now();
@@ -633,8 +552,7 @@ impl Viewer {
         let uploaded = Instant::now();
 
         let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
                 self.window.request_redraw();
@@ -648,12 +566,7 @@ impl Viewer {
         let view = frame.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
         let video = self.player.tracks()[0].params;
-        let rect = Rect::fit(
-            video.width,
-            video.height,
-            self.config.width,
-            self.config.height,
-        );
+        let rect = Rect::fit(video.width, video.height, self.config.width, self.config.height);
         {
             let mut pass = begin_pass(&mut encoder, &view);
             self.checker.draw(&mut pass, rect);
@@ -704,11 +617,7 @@ impl Viewer {
 
 /// Starts the audio stream for every track matching audio track 0, or prints why not.
 #[cfg(feature = "audio")]
-fn start_audio(
-    device: &audio::Device,
-    player: &FilePlayer,
-    muted: Arc<AtomicBool>,
-) -> Option<audio::Stream> {
+fn start_audio(device: &audio::Device, player: &FilePlayer, muted: Arc<AtomicBool>) -> Option<audio::Stream> {
     let tracks = player.audio_tracks();
     let first = &tracks.first()?.params;
     let mut outputs = Vec::new();
@@ -724,19 +633,11 @@ fn start_audio(
     }
     match device.start(outputs, muted) {
         Ok(stream) => {
-            println!(
-                "audio device: {}, {} Hz, {} ch",
-                device.name(),
-                first.sample_rate,
-                first.channels
-            );
+            println!("audio device: {}, {} Hz, {} ch", device.name(), first.sample_rate, first.channels);
             Some(stream)
         }
         Err(e) => {
-            println!(
-                "audio device: {}: {e}; playing without sound",
-                device.name()
-            );
+            println!("audio device: {}: {e}; playing without sound", device.name());
             None
         }
     }

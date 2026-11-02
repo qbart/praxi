@@ -8,11 +8,7 @@ use praxi_format::{TextureFormat, VideoParams};
 /// Decodes a frame's block data to `width * height * 4` bytes of RGBA8, cropping padding.
 pub fn decode_frame(params: &VideoParams, data: &[u8]) -> Result<Vec<u8>> {
     if data.len() != params.frame_size() {
-        return Err(Error::Encode(format!(
-            "frame has {} bytes, expected {}",
-            data.len(),
-            params.frame_size()
-        )));
+        return Err(Error::Encode(format!("frame has {} bytes, expected {}", data.len(), params.frame_size())));
     }
     let (w, h) = (params.width as usize, params.height as usize);
     match params.format {
@@ -22,14 +18,9 @@ pub fn decode_frame(params: &VideoParams, data: &[u8]) -> Result<Vec<u8>> {
         TextureFormat::Bc7 => Ok(decode_4x4(params, data, |block, px| {
             gpu_texture::unpack_bc7(block.try_into().expect("16-byte block"), px)
         })),
-        TextureFormat::Astc4x4
-        | TextureFormat::Astc5x5
-        | TextureFormat::Astc6x6
-        | TextureFormat::Astc8x8 => {
+        TextureFormat::Astc4x4 | TextureFormat::Astc5x5 | TextureFormat::Astc6x6 | TextureFormat::Astc8x8 => {
             let (bw, bh) = params.format.block_size();
-            let fail = |what: &str, e: astcenc::AstcencError| {
-                Error::Encode(format!("astcenc {what}: {e:?}"))
-            };
+            let fail = |what: &str, e: astcenc::AstcencError| Error::Encode(format!("astcenc {what}: {e:?}"));
             let cfg = astcenc::astcenc_config_init(
                 AstcencProfile::LdrSrgb,
                 bw,
@@ -39,8 +30,7 @@ pub fn decode_frame(params: &VideoParams, data: &[u8]) -> Result<Vec<u8>> {
                 astcenc::ASTCENC_FLG_DECOMPRESS_ONLY,
             )
             .map_err(|e| fail("config", e))?;
-            let mut ctx =
-                astcenc::astcenc_context_alloc(&cfg, 1).map_err(|e| fail("context", e))?;
+            let mut ctx = astcenc::astcenc_context_alloc(&cfg, 1).map_err(|e| fail("context", e))?;
             let mut image = AstcencImage {
                 dim_x: w as u32,
                 dim_y: h as u32,
@@ -51,26 +41,18 @@ pub fn decode_frame(params: &VideoParams, data: &[u8]) -> Result<Vec<u8>> {
                 .map_err(|e| fail("decompress", e))?;
             match image.data {
                 AstcencImageData::U8(mut planes) if planes.len() == 1 => Ok(planes.remove(0)),
-                _ => Err(Error::Encode(
-                    "astcenc returned an unexpected image layout".into(),
-                )),
+                _ => Err(Error::Encode("astcenc returned an unexpected image layout".into())),
             }
         }
-        f @ (TextureFormat::Bc3 | TextureFormat::Bc4 | TextureFormat::Bc5) => Err(Error::Encode(
-            format!("CPU decoding of {f} is not supported yet"),
-        )),
-        TextureFormat::Motion => Err(Error::Encode(
-            "motion frames are coded frames, not block data".into(),
-        )),
+        f @ (TextureFormat::Bc3 | TextureFormat::Bc4 | TextureFormat::Bc5) => {
+            Err(Error::Encode(format!("CPU decoding of {f} is not supported yet")))
+        }
+        TextureFormat::Motion => Err(Error::Encode("motion frames are coded frames, not block data".into())),
     }
 }
 
 /// Decodes 4x4-block formats with `unpack`, which fills 16 RGBA pixels from one block.
-fn decode_4x4(
-    params: &VideoParams,
-    data: &[u8],
-    unpack: impl Fn(&[u8], &mut [[u8; 4]; 16]) -> bool,
-) -> Vec<u8> {
+fn decode_4x4(params: &VideoParams, data: &[u8], unpack: impl Fn(&[u8], &mut [[u8; 4]; 16]) -> bool) -> Vec<u8> {
     let (w, h) = (params.width as usize, params.height as usize);
     let bb = params.format.block_bytes() as usize;
     let bx_count = params.blocks_x() as usize;

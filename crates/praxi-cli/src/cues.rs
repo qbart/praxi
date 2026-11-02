@@ -52,54 +52,28 @@ pub fn run(cmd: CuesCmd) -> AnyResult<()> {
             let tracks = praxi_format::read_cues(&mut reader)?;
             write_sheet(&tracks, output.as_deref())
         }
-        CuesCmd::Import {
-            file,
-            sheets,
-            output,
-        } => {
+        CuesCmd::Import { file, sheets, output } => {
             let mut tracks = Vec::new();
             for path in &sheets {
-                let text = std::fs::read_to_string(path)
-                    .map_err(|e| format!("{}: {e}", path.display()))?;
-                tracks.extend(
-                    cue_sheet::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?,
-                );
+                let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+                tracks.extend(cue_sheet::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?);
             }
             import(&file, &tracks, &output)
         }
-        CuesCmd::Srt {
-            input,
-            output,
-            stream,
-            kind,
-            text_key,
-            fields: extra,
-        } => {
+        CuesCmd::Srt { input, output, stream, kind, text_key, fields: extra } => {
             for (i, (key, _)) in extra.iter().enumerate() {
                 if *key == text_key || extra[..i].iter().any(|(k, _)| k == key) {
                     return Err(format!("field {key} given twice").into());
                 }
             }
-            let text =
-                std::fs::read_to_string(&input).map_err(|e| format!("{}: {e}", input.display()))?;
+            let text = std::fs::read_to_string(&input).map_err(|e| format!("{}: {e}", input.display()))?;
             let subtitles = parse_srt(&text).map_err(|e| format!("{}: {e}", input.display()))?;
             let cues = subtitles
                 .into_iter()
                 .map(|s| {
                     let mut fields = vec![(text_key.clone(), Value::String(s.text))];
-                    fields.extend(
-                        extra
-                            .iter()
-                            .map(|(k, v)| (k.clone(), Value::String(v.clone()))),
-                    );
-                    TimedCue {
-                        time_us: s.start_us,
-                        cue: Cue {
-                            duration: s.end_us - s.start_us,
-                            kind: kind.clone(),
-                            fields,
-                        },
-                    }
+                    fields.extend(extra.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))));
+                    TimedCue { time_us: s.start_us, cue: Cue { duration: s.end_us - s.start_us, kind: kind.clone(), fields } }
                 })
                 .collect();
             write_sheet(&[CueTrack { name: stream, cues }], output.as_deref())
@@ -117,11 +91,7 @@ fn parse_field(s: &str) -> Result<(String, String), String> {
 fn import(input: &Path, tracks: &[CueTrack], output: &Path) -> AnyResult<()> {
     praxi_format::replace_cues_in_file(input, output, tracks)?;
     let count: usize = tracks.iter().map(|t| t.cues.len()).sum();
-    eprintln!(
-        "{}: {} cue streams, {count} cues",
-        output.display(),
-        tracks.len()
-    );
+    eprintln!("{}: {} cue streams, {count} cues", output.display(), tracks.len());
     Ok(())
 }
 
@@ -164,23 +134,15 @@ pub fn parse_srt(text: &str) -> Result<Vec<Subtitle>, String> {
         if lines.peek().is_some_and(|l| !l.contains("-->")) {
             lines.next(); // sequence number
         }
-        let timing = lines
-            .next()
-            .filter(|l| l.contains("-->"))
-            .ok_or_else(|| at("no START --> END line"))?;
+        let timing = lines.next().filter(|l| l.contains("-->")).ok_or_else(|| at("no START --> END line"))?;
         let (start, end) = timing.split_once("-->").expect("-->");
         let end = end.split_whitespace().next().unwrap_or("");
-        let start_us =
-            srt_time(start.trim()).ok_or_else(|| at(&format!("bad time {:?}", start.trim())))?;
+        let start_us = srt_time(start.trim()).ok_or_else(|| at(&format!("bad time {:?}", start.trim())))?;
         let end_us = srt_time(end).ok_or_else(|| at(&format!("bad time {end:?}")))?;
         if end_us < start_us {
             return Err(at("ends before it starts"));
         }
-        out.push(Subtitle {
-            start_us,
-            end_us,
-            text: lines.collect::<Vec<_>>().join("\n"),
-        });
+        out.push(Subtitle { start_us, end_us, text: lines.collect::<Vec<_>>().join("\n") });
     }
     Ok(out)
 }
@@ -190,11 +152,7 @@ fn srt_time(s: &str) -> Option<u64> {
     let (hms, frac) = s.split_once([',', '.'])?;
     let mut parts = hms.split(':');
     let (h, m, sec) = (parts.next()?, parts.next()?, parts.next()?);
-    let digits = |p: &str| {
-        (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| p.parse::<u64>().ok())
-            .flatten()
-    };
+    let digits = |p: &str| (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())).then(|| p.parse::<u64>().ok()).flatten();
     if parts.next().is_some() || frac.len() > 3 {
         return None;
     }
@@ -216,35 +174,14 @@ mod tests {
         assert_eq!(
             parse_srt(srt).unwrap(),
             [
-                Subtitle {
-                    start_us: 1_000_000,
-                    end_us: 4_500_000,
-                    text: "Hello.\n<i>Second line</i>".into()
-                },
-                Subtitle {
-                    start_us: 62_250_000,
-                    end_us: 63_000_000,
-                    text: String::new()
-                },
-                Subtitle {
-                    start_us: 36_000_000_000,
-                    end_us: 36_000_000_000,
-                    text: String::new()
-                },
+                Subtitle { start_us: 1_000_000, end_us: 4_500_000, text: "Hello.\n<i>Second line</i>".into() },
+                Subtitle { start_us: 62_250_000, end_us: 63_000_000, text: String::new() },
+                Subtitle { start_us: 36_000_000_000, end_us: 36_000_000_000, text: String::new() },
             ]
         );
-        assert!(
-            parse_srt("1\n00:00:02,000 --> 00:00:01,000\nx\n").is_err(),
-            "ends before start"
-        );
+        assert!(parse_srt("1\n00:00:02,000 --> 00:00:01,000\nx\n").is_err(), "ends before start");
         assert!(parse_srt("1\nhello\n").is_err(), "no timing");
-        assert!(
-            parse_srt("00:00:01 --> 00:00:02,000\n").is_err(),
-            "no milliseconds"
-        );
-        assert!(
-            parse_srt("00:61:01,000 --> 00:62:02,000\n").is_err(),
-            "minutes"
-        );
+        assert!(parse_srt("00:00:01 --> 00:00:02,000\n").is_err(), "no milliseconds");
+        assert!(parse_srt("00:61:01,000 --> 00:62:02,000\n").is_err(), "minutes");
     }
 }
