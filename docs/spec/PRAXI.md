@@ -1,6 +1,6 @@
 # PRAXI file format
 
-Version 0.7. File extension `.praxi`.
+Version 0.8. File extension `.praxi`.
 
 ## Conventions
 
@@ -29,7 +29,7 @@ Version 0.7. File extension `.praxi`.
 |---|---|---|---|
 | 0 | 8 | `magic` | `89 50 52 58 0D 0A 1A 0A` (`\x89PRX\r\n\x1a\n`) |
 | 8 | 2 | `version_major` | `0`. Readers reject other values. |
-| 10 | 2 | `version_minor` | `7`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
+| 10 | 2 | `version_minor` | `8`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
 | 12 | 4 | `flags` | Reserved, `0`. |
 | 16 | 2 | `stream_count` | Number of entries in the stream table, at least 1. |
 | 18 | 2 | | Reserved. |
@@ -65,13 +65,24 @@ starting at 0.
 | 28 | 1 | `block_width` | Block width in pixels. Must match `format`. |
 | 29 | 1 | `block_height` | Block height in pixels. Must match `format`. |
 | 30 | 1 | `block_bytes` | Bytes per block. Must match `format`. |
-| 31 | 33 | | Reserved. |
+| 31 | 33 | | Motion parameters for format `0x0201` (below), else reserved. |
 
 Derived values:
 
 - `blocks_x = ceil(width / block_width)`, `blocks_y = ceil(height / block_height)`
 - `block_count = blocks_x * blocks_y`
 - `frame_size = block_count * block_bytes`
+
+#### Motion parameters
+
+For format `0x0201` ([Motion payload](#motion-payload)):
+
+| Offset | Size | Field | Description |
+|---|---|---|---|
+| 31 | 1 | `chroma` | `0` 4:2:0 (chroma planes at half width and height), `1` 4:4:4. Readers reject other values. |
+| 32 | 1 | `chroma_qp_offset` | Signed. Added to a frame's `qp` for the chroma planes. |
+| 33 | 1 | `alpha_qp_offset` | Signed. Added to a frame's `qp` for the alpha plane. |
+| 34 | 30 | | Reserved. |
 
 ### Cue parameters (`kind = 3`)
 
@@ -121,6 +132,10 @@ Bits 18-31 are reserved.
 | `0x0102` | ASTC 5x5 (LDR) | 5x5 | 16 |
 | `0x0103` | ASTC 6x6 (LDR) | 6x6 | 16 |
 | `0x0104` | ASTC 8x8 (LDR) | 8x8 | 16 |
+| `0x0201` | motion (not a texture format) | 16x16 | 0 |
+
+For `0x0201`, `frame_size` and the block-based derived values do not apply; the block fields
+describe the macroblock.
 
 Readers reject video streams with unknown format ids or block fields that do not match.
 
@@ -157,7 +172,9 @@ previous frame count`).
 - `1`: the payload is one LZ4 block (the LZ4 block format, without frame header or size
   prefix) that decompresses to exactly `raw_size` bytes.
 - `2`: the payload is in *byte-plane form*, stored as sections (below). Only allowed in
-  video streams; readers reject it in other streams.
+  video streams other than motion streams; readers reject it elsewhere.
+
+Writers store motion payloads with compression `0`: they are entropy coded already.
 
 #### Byte-plane form
 
@@ -233,6 +250,128 @@ the native layout of the texture format, so the payload can be uploaded as is.
 The frame equals the previous frame of the same stream, with each present block XORed byte
 by byte with its residual: `block = previous block ^ residual`.
 `raw_size` equals `ceil(block_count / 8) + changed * block_bytes`.
+
+## Motion payload
+
+Video streams of format `0x0201` (the motion codec, `docs/features/motion-codec.md`). The
+keyframe flag marks frames coded without reference to other frames; the first chunk of a
+stream is a keyframe. A delta frame is predicted from the previous frame of its stream.
+
+### Planes and macroblocks
+
+- `mbs_x = ceil(width / 16)`, `mbs_y = ceil(height / 16)`. Planes are padded to whole
+  macroblocks: Y is `16 * mbs_x` by `16 * mbs_y`; Co and Cg are the same in 4:4:4 and half
+  of it in each direction in 4:2:0; A (only with color flag bit 1) is the size of Y.
+- Pixel values are 8 bits. Planes are numbered Y 0, Co 1, Cg 2, A 3.
+- Transform blocks are 8x8 pixels of one plane, numbered over all planes in plane order,
+  then row-major within a plane: block `(bx, by)` of plane `p` has index
+  `first_block(p) + by * (plane_width / 8) + bx`.
+- A macroblock covers 16x16 luma pixels and holds, in this order: 4 Y blocks (row-major),
+  the Co blocks (1 in 4:2:0, 4 in 4:4:4), the Cg blocks, and 4 A blocks with alpha.
+
+### Frame
+
+| Size | Field | Description |
+|---|---|---|
+| 1 | `qp` | Quantizer, `0` to `51`. |
+| 1 | `slices` | Slice count, `1` to `mbs_y`. |
+| 1 | `table_mask` | Bit `t` set: code lengths of table `t` follow. |
+| 1 | | Reserved. |
+| `128` per set bit | `tables` | Code lengths of each present table, in table order, as in [Huffman section](#huffman-section) (`lengths` field, a complete code or all zero). |
+| `4 * slices` | `slice_sizes` | Bytes of each slice, `u32`. |
+| rest | `slices` | The slices, one after another, filling the payload exactly. |
+
+Tables: `0` macroblock, `1` motion vector, `2` Y DC, `3` Y AC, `4` chroma DC, `5` chroma AC,
+`6` alpha DC, `7` alpha AC. A table absent from a keyframe has no codes; a table absent from
+a delta frame keeps its codes from the previous frame. Tables 6 and 7 must be absent
+without an alpha plane. Codes are canonical as in Huffman sections, at most 11 bits.
+
+Slice `s` covers macroblock rows `s * mbs_y / slices` (rounded down) up to `(s + 1) *
+mbs_y / slices`, its macroblocks in raster order. Each slice is a bit stream, least
+significant bit of byte 0 first; Huffman codes are written most significant code bit first
+into it, as in Huffman sections, and raw bit fields least significant bit first. Bits after
+the last macroblock are zero; a reader rejects a slice whose syntax needs more bits than it
+has. Predictions (below) are reset at the start of each slice.
+
+### Macroblock
+
+1. `mb`: a symbol of table 0: bits 0-1 `kind` (`0` skip, `1` inter, `2` intra; `3` is
+   invalid), bits 2-5 `cbp` (bit `i`: Y block `i` is coded), bit 6 `chroma` (all chroma
+   blocks are coded), bit 7 `alpha` (all A blocks are coded). Keyframes hold only intra
+   macroblocks. A skip macroblock is the symbol `0`.
+2. Inter only: `dx` then `dy`, values of table 1. The motion vector is the predictor plus
+   `(dx, dy)`; each component must be within `-8191` to `8191`.
+3. Inter and intra: the coded blocks in macroblock order.
+
+A *value* of table `t` is a class `c` (a symbol, `0` to `15`) followed by `c` raw bits `b`:
+`v = 0` for `c = 0`, `v = b` when bit `c - 1` of `b` is set, else `v = b - 2^c + 1`.
+
+Motion vectors are in quarter pels. Skip macroblocks take the predictor; intra macroblocks
+count as `(0, 0)` for later predictions. The predictor of macroblock `(mx, my)` uses its
+neighbours inside the slice: A left `(mx - 1, my)`, B above `(mx, my - 1)`, C above right
+`(mx + 1, my - 1)`, or above left `(mx - 1, my - 1)` when `mx + 1 = mbs_x`. When exactly
+one of A, B, C exists it is the predictor; when none exists it is `(0, 0)`; otherwise it is
+the component-wise median of A, B and C with missing ones as `(0, 0)`.
+
+### Coded block
+
+1. `dc`: a value of the plane's DC table (Y 2, chroma 4, alpha 6). For intra macroblocks it
+   is added to the plane's DC predictor, the level of the previous coded block of that plane
+   in an intra macroblock of the slice (`0` at the slice start); the result is the DC level
+   and the new predictor. For inter macroblocks it is the DC level.
+2. AC levels at zigzag positions 1 to 63, symbols of the plane's AC table (3, 5 or 7):
+   `0x00` ends the block, `0xF0` skips 16 zero levels (and must leave the position below 64),
+   any other `run << 4 | size` (`size` 1 to 15) skips `run` zero levels and gives the level
+   at the next position as `size` raw bits, decoded like a value of class `size`. After
+   position 63 no end symbol follows. Other symbols are invalid.
+
+Levels must be within `-16383` to `16383`. Zigzag position `k` is row-major coefficient:
+
+```
+ 0  1  8 16  9  2  3 10 17 24 32 25 18 11  4  5 12 19 26 33 40 48 41 34 27 20 13  6  7 14 21 28
+35 42 49 56 57 50 43 36 29 22 15 23 30 37 44 51 58 59 52 45 38 31 39 46 53 60 61 54 47 55 62 63
+```
+
+### Reconstruction
+
+All arithmetic is in 32-bit signed integers; `>>` is an arithmetic shift.
+
+- Plane `qp`: `clamp(qp + offset, 0, 51)`, the offset being 0 for Y, `chroma_qp_offset` or
+  `alpha_qp_offset`.
+- Dequantization: `c = sign(l) * ((|l| * m[qp % 6] << (qp / 6)) >> 2)` clamped to
+  `-32768..32767`, with `m = [40, 45, 51, 57, 64, 72]`.
+- Inverse transform of coefficients `c[v][u]` (row `v`, column `u`) with the matrix `T`
+  below: `g[y][u] = clamp((sum over v of T[v][y] * c[v][u] + 64) >> 7, -32768, 32767)`,
+  then the residual `r[y][x] = (sum over u of T[u][x] * g[y][u] + 2048) >> 12`.
+- Prediction: `128` for intra macroblocks. Otherwise, for a pixel `(x, y)` of a plane with
+  `f` fraction bits (2; 3 for chroma in 4:2:0) and vector `(mx, my)`: `s = 2^f`,
+  `ix = x + (mx >> f)`, `fx = mx & (s - 1)`, likewise `iy`, `fy`, and
+  `p = ((s - fx)(s - fy) R(ix, iy) + fx (s - fy) R(ix + 1, iy) + (s - fx) fy R(ix, iy + 1)
+  + fx fy R(ix + 1, iy + 1) + s^2 / 2) >> 2f`, where `R` is the previous frame's plane with
+  coordinates clamped to the padded plane.
+- A pixel is `clamp(prediction + residual, 0, 255)`; blocks without coefficients have a
+  zero residual.
+
+```
+T = [ 64  64  64  64  64  64  64  64 ]
+    [ 89  75  50  18 -18 -50 -75 -89 ]
+    [ 83  36 -36 -83 -83 -36  36  83 ]
+    [ 75 -18 -89 -50  50  89  18 -75 ]
+    [ 64 -64 -64  64  64 -64 -64  64 ]
+    [ 50 -89  18  75 -75 -18  89 -50 ]
+    [ 36 -83  83 -36 -36  83 -83  36 ]
+    [ 18 -50  75 -89  89 -75  50 -18 ]
+```
+
+### Display
+
+RGBA of pixel `(x, y)` (`x < width`, `y < height`): `Y` from plane 0; `Co` and `Cg` the
+plane sample in 4:4:4, and in 4:2:0 `(sum of w * C + 8) >> 4` over the two nearest samples
+per axis with weights 3 (nearer) and 1, coordinates clamped to the plane: for even `x = 2i`
+columns `i - 1` (weight 1) and `i` (3), for odd `x = 2i + 1` columns `i` (3) and `i + 1`
+(1), likewise for rows. Then `cg = Cg - 128`, `co = Co - 128`, `t = Y - cg`, `G = Y + cg`,
+`R = t + co`, `B = t - co`, each clamped to `0..255`, sRGB encoded. Alpha is plane 3, or
+255 without alpha.
 
 ## Audio payload
 
@@ -367,3 +506,4 @@ time lies in `[t - max_duration, t]` and keep those ending after `t`.
 - 0.6: delta frames store residuals (XOR with the previous block) instead of blocks;
   compression `2` stores the prefix and each plane as a raw, LZ4 or Huffman section.
 - 0.7: audio sample format `3`, ADPCM.
+- 0.8: video format `0x0201`, the motion codec, with its stream parameters and payload.
