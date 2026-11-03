@@ -51,8 +51,8 @@ praxi encode intro.mp4 -o intro.praxi --variant motion --variant bc7   # both, p
 
 | | BC7 | motion |
 |---|---|---|
-| File size (bench input) | 56 MB/s | goal: under 11 MB/s at equal PSNR |
-| CPU per 1080p frame | 0.6-1.5 ms (decompress) | goal: under 1 ms (entropy decode) |
+| File size (bench input) | 56 MB/s | 8.7 MB/s at equal PSNR (goal: under 11) |
+| CPU per 1080p frame | 0.6-1.5 ms (decompress) | 1.4 ms entropy decode (goal: under 1 ms) |
 | GPU per 1080p frame | upload only | goal: under 1 ms (compute) |
 | GPU memory per track (1080p) | 2 MB | about 14 MB (two frames of planes + RGBA) |
 | Seek | decode to the frame | decode every frame since the keyframe |
@@ -290,9 +290,11 @@ The encoder comes first in any order: nothing can be decoded before something is
 
 ## Measurements
 
-First encoder (16x16 vectors, bilinear quarter-pel, no rate-distortion quantization),
-`make bench` input (Big Buck Bunny 1080p60, first 180 frames), keyframes every 60 frames.
-Decode is entropy decoding per frame on one core, including reading the chunk:
+`make bench` input (Big Buck Bunny 1080p60, first 180 frames), keyframes every 60 frames,
+4:2:0, 4 slices. Decode is entropy decoding per frame on one core, including reading the
+chunk; the machine's core ran at about 3.5 GHz.
+
+First encoder (16x16 vectors, bilinear quarter-pel, SAD search, dense coefficients):
 
 | Variant | MB/s | PSNR | Entropy decode (mean) |
 |---|---|---|---|
@@ -301,10 +303,29 @@ Decode is entropy decoding per frame on one core, including reading the chunk:
 | motion `qp` 16 | 15.0 | 40.4 dB | 5.3 ms |
 | motion `qp` 13 | 22.2 | 41.7 dB | 6.4 ms |
 
-At BC7's PSNR (about `qp` 14.5) the stream is about 18.5 MB/s, a third of BC7: the gate
-asks for a fifth. Delta frames are only about 3 times smaller than keyframes (300 KB
-against 920 KB at `qp` 14), so prediction is the weak part. Entropy decoding is 5-6 times
-over its budget. Neither goal is met yet.
+About 18.5 MB/s at BC7's PSNR, a third of BC7.
+
+Format 0.9 (8- and 4-tap filters, `split` macroblocks, SATD search, least-squares chroma,
+sparse coded frames):
+
+| Variant | MB/s | PSNR | Entropy decode mean / p95 / max |
+|---|---|---|---|
+| motion `qp` 14 | 12.3 | 42.0 dB | 1.75 / 2.02 / 6.1 ms |
+| motion `qp` 15 | 10.5 | 41.5 dB | 1.56 / 1.78 / 5.8 ms |
+| motion `qp` 16 | 8.9 | 41.1 dB | 1.39 / 1.58 / 5.1 ms |
+| motion `qp` 17 | 7.5 | 40.6 dB | 1.25 / 1.43 / 4.4 ms |
+
+At BC7's PSNR (`qp` 16.1) the stream is about 8.7 MB/s, 1/6.4 of BC7: the size goal is
+met. Savings at equal PSNR, measured one after another on the first 40 frames: filters
+22%, least-squares chroma 5%, `split` macroblocks 6.5%, SATD 25%. For comparison, x264
+(`-preset slow`, no B-frames, same RGB PSNR) needs about 7.5 MB/s on those frames.
+
+Entropy decoding misses its goal: 1.4 ms per delta frame, 4-6 ms per keyframe (most
+blocks coded). The decoder went from 3.7 to 1.4 ms through sparse coefficient lists,
+leaving dequantization to the GPU, and keeping the error paths out of the token loop. The
+loop costs about 20 cycles per token; lookahead tables that decode a whole token at once,
+and a separate stream for extra bits, measured no faster. Decoding the 4 slices on 4
+threads would bring it under 0.5 ms.
 
 ## Open questions
 
