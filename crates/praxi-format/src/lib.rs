@@ -22,7 +22,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 8;
+pub const VERSION_MINOR: u16 = 9;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;

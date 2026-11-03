@@ -501,12 +501,13 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
         let skipped = 100.0 * v.skipped_blocks as f64 / v.blocks.max(1) as f64;
         println!("{:<10} {:>12} {:>9.2} {:>8.1}% {:>9}", name, v.bytes, v.bytes as f64 / 1e6 / secs, skipped, v.keyframes);
         if let Some(m) = v.motion {
-            let total = (m.intra + m.inter + m.skip).max(1) as f64;
+            let total = (m.intra + m.inter + m.split + m.skip).max(1) as f64;
             println!(
-                "{:<10} macroblocks {:.1}% intra, {:.1}% inter, {:.1}% skip; {} scene cuts",
+                "{:<10} macroblocks {:.1}% intra, {:.1}% inter, {:.1}% split, {:.1}% skip; {} scene cuts",
                 "",
                 100.0 * m.intra as f64 / total,
                 100.0 * m.inter as f64 / total,
+                100.0 * m.split as f64 / total,
                 100.0 * m.skip as f64 / total,
                 m.scene_cuts
             );

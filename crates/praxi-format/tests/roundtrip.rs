@@ -95,7 +95,7 @@ fn rejects_bad_magic_and_version() {
 
     let mut file = sample_file();
     file[8] = 1;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 8 })));
+    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 9 })));
 
     let mut file = sample_file();
     file[10] = 1;

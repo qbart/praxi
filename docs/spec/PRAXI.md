@@ -1,6 +1,6 @@
 # PRAXI file format
 
-Version 0.8. File extension `.praxi`.
+Version 0.9. File extension `.praxi`.
 
 ## Conventions
 
@@ -228,7 +228,7 @@ into the bits of the stream's bytes from least to most significant (byte 0 bit 0
 Unused bits of the last byte are zero. A reader rejects a stream whose codes need more
 bits than the stream has.
 
-## Video payload## Video payload
+## Video payload
 
 The decompressed payload of a video chunk is a keyframe or a delta frame, given by the
 chunk's keyframe flag. The first chunk of every video stream is a keyframe.
@@ -295,23 +295,33 @@ has. Predictions (below) are reset at the start of each slice.
 
 ### Macroblock
 
-1. `mb`: a symbol of table 0: bits 0-1 `kind` (`0` skip, `1` inter, `2` intra; `3` is
-   invalid), bits 2-5 `cbp` (bit `i`: Y block `i` is coded), bit 6 `chroma` (all chroma
+1. `mb`: a symbol of table 0: bits 0-1 `kind` (`0` skip, `1` inter, `2` intra, `3`
+   split), bits 2-5 `cbp` (bit `i`: Y block `i` is coded), bit 6 `chroma` (all chroma
    blocks are coded), bit 7 `alpha` (all A blocks are coded). Keyframes hold only intra
    macroblocks. A skip macroblock is the symbol `0`.
-2. Inter only: `dx` then `dy`, values of table 1. The motion vector is the predictor plus
-   `(dx, dy)`; each component must be within `-8191` to `8191`.
-3. Inter and intra: the coded blocks in macroblock order.
+2. Inter: `dx` then `dy`, values of table 1: the macroblock's vector is its predictor plus
+   `(dx, dy)`. Split: four such differences, one per 8x8 luma quadrant in row-major
+   order, each added to that quadrant's predictor. Each vector component must be within
+   `-8191` to `8191`.
+3. Inter, split and intra: the coded blocks in macroblock order.
 
 A *value* of table `t` is a class `c` (a symbol, `0` to `15`) followed by `c` raw bits `b`:
 `v = 0` for `c = 0`, `v = b` when bit `c - 1` of `b` is set, else `v = b - 2^c + 1`.
 
-Motion vectors are in quarter pels. Skip macroblocks take the predictor; intra macroblocks
-count as `(0, 0)` for later predictions. The predictor of macroblock `(mx, my)` uses its
-neighbours inside the slice: A left `(mx - 1, my)`, B above `(mx, my - 1)`, C above right
-`(mx + 1, my - 1)`, or above left `(mx - 1, my - 1)` when `mx + 1 = mbs_x`. When exactly
-one of A, B, C exists it is the predictor; when none exists it is `(0, 0)`; otherwise it is
-the component-wise median of A, B and C with missing ones as `(0, 0)`.
+Motion vectors are in quarter pels and kept per 8x8 luma block: block `(bx, by)` is
+quadrant `(by % 2) * 2 + bx % 2` of macroblock `(bx / 2, by / 2)`. Skip, inter and intra
+macroblocks give all four quadrants one vector: skip takes the predictor, intra counts as
+`(0, 0)`.
+
+The predictor of a partition (the whole macroblock, width 2 blocks, or a quadrant of a
+split macroblock, width 1) whose top-left 8x8 block is `(bx, by)` uses the neighbouring
+blocks A left `(bx - 1, by)`, B above `(bx, by - 1)` and C above right `(bx + width, by -
+1)`, or, when that block is not available, D above left `(bx - 1, by - 1)`. A block is
+available when it lies inside the frame, belongs to a macroblock row of the slice, and
+precedes the partition in decoding order: its macroblock comes earlier in raster order, or
+it is an earlier quadrant of the same macroblock. When exactly one of A, B and C (or D)
+is available it is the predictor; when none is, the predictor is `(0, 0)`; otherwise it is
+the component-wise median of the three with unavailable ones as `(0, 0)`.
 
 ### Coded block
 
@@ -343,14 +353,28 @@ All arithmetic is in 32-bit signed integers; `>>` is an arithmetic shift.
 - Inverse transform of coefficients `c[v][u]` (row `v`, column `u`) with the matrix `T`
   below: `g[y][u] = clamp((sum over v of T[v][y] * c[v][u] + 64) >> 7, -32768, 32767)`,
   then the residual `r[y][x] = (sum over u of T[u][x] * g[y][u] + 2048) >> 12`.
-- Prediction: `128` for intra macroblocks. Otherwise, for a pixel `(x, y)` of a plane with
-  `f` fraction bits (2; 3 for chroma in 4:2:0) and vector `(mx, my)`: `s = 2^f`,
-  `ix = x + (mx >> f)`, `fx = mx & (s - 1)`, likewise `iy`, `fy`, and
-  `p = ((s - fx)(s - fy) R(ix, iy) + fx (s - fy) R(ix + 1, iy) + (s - fx) fy R(ix, iy + 1)
-  + fx fy R(ix + 1, iy + 1) + s^2 / 2) >> 2f`, where `R` is the previous frame's plane with
-  coordinates clamped to the padded plane.
+- Prediction: `128` for intra macroblocks. Otherwise each pixel takes the vector `(mx, my)`
+  of its quadrant: luma-resolution planes (Y, A, and Co, Cg in 4:4:4) split the macroblock
+  into 8x8 quadrants, 4:2:0 chroma into 4x4 quadrants. For a pixel `(x, y)` of a plane with
+  `f` fraction bits (2; 3 for chroma in 4:2:0): `ix = x + (mx >> f)`, `fx = mx & (2^f -
+  1)`, likewise `iy`, `fy`, and
+  `p = clamp((sum over j of h[fy][j] * (sum over i of h[fx][i] * R(ix - o + i, iy - o + j))
+  + 2048) >> 12, 0, 255)`, where `R` is the previous frame's plane with coordinates clamped
+  to the padded plane, and `h`, `o` are the filters below: 8 taps with `o = 3` for planes
+  with 2 fraction bits, 4 taps with `o = 1` for 4:2:0 chroma. Fraction 0 is the sample
+  itself.
 - A pixel is `clamp(prediction + residual, 0, 255)`; blocks without coefficients have a
   zero residual.
+
+Filters (taps for `i` = 0 to 7, or 0 to 3), each summing to 64:
+
+```
+8 taps, fractions 0-3:           4 taps, fractions 0-3 and 4-7:
+[  0  0   0 64  0   0  0  0 ]    [  0 64  0  0 ]    [ -4 36 36 -4 ]
+[ -1  4 -10 58 17  -5  1  0 ]    [ -2 58 10 -2 ]    [ -4 28 46 -6 ]
+[ -1  4 -11 40 40 -11  4 -1 ]    [ -4 54 16 -2 ]    [ -2 16 54 -4 ]
+[  0  1  -5 17 58 -10  4 -1 ]    [ -6 46 28 -4 ]    [ -2 10 58 -2 ]
+```
 
 ```
 T = [ 64  64  64  64  64  64  64  64 ]
@@ -507,3 +531,5 @@ time lies in `[t - max_duration, t]` and keep those ending after `t`.
   compression `2` stores the prefix and each plane as a raw, LZ4 or Huffman section.
 - 0.7: audio sample format `3`, ADPCM.
 - 0.8: video format `0x0201`, the motion codec, with its stream parameters and payload.
+- 0.9: motion payload: macroblock kind `3` (split, a vector per 8x8 quadrant), vector
+  prediction per 8x8 block, 8- and 4-tap interpolation filters instead of bilinear.
