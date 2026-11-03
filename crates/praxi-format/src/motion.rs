@@ -257,7 +257,7 @@ pub fn dequant_scale(qp: u8) -> i32 {
 /// A dequantized coefficient: the level times the factor of its plane, over 4, rounded
 /// toward zero and clamped to 16 bits.
 pub fn dequant(level: i32, scale: i32) -> i32 {
-    let v = level.abs() * scale >> 2;
+    let v = (level.abs() * scale) >> 2;
     (v * level.signum()).clamp(-32768, 32767)
 }
 

@@ -371,7 +371,7 @@ fn satd(layout: &Layout, src: &[u8], reference: &[u8], x0: i32, y0: i32, size: u
 /// absolute differences.
 fn hadamard8(d: &[i32; 64]) -> u32 {
     let mut m = *d;
-    for row in m.chunks_exact_mut(8) {
+    for row in m.as_chunks_mut::<8>().0 {
         fwht8(row);
     }
     let mut total = 0;
