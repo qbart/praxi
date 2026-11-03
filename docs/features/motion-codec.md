@@ -317,8 +317,8 @@ sparse coded frames):
 
 At BC7's PSNR (`qp` 16.1) the stream is about 8.7 MB/s, 1/6.4 of BC7: the size goal is
 met. Savings at equal PSNR, measured one after another on the first 40 frames: filters
-22%, least-squares chroma 5%, `split` macroblocks 6.5%, SATD 25%. For comparison, x264
-(`-preset slow`, no B-frames, same RGB PSNR) needs about 7.5 MB/s on those frames.
+22%, least-squares chroma 8-11%, `split` macroblocks 6.5%, SATD 25%. On those frames
+motion needs 9.1 MB/s and x264 (`-preset slow`, no B-frames, same RGB PSNR) 7.7 MB/s.
 
 Entropy decoding misses its goal: 1.4 ms per delta frame, 4-6 ms per keyframe (most
 blocks coded). The decoder went from 3.7 to 1.4 ms through sparse coefficient lists,
