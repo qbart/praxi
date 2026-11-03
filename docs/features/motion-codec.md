@@ -5,9 +5,9 @@ transform coding with motion compensation, the family of H.264, decoded mostly o
 GPU. It trades a little decode work for files several times smaller than BC7 at the
 same or better quality.
 
-Status: draft. Playback decodes on the GPU only; there is no CPU playback path. The exact
-byte layout goes into [PRAXI.md](../spec/PRAXI.md) (format 0.8) with the phase 1
-implementation, and the constants marked *pinned in phase 1* may change until then.
+Status: phase 1 (bitstream and encoder) done; the byte layout is in
+[PRAXI.md](../spec/PRAXI.md#motion-payload) (format 0.9). Playback decodes on the GPU
+only; there is no CPU playback path.
 
 ## Why
 
@@ -98,13 +98,20 @@ praxi encode intro.mp4 -o intro.praxi --variant motion --variant bc7   # both, p
   - `skip`: the predicted motion vector, no residual. Covers static areas and uniform pans.
   - `inter`: a motion vector difference, a coded block pattern (which transform blocks have
     coefficients) and their coefficients, added to the motion-compensated prediction.
+  - `split`: as `inter`, with one vector per 8x8 luma quadrant (four differences). Chroma
+    quadrants (4x4 in 4:2:0) use their quadrant's vector. Covers motion edges and objects
+    smaller than a macroblock.
   - `intra`: coefficients only, as in keyframes; the prediction is 128.
-- **Motion vectors**: one per macroblock, quarter-pel for luma (chroma uses the same vector
-  at its own resolution, eighth-pel in 4:2:0). Prediction samples are bilinear with integer
-  weights and rounding (normative); positions outside the reference frame clamp to its
-  edge, so vectors may point outside. Vectors are predicted from the median of the left,
-  upper and upper-right macroblocks of the slice; only the difference is coded.
-  8x8 vectors (four per macroblock) are an open question for phase 1.
+- **Motion vectors**: quarter-pel for luma (chroma uses the same vector at its own
+  resolution, eighth-pel in 4:2:0). Sub-pel samples come from separable integer filters
+  (normative): 8 taps for full-resolution planes (the HEVC luma filters), 4 taps for 4:2:0
+  chroma (the HEVC chroma filters), one rounding shift after both passes. Positions outside
+  the reference frame clamp to its edge, so vectors may point outside. Bilinear
+  interpolation, the first choice, blurred fine texture: the filters cut the stream by
+  22% at equal PSNR.
+- Vectors are predicted from the median of the left, upper and upper-right neighbours
+  (upper-left when the upper-right one is not decoded yet) at 8x8 granularity, inside the
+  slice; only the difference is coded.
 
 ### Transform and quantization
 
@@ -130,28 +137,43 @@ praxi encode intro.mp4 -o intro.praxi --variant motion --variant bc7   # both, p
 - Tokens are coded with praxi's canonical Huffman codes (code lengths stored as in
   [Huffman sections](../spec/PRAXI.md#huffman-section), at most 11 bits), with separate
   tables for luma AC, chroma AC, alpha AC, DC classes, macroblock type plus coded block
-  pattern, and motion vector classes. The decoder reuses the table-driven Huffman decoder
-  of byte planes. Raw extra bits go to their own stream, read without table lookups.
+  pattern, and motion vector classes, decoded with single 2048-entry lookup tables. Extra
+  bits follow their token in the same stream: a separate stream for them measured slower.
 - Keyframes carry all tables; a P frame carries only the tables it changes and inherits the
   rest from the previous frame (decoding starts at a keyframe anyway).
 - A frame is split into **slices** of whole macroblock rows. Predictions (DC, motion
   vectors) do not cross slices and each slice has its own bit streams, so an engine can
   entropy-decode slices on several threads; the player itself uses one.
-- Context-adaptive arithmetic coding (rANS with adaptive models) would save an estimated
-  10-15%; phase 1 measures it against Huffman, keeping Huffman unless the saving is large
-  for the decode time it costs.
+- Context-adaptive coding was estimated on the bench input: choosing the AC table by
+  macroblock kind, zigzag band and previous magnitude saves about 6% of the bits. Adaptive
+  arithmetic coding would save more but decodes several times slower; neither is used.
 
 ## Decoding
 
 Decoding has two stages:
 
-1. **Entropy decoding** (CPU, in the player): the chunk becomes a **coded frame**: per
-   macroblock its type and motion vector, and the list of coded transform blocks with their
-   dequantized coefficients (DC prediction resolved). This is the serial part, goal under
-   1 ms per 1080p frame.
+1. **Entropy decoding** (CPU, in the player): the chunk becomes a **coded frame** (below).
+   This is the serial part, goal under 1 ms per 1080p frame.
 2. **Reconstruction** (GPU, in `praxi-wgpu` or the engine's own shaders): per transform
-   block, motion-compensated prediction (or 128), inverse transform, add, clamp, into the
-   frame's planes; then color conversion to RGBA for display. Fully parallel over blocks.
+   block, motion-compensated prediction (or 128), dequantization, inverse transform, add,
+   clamp, into the frame's planes; then color conversion to RGBA for display. Fully
+   parallel over blocks.
+
+### Coded frames
+
+`praxi_format::motion::CodedFrame`, all `u32` words so it uploads as is:
+
+- `mbs`: 5 words per macroblock, row-major: the kind, then the vectors of its four 8x8
+  luma quadrants (x in the low, y in the high 16 bits, two's complement, quarter pels). The
+  four are equal except for `split` macroblocks.
+- `blocks`: 2 words per transform block with nonzero levels: its index (bits 0-24) and
+  level count (bits 25-31), then the position of its first entry in `coeffs`.
+- `coeffs`: the nonzero levels, block after block: the row-major position (bits 0-5) and
+  the level (high 16 bits). At BC7 quality on the bench input a delta frame's lists take
+  0.9 MB against 2.9 MB for 64 coefficients per coded block, and cost the decoder less to
+  write.
+- `scales`: the dequantization factor per plane. The GPU dequantizes, which took a fifth
+  of the CPU time.
 
 There is no CPU playback path: reconstructing on the CPU would cost an estimated 10-20 ms
 per 1080p frame, too slow for a game. The same reconstruction exists on the CPU only as
@@ -184,11 +206,12 @@ hides it for transitions, and seek-heavy uses can encode with a shorter `keyint`
 
 `VideoRenderer::prepare` takes the queued coded frames of motion tracks and, per frame:
 
-1. Uploads the macroblock buffer (type and vector per macroblock, 8 bytes each: 65 KB at
-   1080p) and the coded blocks (block index plus 64 coefficients of 16 bits).
-2. Dispatches one workgroup of 64 threads per 8x8 transform block: prediction from the
-   reference planes, inverse transform in workgroup memory, add and clamp, written to the
-   current planes. Planes are storage buffers; the two plane sets swap roles each frame.
+1. Uploads the coded frame: macroblocks (20 bytes each: 163 KB at 1080p), blocks and
+   coefficient lists (about 1 MB for a 1080p delta frame at BC7 quality).
+2. Dispatches the prediction of every transform block from the reference planes, then one
+   workgroup of 64 threads per coded block: scatter its levels into workgroup memory,
+   dequantize, inverse transform, add and clamp. Planes are storage buffers; the two plane
+   sets swap roles each frame.
 3. After the last queued frame only: a color pass from the planes into the track's
    `Rgba8Unorm` texture (sRGB-encoded bytes; storage textures cannot be sRGB, so the draw
    shader decodes sRGB itself).
@@ -197,9 +220,8 @@ Requirements: compute shaders and storage buffers (`wgpu` downlevel `COMPUTE_SHA
 Vulkan, Metal, DX12 and GLES 3.1, not WebGL 2. `praxi_wgpu::capabilities` lists `motion`
 only when the adapter qualifies.
 
-Upload sizes: a 1080p keyframe at high quality codes most of its 48,960 transform blocks,
-about 6 MB of coefficients; P frames code few blocks. Sparse coefficient lists (position
-and value) would cut uploads further and are measured in phase 2.
+Upload sizes at BC7 quality on the bench input: a 1080p keyframe has 1.3 million nonzero
+levels, 5.6 MB of lists; delta frames about 1 MB.
 
 ## Encoder
 
@@ -213,9 +235,17 @@ and value) would cut uploads further and are measured in phase 2.
 | `--slices <N>` | 4 | Slices per frame |
 | `--keyint`, `--quality` | | As for block variants; `--quality` sets the motion search effort |
 
-- Motion search per macroblock: around the predicted vector and zero, a diamond search at
-  integer positions, then half- and quarter-pel refinement; cost is SAD plus `lambda` times
-  estimated bits. Mode decision (skip, inter, intra) by the same cost.
+- Motion search per macroblock: from the best of zero, the predicted vector and the
+  vectors of neighbouring macroblocks in the previous frame, square steps at integer
+  positions, then half- and quarter-pel refinement; then each 8x8 quadrant searches around
+  the macroblock's vector. The cost is SATD (sum of Hadamard-transformed differences) plus
+  `lambda` times estimated vector bits. SAD picked poor vectors on fine texture: SATD cut
+  the stream by a quarter at equal PSNR.
+- Mode decision (skip, inter, split, intra) by rate-distortion cost, RGB squared error
+  plus `lambda` times estimated bits.
+- 4:2:0 chroma is downsampled by least squares against the decoder's fixed bilinear
+  upsampling (a few conjugate gradient steps from the 2x2 average), which raises the
+  4:2:0 quality ceiling from 43.1 to 44.1 dB on the bench input.
 - The encoder reconstructs each frame exactly as the decoder does and predicts from that,
   so encoder and decoder never drift apart.
 - P frames depend on the previous reconstruction, so frames inside a keyframe interval are
@@ -231,15 +261,16 @@ and value) would cut uploads further and are measured in phase 2.
 - `praxi frame` (through the reference reconstruction, offline), `praxi info`.
 - Viewer and editor: play `motion` tracks through `praxi-wgpu`.
 
-## Format changes (0.8)
+## Format changes
 
-- Format id `0x0201` `motion` in the stream table, with `block_width = block_height = 16`
-  (the macroblock) and `block_bytes = 0`; readers stop deriving `frame_size` for it.
-- Motion parameters in the reserved video parameter bytes: chroma layout, chroma and alpha
-  `qp` offsets, slice count.
-- Motion chunks use compression `0`: their payload is already entropy coded.
-- The payload layout (frame header, tables, slices, macroblock and coefficient syntax) is
-  specified in PRAXI.md with the phase 1 implementation.
+- 0.8: format id `0x0201` `motion` in the stream table, with `block_width = block_height =
+  16` (the macroblock) and `block_bytes = 0`; readers stop deriving `frame_size` for it.
+  Motion parameters in the reserved video parameter bytes: chroma layout, chroma and alpha
+  `qp` offsets. Motion chunks use compression `0`: their payload is already entropy
+  coded. The payload layout is in PRAXI.md.
+- 0.9: `split` macroblocks, vector prediction at 8x8 granularity, 8- and 4-tap
+  interpolation filters. 0.8 motion streams do not decode with 0.9 rules, and readers
+  accept one version only.
 
 ## Phases
 
@@ -275,13 +306,16 @@ asks for a fifth. Delta frames are only about 3 times smaller than keyframes (30
 against 920 KB at `qp` 14), so prediction is the weak part. Entropy decoding is 5-6 times
 over its budget. Neither goal is met yet.
 
-## Open questions for phase 1
+## Open questions
 
-- 8x8 motion vectors and 4x4 transforms: gain against syntax and GPU cost.
-- Huffman against adaptive rANS: size against entropy decode time.
-- An in-loop deblocking filter at lower bitrates.
+- 4x4 transforms and an in-loop deblocking filter at lower bitrates.
+- Entropy decoding on several threads, one slice each, if one core stays over budget.
 - Default `qp` and the `qp` that matches BC7 PSNR on the bench input.
 - Slice count: cost of resetting predictions against parallel entropy decoding.
+
+Tried in phase 1 and dropped, each under 1% on the bench input: rate-distortion optimized
+quantization, bit estimates from the previous frame's Huffman tables, a lower keyframe
+`qp`, other rounding offsets. A negative `chroma_qp_offset` (-2) saves about 1.5%.
 
 ## Rejected
 
