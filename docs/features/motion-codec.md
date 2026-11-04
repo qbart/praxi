@@ -52,7 +52,7 @@ praxi encode intro.mp4 -o intro.praxi --variant motion --variant bc7   # both, p
 | | BC7 | motion |
 |---|---|---|
 | File size (bench input) | 56 MB/s | 8.7 MB/s at equal PSNR (goal: under 11) |
-| CPU per 1080p frame | 0.6-1.5 ms (decompress) | 1.4 ms entropy decode (goal: under 1 ms) |
+| CPU per 1080p frame | 0.6-1.5 ms (decompress) | 0.4 ms entropy decode on 4 threads (keyframes 1.3 ms) |
 | GPU per 1080p frame | upload only | goal: under 1 ms (compute) |
 | GPU memory per track (1080p) | 2 MB | about 14 MB (two frames of planes + RGBA) |
 | Seek | decode to the frame | decode every frame since the keyframe |
@@ -355,14 +355,35 @@ Entropy decoding misses its goal: 1.4 ms per delta frame, 4-6 ms per keyframe (m
 blocks coded). The decoder went from 3.7 to 1.4 ms through sparse coefficient lists,
 leaving dequantization to the GPU, and keeping the error paths out of the token loop. The
 loop costs about 20 cycles per token; lookahead tables that decode a whole token at once,
-and a separate stream for extra bits, measured no faster. Decoding the 4 slices on 4
-threads would bring it under 0.5 ms.
+and a separate stream for extra bits, measured no faster.
+
+Parallel slices, `qp` 16, 16 slices (8.86 MB/s, the same size as 4 slices to the reported
+precision). The machine is a Ryzen AI 9 HX 370: 4 Zen 5 cores up to 5.2 GHz and 8 Zen 5c
+cores up to 3.3 GHz, two threads each. Bench decode includes reading the chunk; its max is
+the first keyframe, which also starts the workers and grows the buffers. Keyframe and
+delta columns decode payloads from memory, 4 passes after a warm-up:
+
+| Threads | Bench mean / p95 / max | Keyframe | Delta frame |
+|---|---|---|---|
+| 1 | 1.46 / 1.67 / 5.7 ms | 4.28 ms | 1.37 ms |
+| 2 | | 2.22 ms | 0.73 ms |
+| 4 | 0.53 / 0.69 / 2.8 ms | 1.26 ms | 0.41 ms |
+| 8 (default) | 0.37 / 0.45 / 3.2 ms | 1.05 ms | 0.33 ms |
+| 12 | | 0.94 ms | 0.31 ms |
+
+Delta frames meet the goal from 4 threads. Keyframes do not: 1.26 ms on 4 threads, about
+1 ms on 8. Fixed shares of slices per thread (the first version) reached only 2.4x on 8
+threads with 8 slices, as threads on slow or sleeping cores held up the frame, and
+spawning threads per frame cost about 0.1 ms; the slice queue on waiting workers fixed
+both. Appending finished slices while others still decode hides most of the 0.15-0.25 ms
+of copying into the output on keyframes.
 
 ## Open questions
 
 - 4x4 transforms and an in-loop deblocking filter at lower bitrates.
 - Default `qp` and the `qp` that matches BC7 PSNR on the bench input.
-- Slice count: cost of resetting predictions against parallel entropy decoding.
+- Keyframes over 1 ms of entropy decoding: the player's coded frame queue (phase 2) can
+  decode a frame ahead so that a keyframe's extra time does not land in one game frame.
 
 Tried in phase 1 and dropped, each under 1% on the bench input: rate-distortion optimized
 quantization, bit estimates from the previous frame's Huffman tables, a lower keyframe
