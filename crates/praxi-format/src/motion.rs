@@ -652,6 +652,10 @@ pub struct Decoder {
     tables: [Option<Box<[u16; TABLE_SIZE]>>; TABLES],
     /// Vectors per 8x8 luma block.
     mvs: Vec<Mv>,
+    /// Coded frames of slices 1 and up, appended to the output after decoding.
+    parts: Vec<CodedFrame>,
+    /// Most threads decoding the slices of one frame.
+    threads: usize,
     /// A keyframe was decoded since the start, so delta frames have tables and a reference.
     primed: bool,
 }
@@ -665,8 +669,16 @@ impl Decoder {
             params: params.motion,
             tables: Default::default(),
             mvs,
+            parts: Vec::new(),
+            threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
             primed: false,
         }
+    }
+
+    /// Sets the most threads decoding the slices of one frame; 1 decodes on the calling
+    /// thread only.
+    pub fn set_threads(&mut self, threads: usize) {
+        self.threads = threads.max(1);
     }
 
     pub fn layout(&self) -> &Layout {
@@ -728,118 +740,165 @@ impl Decoder {
             *scale = dequant_scale(plane_qp(qp, p, &self.params));
         }
         let size = |i: usize| u32::from_le_bytes(sizes[4 * i..4 * i + 4].try_into().expect("4 bytes")) as usize;
+        let mut datas = Vec::with_capacity(slices as usize);
         for s in 0..slices {
             let len = size(s as usize);
             let Some(data) = payload.get(at..at + len) else {
                 return Err(format!("slice {s} runs past the payload"));
             };
             at += len;
-            self.decode_slice(keyframe, s, slices, data, out)
-                .map_err(|e| format!("slice {s}: {e}"))?;
+            datas.push(data);
         }
         if at != payload.len() {
             return Err("motion payload has bytes after its last slice".into());
         }
-        self.primed = true;
-        Ok(())
-    }
-
-    fn decode_slice(
-        &mut self,
-        keyframe: bool,
-        s: u32,
-        slices: u32,
-        data: &[u8],
-        out: &mut CodedFrame,
-    ) -> Result<(), String> {
         let layout = &self.layout;
         let tables: [&[u16; TABLE_SIZE]; TABLES] =
             std::array::from_fn(|t| self.tables[t].as_deref().unwrap_or(&EMPTY_TABLE));
-        let mut r = BitReader::new(data);
-        let mut dc_pred = [0i32; 4];
-        let planes: Vec<_> = (0..layout.planes.len())
-            .map(|p| {
-                let (dc, ac) = plane_tables(p);
-                (tables[dc], tables[ac])
-            })
-            .collect();
-        let rows = layout.slice_rows(s, slices);
-        let first_row = rows.start;
-        let mbs_x = layout.mbs_x;
-        let mut buf = [0u32; 64];
-        for my in rows {
-            for mx in 0..mbs_x {
-                let sym = r.symbol(tables[TABLE_MB])?;
-                let kind = sym & 3;
-                let (cbp, chroma, alpha) = (sym >> 2 & 15, sym >> 6 & 1 != 0, sym >> 7 != 0);
-                if keyframe && kind != MB_INTRA || kind == MB_SKIP && sym != 0 {
-                    return Err(format!("invalid macroblock symbol {sym:#04x}"));
-                }
-                if alpha && !layout.alpha() {
-                    return Err("alpha blocks without an alpha plane".into());
-                }
-                let mut mvs = [(0, 0); 4];
-                match kind {
-                    MB_SPLIT => {
-                        for (sub, mv) in (0..4).zip(mvs.iter_mut()) {
-                            let pred = mv_predictor(&self.mvs, mbs_x, first_row, mx, my, sub, 1);
-                            *mv = r.mv(tables[TABLE_MV], pred)?;
-                            set_field(&mut self.mvs, mbs_x, mx, my, sub..sub + 1, *mv);
-                        }
+        self.parts.resize_with(slices as usize - 1, CodedFrame::default);
+        // One job per slice: its rows, data, vector field rows and output.
+        let mut jobs = Vec::with_capacity(slices as usize);
+        let mut field = &mut self.mvs[..];
+        let outs = std::iter::once(&mut *out).chain(self.parts.iter_mut());
+        for ((s, data), part) in (0..slices).zip(datas).zip(outs) {
+            let rows = layout.slice_rows(s, slices);
+            let (own, rest) = field.split_at_mut(4 * (rows.len() * layout.mbs_x as usize));
+            field = rest;
+            jobs.push((s, rows, data, own, part));
+        }
+        let run = |jobs: Vec<_>| -> Result<(), String> {
+            for (s, rows, data, field, part) in jobs {
+                decode_slice(layout, &tables, keyframe, rows, data, field, part)
+                    .map_err(|e| format!("slice {s}: {e}"))?;
+            }
+            Ok(())
+        };
+        let threads = self.threads.min(slices as usize);
+        if threads == 1 {
+            run(jobs)?;
+        } else {
+            let mut groups = Vec::with_capacity(threads);
+            for i in (0..threads).rev() {
+                groups.push(jobs.split_off(i * slices as usize / threads));
+            }
+            let first = groups.pop().expect("one group per thread");
+            // Slices in order, so the first error is the one of the first failing slice.
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = groups.into_iter().rev().map(|g| scope.spawn(move || run(g))).collect();
+                std::iter::once(run(first))
+                    .chain(handles.into_iter().map(|h| h.join().expect("slice thread panicked")))
+                    .collect::<Result<(), String>>()
+            })?;
+        }
+        for part in &self.parts {
+            out.mbs.extend_from_slice(&part.mbs);
+            let base = out.coeffs.len() as u32;
+            out.coeffs.extend_from_slice(&part.coeffs);
+            out.blocks.reserve(part.blocks.len());
+            for b in part.blocks.as_chunks::<BLOCK_WORDS>().0 {
+                out.blocks.extend([b[0], b[1] + base]);
+            }
+        }
+        self.primed = true;
+        Ok(())
+    }
+}
+
+/// Decodes the macroblock `rows` of one slice from `data` into `out`; `field` holds the
+/// slice's rows of the 8x8 vector field.
+fn decode_slice(
+    layout: &Layout,
+    tables: &[&[u16; TABLE_SIZE]; TABLES],
+    keyframe: bool,
+    rows: std::ops::Range<u32>,
+    data: &[u8],
+    field: &mut [Mv],
+    out: &mut CodedFrame,
+) -> Result<(), String> {
+    out.clear();
+    let mut r = BitReader::new(data);
+    let mut dc_pred = [0i32; 4];
+    let planes: Vec<_> = (0..layout.planes.len())
+        .map(|p| {
+            let (dc, ac) = plane_tables(p);
+            (tables[dc], tables[ac])
+        })
+        .collect();
+    let first_row = rows.start;
+    let mbs_x = layout.mbs_x;
+    let mut buf = [0u32; 64];
+    for my in rows {
+        for mx in 0..mbs_x {
+            let sym = r.symbol(tables[TABLE_MB])?;
+            let kind = sym & 3;
+            let (cbp, chroma, alpha) = (sym >> 2 & 15, sym >> 6 & 1 != 0, sym >> 7 != 0);
+            if keyframe && kind != MB_INTRA || kind == MB_SKIP && sym != 0 {
+                return Err(format!("invalid macroblock symbol {sym:#04x}"));
+            }
+            if alpha && !layout.alpha() {
+                return Err("alpha blocks without an alpha plane".into());
+            }
+            let mut mvs = [(0, 0); 4];
+            match kind {
+                MB_SPLIT => {
+                    for (sub, mv) in (0..4).zip(mvs.iter_mut()) {
+                        let pred = mv_predictor(field, mbs_x, 0, mx, my - first_row, sub, 1);
+                        *mv = r.mv(tables[TABLE_MV], pred)?;
+                        set_field(field, mbs_x, mx, my - first_row, sub..sub + 1, *mv);
                     }
-                    MB_INTRA => set_field(&mut self.mvs, mbs_x, mx, my, 0..4, (0, 0)),
-                    _ => {
-                        let pred = mv_predictor(&self.mvs, mbs_x, first_row, mx, my, 0, 2);
-                        let mv = if kind == MB_INTER {
-                            r.mv(tables[TABLE_MV], pred)?
-                        } else {
-                            pred
-                        };
-                        mvs = [mv; 4];
-                        set_field(&mut self.mvs, mbs_x, mx, my, 0..4, mv);
-                    }
                 }
-                out.push_mb(kind, &mvs);
-                if kind == MB_SKIP {
-                    continue;
+                MB_INTRA => set_field(field, mbs_x, mx, my - first_row, 0..4, (0, 0)),
+                _ => {
+                    let pred = mv_predictor(field, mbs_x, 0, mx, my - first_row, 0, 2);
+                    let mv = if kind == MB_INTER {
+                        r.mv(tables[TABLE_MV], pred)?
+                    } else {
+                        pred
+                    };
+                    mvs = [mv; 4];
+                    set_field(field, mbs_x, mx, my - first_row, 0..4, mv);
                 }
-                for (p, plane) in layout.planes.iter().enumerate() {
-                    let n = plane.mb_blocks();
-                    for i in 0..n * n {
-                        let coded = match p {
-                            0 => cbp >> i & 1 != 0,
-                            3 => alpha,
-                            _ => chroma,
-                        };
-                        if !coded {
-                            continue;
-                        }
-                        let (dc_table, ac_table) = planes[p];
-                        let (bx, by) = (mx * n + i % n, my * n + i / n);
-                        let index = plane.first_block + by * plane.blocks_x() + bx;
-                        let first = out.coeffs.len();
-                        let mut dc = r.value(dc_table)?;
-                        if kind == MB_INTRA {
-                            dc += dc_pred[p];
-                            dc_pred[p] = dc;
-                        }
-                        let mut count = 0;
-                        if dc != 0 {
-                            buf[0] = (check_level(dc)? as u16 as u32) << 16;
-                            count = 1;
-                        }
-                        count = ac(&mut r, ac_table, &mut buf, count)?;
-                        out.coeffs.extend_from_slice(&buf[..count]);
-                        out.end_block(index, first);
+            }
+            out.push_mb(kind, &mvs);
+            if kind == MB_SKIP {
+                continue;
+            }
+            for (p, plane) in layout.planes.iter().enumerate() {
+                let n = plane.mb_blocks();
+                for i in 0..n * n {
+                    let coded = match p {
+                        0 => cbp >> i & 1 != 0,
+                        3 => alpha,
+                        _ => chroma,
+                    };
+                    if !coded {
+                        continue;
                     }
+                    let (dc_table, ac_table) = planes[p];
+                    let (bx, by) = (mx * n + i % n, my * n + i / n);
+                    let index = plane.first_block + by * plane.blocks_x() + bx;
+                    let first = out.coeffs.len();
+                    let mut dc = r.value(dc_table)?;
+                    if kind == MB_INTRA {
+                        dc += dc_pred[p];
+                        dc_pred[p] = dc;
+                    }
+                    let mut count = 0;
+                    if dc != 0 {
+                        buf[0] = (check_level(dc)? as u16 as u32) << 16;
+                        count = 1;
+                    }
+                    count = ac(&mut r, ac_table, &mut buf, count)?;
+                    out.coeffs.extend_from_slice(&buf[..count]);
+                    out.end_block(index, first);
                 }
             }
         }
-        if r.consumed_bits() > data.len() * 8 {
-            return Err("slice data ends early".into());
-        }
-        Ok(())
     }
+    if r.consumed_bits() > data.len() * 8 {
+        return Err("slice data ends early".into());
+    }
+    Ok(())
 }
 
 /// The table of an absent Huffman table: every entry invalid (length 0).
@@ -1358,19 +1417,50 @@ mod tests {
 
     /// Random levels of every size, runs and split vectors survive coding.
     #[test]
+    fn parallel_decoding_reports_the_first_failing_slice() {
+        let p = params(48, 96, false);
+        let layout = Layout::new(&p);
+        let mut tokens = vec![Vec::new(); 4];
+        for (s, t) in tokens.iter_mut().enumerate() {
+            // Slices 1 and 3 stay empty, so they end early.
+            if s % 2 == 0 {
+                for _ in 0..layout.slice_rows(s as u32, 4).len() as u32 * layout.mbs_x {
+                    t.push(Token::new(TABLE_MB, MB_INTRA, 0, 0));
+                }
+            }
+        }
+        let mut payload = Vec::new();
+        Encoder::new().write(true, 30, &tokens, &mut payload);
+        for threads in [1, 2, 4] {
+            let mut dec = Decoder::new(&p);
+            dec.set_threads(threads);
+            let err = dec.decode(true, &payload, &mut CodedFrame::default()).unwrap_err();
+            assert!(err.starts_with("slice 1:"), "{threads} threads: {err}");
+        }
+    }
+
+    #[test]
     fn random_payloads_roundtrip() {
         let mut seed = 7u32;
         let mut rand = move |n: u32| {
             seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
             (seed >> 8) % n
         };
-        let p = params(48, 32, true);
+        let p = params(48, 96, true);
         let layout = Layout::new(&p);
         let mut enc = Encoder::new();
-        let mut dec = Decoder::new(&p);
+        // Any thread count decodes the same frame.
+        let mut decoders: Vec<_> = [1, 2, 3, 8]
+            .into_iter()
+            .map(|t| {
+                let mut d = Decoder::new(&p);
+                d.set_threads(t);
+                d
+            })
+            .collect();
         for frame_no in 0..4 {
             let keyframe = frame_no == 0;
-            let slices = 2;
+            let slices = [3, 6, 4, 5][frame_no];
             let mut tokens = vec![Vec::new(); slices];
             let mut expected = CodedFrame::default();
             let mut field = vec![(0, 0); 4 * layout.mb_count()];
@@ -1458,7 +1548,12 @@ mod tests {
             let mut payload = Vec::new();
             enc.write(keyframe, 30, &tokens, &mut payload);
             let mut frame = CodedFrame::default();
-            dec.decode(keyframe, &payload, &mut frame).unwrap();
+            decoders[0].decode(keyframe, &payload, &mut frame).unwrap();
+            for dec in &mut decoders[1..] {
+                let mut other = CodedFrame::default();
+                dec.decode(keyframe, &payload, &mut other).unwrap();
+                assert_eq!(other, frame, "frame {frame_no}");
+            }
             expected.keyframe = keyframe;
             assert_eq!(frame.scales[..3], [dequant_scale(30); 3]);
             assert_eq!(frame.mbs, expected.mbs, "frame {frame_no}");

@@ -39,6 +39,9 @@ pub struct BenchArgs {
     /// Keep the encoded file here.
     #[arg(long)]
     keep: Option<PathBuf>,
+    /// Threads entropy-decoding the slices of a motion frame; 0 uses every core.
+    #[arg(long, default_value_t = 0)]
+    decode_threads: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -129,7 +132,7 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
         for _ in 0..args.passes {
             if format == TextureFormat::Motion {
                 // Entropy decoding only: reconstruction runs on the GPU.
-                let mut m = MotionPlayback::open(&encoded.path)?;
+                let mut m = MotionPlayback::open(&encoded.path, args.decode_threads)?;
                 for _ in 0..stats.frames {
                     let start = Instant::now();
                     m.next()?;
@@ -158,7 +161,7 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
     let mut players = Vec::new();
     for &format in &formats {
         if format == TextureFormat::Motion {
-            players.push(Playback::Motion(Box::new(MotionPlayback::open(&encoded.path)?)));
+            players.push(Playback::Motion(Box::new(MotionPlayback::open(&encoded.path, args.decode_threads)?)));
             continue;
         }
         let mut player = open_variant(&encoded.path, format)?;
@@ -278,7 +281,8 @@ struct MotionPlayback {
 }
 
 impl MotionPlayback {
-    fn open(path: &Path) -> AnyResult<MotionPlayback> {
+    /// `threads` as in [`BenchArgs::decode_threads`].
+    fn open(path: &Path, threads: usize) -> AnyResult<MotionPlayback> {
         let reader = Reader::new(BufReader::new(File::open(path)?))?;
         let (stream, params) = reader
             .streams()
@@ -286,7 +290,10 @@ impl MotionPlayback {
             .enumerate()
             .find_map(|(i, s)| s.video_params().filter(|v| v.format == TextureFormat::Motion).map(|v| (i as u16, *v)))
             .ok_or("the encoded file has no motion track")?;
-        let decoder = motion::Decoder::new(&params);
+        let mut decoder = motion::Decoder::new(&params);
+        if threads > 0 {
+            decoder.set_threads(threads);
+        }
         let size = decoder.layout().size;
         Ok(MotionPlayback {
             reader,
