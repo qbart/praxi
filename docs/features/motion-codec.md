@@ -23,8 +23,8 @@ quality (41 dB PSNR on the bench input) at a fraction of BC7's size.
   [benchmarks.md](benchmarks.md)), with no visible blocking at that quality.
 - **Size**: at most 1/5 of the BC7 variant at equal PSNR on the bench input. Phase 1
   stops the project if it cannot get there.
-- **Decode**: at 1080p, at most 1 ms of CPU per frame on one core (entropy decoding) and
-  at most 1 ms of GPU per frame on an integrated GPU. Exact output: the GPU decoder
+- **Decode**: at 1080p, at most 1 ms per frame of entropy decoding on the CPU (slices on
+  up to 4 cores, keyframes included) and at most 1 ms of GPU per frame on an integrated GPU. Exact output: the GPU decoder
   produces the same pixels as the encoder's reference reconstruction.
 - **Fits praxi**: one more variant of a video track, same container, cues, audio, seeking,
   looping and events. Pure Rust, no new runtime dependencies.
@@ -142,8 +142,8 @@ praxi encode intro.mp4 -o intro.praxi --variant motion --variant bc7   # both, p
 - Keyframes carry all tables; a P frame carries only the tables it changes and inherits the
   rest from the previous frame (decoding starts at a keyframe anyway).
 - A frame is split into **slices** of whole macroblock rows. Predictions (DC, motion
-  vectors) do not cross slices and each slice has its own bit streams, so an engine can
-  entropy-decode slices on several threads; the player itself uses one.
+  vectors) do not cross slices and each slice has its own bit stream, so slices are
+  entropy-decoded on several threads (see [Decoding](#decoding)).
 - Context-adaptive coding was estimated on the bench input: choosing the AC table by
   macroblock kind, zigzag band and previous magnitude saves about 6% of the bits. Adaptive
   arithmetic coding would save more but decodes several times slower; neither is used.
@@ -153,11 +153,32 @@ praxi encode intro.mp4 -o intro.praxi --variant motion --variant bc7   # both, p
 Decoding has two stages:
 
 1. **Entropy decoding** (CPU, in the player): the chunk becomes a **coded frame** (below).
-   This is the serial part, goal under 1 ms per 1080p frame.
+   Slices decode in parallel, goal under 1 ms per 1080p frame.
 2. **Reconstruction** (GPU, in `praxi-wgpu` or the engine's own shaders): per transform
    block, motion-compensated prediction (or 128), dequantization, inverse transform, add,
    clamp, into the frame's planes; then color conversion to RGBA for display. Fully
    parallel over blocks.
+
+### Parallel entropy decoding
+
+`motion::Decoder` decodes the slices of a frame on up to `threads` threads at once:
+
+- `Decoder::new` uses `std::thread::available_parallelism`; `Decoder::set_threads(n)`
+  changes it (1 decodes on the calling thread only). No more threads than slices are used.
+- The header, tables and slice sizes are read on the calling thread, which then decodes
+  one share of the slices itself while scoped threads (`std::thread::scope`, no new
+  dependency) decode the others. Threads take whole slices in order: with `t` threads,
+  thread `i` decodes slices `i * n / t .. (i + 1) * n / t`.
+- Each slice decodes into its own scratch coded frame, kept by the decoder between frames
+  so its buffers are reused. The scratch frames are then appended to the output in slice
+  order, the first-coefficient position of each block offset by the coefficients before
+  its slice. The output is identical to decoding on one thread.
+- Each slice's motion vector field is the part of the 8x8 field holding its own rows, since
+  predictions never look outside the slice.
+- Errors report the first failing slice, as on one thread.
+
+The encoder's default stays 4 slices unless measurements show 8 cost under 1% of the size
+at equal PSNR; more slices than cores gain nothing.
 
 ### Coded frames
 
@@ -291,8 +312,8 @@ The encoder comes first in any order: nothing can be decoded before something is
 ## Measurements
 
 `make bench` input (Big Buck Bunny 1080p60, first 180 frames), keyframes every 60 frames,
-4:2:0, 4 slices. Decode is entropy decoding per frame on one core, including reading the
-chunk; the machine's core ran at about 3.5 GHz.
+4:2:0, 4 slices. Decode is entropy decoding per frame, including reading the chunk; one
+core unless stated, the machine's core ran at about 3.5 GHz.
 
 First encoder (16x16 vectors, bilinear quarter-pel, SAD search, dense coefficients):
 
@@ -330,7 +351,6 @@ threads would bring it under 0.5 ms.
 ## Open questions
 
 - 4x4 transforms and an in-loop deblocking filter at lower bitrates.
-- Entropy decoding on several threads, one slice each, if one core stays over budget.
 - Default `qp` and the `qp` that matches BC7 PSNR on the bench input.
 - Slice count: cost of resetting predictions against parallel entropy decoding.
 
