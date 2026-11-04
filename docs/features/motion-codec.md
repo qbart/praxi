@@ -161,24 +161,34 @@ Decoding has two stages:
 
 ### Parallel entropy decoding
 
-`motion::Decoder` decodes the slices of a frame on up to `threads` threads at once:
+`motion::Decoder` decodes the slices of a frame on up to `threads` threads at once, the
+calling thread included:
 
-- `Decoder::new` uses `std::thread::available_parallelism`; `Decoder::set_threads(n)`
-  changes it (1 decodes on the calling thread only). No more threads than slices are used.
-- The header, tables and slice sizes are read on the calling thread, which then decodes
-  one share of the slices itself while scoped threads (`std::thread::scope`, no new
-  dependency) decode the others. Threads take whole slices in order: with `t` threads,
-  thread `i` decodes slices `i * n / t .. (i + 1) * n / t`.
-- Each slice decodes into its own scratch coded frame, kept by the decoder between frames
-  so its buffers are reused. The scratch frames are then appended to the output in slice
-  order, the first-coefficient position of each block offset by the coefficients before
-  its slice. The output is identical to decoding on one thread.
-- Each slice's motion vector field is the part of the 8x8 field holding its own rows, since
-  predictions never look outside the slice.
+- `Decoder::new` uses `std::thread::available_parallelism`, at most 8, so that the decoder
+  leaves cores to the game; `Decoder::set_threads(n)` changes it (1 decodes on the calling
+  thread only). No more threads than slices are used.
+- Worker threads start when first needed and wait between frames (spawning threads per
+  frame cost about 0.1 ms). Plain `std` threads, mutex and condition variable: no new
+  dependency, no `unsafe`.
+- The header, tables and slice sizes are read on the calling thread. The slices then go
+  into a queue in order and every thread, the calling one too, takes the next slice until
+  none is left. Cores differ in speed (and may be asleep), so taking slices as they come
+  balances better than fixed shares.
+- What the slices read (layout, tables, a copy of the payload) is shared through an `Arc`
+  that only the decoder holds between frames, so it is updated in place. Copying the
+  payload costs about 30 us for a keyframe.
+- Each slice decodes into its own coded frame, kept by the decoder between frames so its
+  buffers are reused; slice 0 decodes into the output's buffers. While other slices still
+  decode, the calling thread appends finished slices to the output in slice order, the
+  first-coefficient position of each block offset by the coefficients before its slice.
+  The output is identical to decoding on one thread.
+- Each slice has its own rows of the 8x8 vector field, since predictions never look
+  outside the slice and the field does not carry over between frames.
 - Errors report the first failing slice, as on one thread.
 
-The encoder's default stays 4 slices unless measurements show 8 cost under 1% of the size
-at equal PSNR; more slices than cores gain nothing.
+The encoder writes 16 slices by default (`--slices`): at 1080p that is 4-5 macroblock rows
+per slice, at no measurable cost in size on the bench input, and enough slices for slow
+and fast cores to balance.
 
 ### Coded frames
 
@@ -253,7 +263,7 @@ levels, 5.6 MB of lists; delta frames about 1 MB.
 | `--qp <N>` | 22 (*pinned in phase 1*) | Constant quantizer, 0-51; lower is larger and better |
 | `--psnr <DB>` | | Instead of a constant `qp`, the largest `qp` per frame whose RGB PSNR reaches `DB`. `--psnr match` uses the PSNR of a BC7 encode of the same frame, for "smaller than BC7, never worse". |
 | `--chroma <C>` | `420` | `420` or `444` |
-| `--slices <N>` | 4 | Slices per frame |
+| `--slices <N>` | 16 | Slices per frame |
 | `--keyint`, `--quality` | | As for block variants; `--quality` sets the motion search effort |
 
 - Motion search per macroblock: from the best of zero, the predicted vector and the
