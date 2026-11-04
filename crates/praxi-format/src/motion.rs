@@ -4,6 +4,7 @@
 
 use crate::huffman::{TABLE_SIZE, canonical_codes, code_lengths, single_table};
 use crate::{Chroma, MotionParams, VideoParams};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 
 /// Largest `qp`.
 pub const MAX_QP: u8 = 51;
@@ -644,45 +645,169 @@ const HEADER_SIZE: usize = 4;
 /// Bytes of one table's code lengths.
 const LENGTHS_SIZE: usize = 128;
 
+/// Most threads a [`Decoder`] uses by default, leaving cores to the game.
+pub const DEFAULT_THREADS: usize = 8;
+
 /// Turns motion payloads into coded frames. Keeps the Huffman tables, which delta frames may
-/// inherit from the previous frame.
+/// inherit from the previous frame, and the threads that decode slices in parallel.
 pub struct Decoder {
-    layout: Layout,
+    /// What the slices of a frame share. Only the decoder holds it between frames.
+    frame: Arc<Frame>,
     params: MotionParams,
-    tables: [Option<Box<[u16; TABLE_SIZE]>>; TABLES],
-    /// Vectors per 8x8 luma block.
-    mvs: Vec<Mv>,
-    /// Coded frames of slices 1 and up, appended to the output after decoding.
-    parts: Vec<CodedFrame>,
-    /// Most threads decoding the slices of one frame.
+    /// Coded frame and vector field of each slice, reused between frames.
+    parts: Vec<Part>,
+    /// Most threads decoding the slices of one frame, the calling thread included.
     threads: usize,
+    pool: Option<Pool>,
     /// A keyframe was decoded since the start, so delta frames have tables and a reference.
     primed: bool,
 }
 
+/// The parts of a frame that its slices read.
+struct Frame {
+    layout: Layout,
+    tables: [Option<Box<[u16; TABLE_SIZE]>>; TABLES],
+    keyframe: bool,
+    /// The payload, copied when slices decode on other threads.
+    payload: Vec<u8>,
+    /// Byte range of each slice in `payload`.
+    slices: Vec<std::ops::Range<usize>>,
+}
+
+impl Frame {
+    fn tables(&self) -> [&[u16; TABLE_SIZE]; TABLES] {
+        std::array::from_fn(|t| self.tables[t].as_deref().unwrap_or(&EMPTY_TABLE))
+    }
+
+    /// Decodes slice `s` of `payload` into `part`.
+    fn decode_slice(&self, payload: &[u8], s: usize, part: &mut Part) -> Result<(), String> {
+        let rows = self.layout.slice_rows(s as u32, self.slices.len() as u32);
+        part.field.resize(4 * rows.len() * self.layout.mbs_x as usize, (0, 0));
+        let data = &payload[self.slices[s].clone()];
+        decode_slice(&self.layout, &self.tables(), self.keyframe, rows, data, &mut part.field, &mut part.out)
+            .map_err(|e| format!("slice {s}: {e}"))
+    }
+}
+
+/// The output of one slice. Each slice has its own rows of the 8x8 vector field, since
+/// predictions never look outside the slice.
+#[derive(Default)]
+struct Part {
+    out: CodedFrame,
+    field: Vec<Mv>,
+}
+
+/// A slice to decode on any thread; it comes back through `done`.
+struct Job {
+    s: usize,
+    frame: Arc<Frame>,
+    part: Part,
+    result: Result<(), String>,
+    done: mpsc::Sender<Job>,
+}
+
+impl Job {
+    fn run(mut self) {
+        let frame = Arc::clone(&self.frame);
+        self.result = frame.decode_slice(&frame.payload, self.s, &mut self.part);
+        drop(frame);
+        // The decoder waits for every job, so it is still listening.
+        let _ = self.done.clone().send(self);
+    }
+}
+
+/// Worker threads waiting for slices.
+struct Pool {
+    shared: Arc<Shared>,
+    workers: Vec<std::thread::JoinHandle<()>>,
+}
+
+#[derive(Default)]
+struct Shared {
+    queue: Mutex<Queue>,
+    work: Condvar,
+}
+
+#[derive(Default)]
+struct Queue {
+    jobs: std::collections::VecDeque<Job>,
+    exit: bool,
+}
+
+impl Shared {
+    fn pop(&self) -> Option<Job> {
+        self.queue.lock().expect("queue lock").jobs.pop_front()
+    }
+}
+
+impl Pool {
+    fn new() -> Pool {
+        Pool { shared: Arc::default(), workers: Vec::new() }
+    }
+
+    /// Starts workers until there are `n`.
+    fn grow(&mut self, n: usize) {
+        while self.workers.len() < n {
+            let shared = Arc::clone(&self.shared);
+            self.workers.push(std::thread::spawn(move || {
+                loop {
+                    let mut queue = shared.queue.lock().expect("queue lock");
+                    let job = loop {
+                        if queue.exit {
+                            return;
+                        }
+                        if let Some(job) = queue.jobs.pop_front() {
+                            break job;
+                        }
+                        queue = shared.work.wait(queue).expect("queue lock");
+                    };
+                    drop(queue);
+                    job.run();
+                }
+            }));
+        }
+    }
+}
+
+impl Drop for Pool {
+    fn drop(&mut self) {
+        self.shared.queue.lock().expect("queue lock").exit = true;
+        self.shared.work.notify_all();
+        for w in self.workers.drain(..) {
+            let _ = w.join();
+        }
+    }
+}
+
 impl Decoder {
     pub fn new(params: &VideoParams) -> Decoder {
-        let layout = Layout::new(params);
-        let mvs = vec![(0, 0); 4 * layout.mb_count()];
         Decoder {
-            layout,
+            frame: Arc::new(Frame {
+                layout: Layout::new(params),
+                tables: Default::default(),
+                keyframe: false,
+                payload: Vec::new(),
+                slices: Vec::new(),
+            }),
             params: params.motion,
-            tables: Default::default(),
-            mvs,
             parts: Vec::new(),
-            threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
+            threads: std::thread::available_parallelism().map_or(1, |n| n.get().min(DEFAULT_THREADS)),
+            pool: None,
             primed: false,
         }
     }
 
-    /// Sets the most threads decoding the slices of one frame; 1 decodes on the calling
-    /// thread only.
+    /// Sets the most threads decoding the slices of one frame, the calling thread included;
+    /// 1 decodes on the calling thread only. Worker threads start when first needed.
     pub fn set_threads(&mut self, threads: usize) {
         self.threads = threads.max(1);
+        if self.pool.as_ref().is_some_and(|p| p.workers.len() >= self.threads) {
+            self.pool = None;
+        }
     }
 
     pub fn layout(&self) -> &Layout {
-        &self.layout
+        &self.frame.layout
     }
 
     /// Decodes one payload into `out`.
@@ -698,24 +823,23 @@ impl Decoder {
         if payload.len() < HEADER_SIZE {
             return Err("motion payload shorter than its header".into());
         }
+        let frame = Arc::get_mut(&mut self.frame).expect("slice jobs hold no frame between decodes");
+        let layout = &frame.layout;
         let (qp, slices, mask) = (payload[0], payload[1] as u32, payload[2]);
         if qp > MAX_QP {
             return Err(format!("qp {qp} out of range"));
         }
-        if slices == 0 || slices > self.layout.mbs_y {
-            return Err(format!(
-                "{slices} slices for {} macroblock rows",
-                self.layout.mbs_y
-            ));
+        if slices == 0 || slices > layout.mbs_y {
+            return Err(format!("{slices} slices for {} macroblock rows", layout.mbs_y));
         }
-        if !self.layout.alpha() && mask & (1 << TABLE_DC_A | 1 << TABLE_AC_A) != 0 {
+        if !layout.alpha() && mask & (1 << TABLE_DC_A | 1 << TABLE_AC_A) != 0 {
             return Err("alpha tables without an alpha plane".into());
         }
         let mut at = HEADER_SIZE;
         for t in 0..TABLES {
             if mask & 1 << t == 0 {
                 if keyframe {
-                    self.tables[t] = None;
+                    frame.tables[t] = None;
                 }
                 continue;
             }
@@ -728,79 +852,134 @@ impl Decoder {
                 lens[2 * i] = b & 15;
                 lens[2 * i + 1] = b >> 4;
             }
-            self.tables[t] = single_table(&lens)?.map(Box::new);
+            frame.tables[t] = single_table(&lens)?.map(Box::new);
         }
         let Some(sizes) = payload.get(at..at + 4 * slices as usize) else {
             return Err("motion payload ends in its slice sizes".into());
         };
         at += 4 * slices as usize;
-        out.keyframe = keyframe;
-        out.clear();
-        for (p, scale) in out.scales.iter_mut().enumerate().take(self.layout.planes.len()) {
-            *scale = dequant_scale(plane_qp(qp, p, &self.params));
-        }
-        let size = |i: usize| u32::from_le_bytes(sizes[4 * i..4 * i + 4].try_into().expect("4 bytes")) as usize;
-        let mut datas = Vec::with_capacity(slices as usize);
-        for s in 0..slices {
-            let len = size(s as usize);
-            let Some(data) = payload.get(at..at + len) else {
+        frame.slices.clear();
+        for s in 0..slices as usize {
+            let len = u32::from_le_bytes(sizes[4 * s..4 * s + 4].try_into().expect("4 bytes")) as usize;
+            if payload.len() - at < len {
                 return Err(format!("slice {s} runs past the payload"));
-            };
+            }
+            frame.slices.push(at..at + len);
             at += len;
-            datas.push(data);
         }
         if at != payload.len() {
             return Err("motion payload has bytes after its last slice".into());
         }
-        let layout = &self.layout;
-        let tables: [&[u16; TABLE_SIZE]; TABLES] =
-            std::array::from_fn(|t| self.tables[t].as_deref().unwrap_or(&EMPTY_TABLE));
-        self.parts.resize_with(slices as usize - 1, CodedFrame::default);
-        // One job per slice: its rows, data, vector field rows and output.
-        let mut jobs = Vec::with_capacity(slices as usize);
-        let mut field = &mut self.mvs[..];
-        let outs = std::iter::once(&mut *out).chain(self.parts.iter_mut());
-        for ((s, data), part) in (0..slices).zip(datas).zip(outs) {
-            let rows = layout.slice_rows(s, slices);
-            let (own, rest) = field.split_at_mut(4 * (rows.len() * layout.mbs_x as usize));
-            field = rest;
-            jobs.push((s, rows, data, own, part));
+        frame.keyframe = keyframe;
+        out.keyframe = keyframe;
+        for (p, scale) in out.scales.iter_mut().enumerate().take(frame.layout.planes.len()) {
+            *scale = dequant_scale(plane_qp(qp, p, &self.params));
         }
-        let run = |jobs: Vec<_>| -> Result<(), String> {
-            for (s, rows, data, field, part) in jobs {
-                decode_slice(layout, &tables, keyframe, rows, data, field, part)
-                    .map_err(|e| format!("slice {s}: {e}"))?;
-            }
-            Ok(())
-        };
-        let threads = self.threads.min(slices as usize);
-        if threads == 1 {
-            run(jobs)?;
+        // Slice 0 decodes into `out`'s buffers, the others into their parts, appended to
+        // `out` in order.
+        let slices = slices as usize;
+        self.parts.resize_with(slices, Part::default);
+        std::mem::swap(&mut self.parts[0].out, out);
+        let threads = self.threads.min(slices);
+        let result = if threads == 1 {
+            (0..slices).try_for_each(|s| self.frame.decode_slice(payload, s, &mut self.parts[s]))
         } else {
-            let mut groups = Vec::with_capacity(threads);
-            for i in (0..threads).rev() {
-                groups.push(jobs.split_off(i * slices as usize / threads));
-            }
-            let first = groups.pop().expect("one group per thread");
-            // Slices in order, so the first error is the one of the first failing slice.
-            std::thread::scope(|scope| {
-                let handles: Vec<_> = groups.into_iter().rev().map(|g| scope.spawn(move || run(g))).collect();
-                std::iter::once(run(first))
-                    .chain(handles.into_iter().map(|h| h.join().expect("slice thread panicked")))
-                    .collect::<Result<(), String>>()
-            })?;
+            self.decode_parallel(payload, threads, out)
+        };
+        if threads == 1 || result.is_err() {
+            std::mem::swap(&mut self.parts[0].out, out);
         }
-        for part in &self.parts {
-            out.mbs.extend_from_slice(&part.mbs);
-            let base = out.coeffs.len() as u32;
-            out.coeffs.extend_from_slice(&part.coeffs);
-            out.blocks.reserve(part.blocks.len());
-            for b in part.blocks.as_chunks::<BLOCK_WORDS>().0 {
-                out.blocks.extend([b[0], b[1] + base]);
+        result?;
+        if threads == 1 {
+            for part in &self.parts[1..] {
+                append(out, &part.out);
             }
         }
         self.primed = true;
         Ok(())
+    }
+
+    /// Decodes the slices on the calling thread and `threads - 1` workers, each taking the
+    /// next slice in order, and appends them to `out` (which holds slice 0's buffers in
+    /// `parts[0]`). Returns the error of the first failing slice.
+    fn decode_parallel(&mut self, payload: &[u8], threads: usize, out: &mut CodedFrame) -> Result<(), String> {
+        let frame = Arc::get_mut(&mut self.frame).expect("slice jobs hold no frame between decodes");
+        frame.payload.clear();
+        frame.payload.extend_from_slice(payload);
+        let pool = self.pool.get_or_insert_with(Pool::new);
+        pool.grow(threads - 1);
+        let (done, results) = mpsc::channel();
+        let slices = self.parts.len();
+        {
+            let mut queue = pool.shared.queue.lock().expect("queue lock");
+            for (s, part) in self.parts.iter_mut().enumerate() {
+                queue.jobs.push_back(Job {
+                    s,
+                    frame: Arc::clone(&self.frame),
+                    part: std::mem::take(part),
+                    result: Ok(()),
+                    done: done.clone(),
+                });
+            }
+        }
+        drop(done);
+        for _ in 1..threads {
+            pool.shared.work.notify_one();
+        }
+        // Finished slices are appended while others still decode, as soon as the slices
+        // before them are in.
+        let (mut back, mut appended) = (vec![false; slices], 0);
+        let mut first_error: Option<(usize, String)> = None;
+        let mut collect = |job: Job, parts: &mut [Part], out: &mut CodedFrame| {
+            if let Err(e) = job.result
+                && first_error.as_ref().is_none_or(|(s, _)| job.s < *s)
+            {
+                first_error = Some((job.s, e));
+            }
+            parts[job.s] = job.part;
+            back[job.s] = true;
+            while first_error.is_none() && appended < slices && back[appended] {
+                if appended == 0 {
+                    std::mem::swap(&mut parts[0].out, out);
+                } else {
+                    append(out, &parts[appended].out);
+                }
+                appended += 1;
+            }
+        };
+        let mut received = 0;
+        while let Some(job) = pool.shared.pop() {
+            job.run();
+            for job in results.try_iter() {
+                collect(job, &mut self.parts, out);
+                received += 1;
+            }
+        }
+        for _ in received..slices {
+            let job = results.recv().expect("a slice thread panicked");
+            collect(job, &mut self.parts, out);
+        }
+        match first_error {
+            // Slice 0's buffers go back to `parts[0]`, where `decode` expects them on errors.
+            Some((_, e)) => {
+                if appended > 0 {
+                    std::mem::swap(&mut self.parts[0].out, out);
+                }
+                Err(e)
+            }
+            None => Ok(()),
+        }
+    }
+}
+
+/// Appends the coded frame of a later slice to `out`.
+fn append(out: &mut CodedFrame, part: &CodedFrame) {
+    out.mbs.extend_from_slice(&part.mbs);
+    let base = out.coeffs.len() as u32;
+    out.coeffs.extend_from_slice(&part.coeffs);
+    out.blocks.reserve(part.blocks.len());
+    for b in part.blocks.as_chunks::<BLOCK_WORDS>().0 {
+        out.blocks.extend([b[0], b[1] + base]);
     }
 }
 

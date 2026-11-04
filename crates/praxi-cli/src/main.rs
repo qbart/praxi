@@ -98,7 +98,7 @@ struct VideoOptions {
     #[arg(long, value_enum, default_value_t = ChromaArg::C420)]
     chroma: ChromaArg,
     /// Slices per frame of the motion variant.
-    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..=255))]
+    #[arg(long, default_value_t = 16, value_parser = clap::value_parser!(u32).range(1..=255))]
     slices: u32,
 }
 
