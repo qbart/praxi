@@ -5,9 +5,10 @@ transform coding with motion compensation, the family of H.264, decoded mostly o
 GPU. It trades a little decode work for files several times smaller than BC7 at the
 same or better quality.
 
-Status: phase 1 (bitstream and encoder) done; the byte layout is in
-[PRAXI.md](../spec/PRAXI.md#motion-payload) (format 0.9). Playback decodes on the GPU
-only; there is no CPU playback path.
+Status: phase 1 (bitstream and encoder) and phase 2 (GPU decoder) done; the byte layout
+is in [PRAXI.md](../spec/PRAXI.md#motion-payload) (format 0.9). Playback decodes on the
+GPU only; there is no CPU playback path. The GPU decoder matches the reference byte for
+byte on lavapipe; its time on a hardware GPU is not measured yet.
 
 ## Why
 
