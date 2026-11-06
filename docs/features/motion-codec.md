@@ -222,34 +222,73 @@ hides it for transitions, and seek-heavy uses can encode with a shorter `keyint`
 - `TextureFormat::Motion` (id `0x0201`) is selected through `Capabilities` like any other
   format. It is not a GPU texture format: the player entropy-decodes its chunks and queues
   coded frames for a GPU decoder.
-- `take_coded_frames(track)` returns the frames queued since the last call, oldest first;
-  each must be reconstructed in order, since P frames build on the previous one. A keyframe
-  clears the queue, so it never holds more than `keyint` frames. `video_frame(track)`
-  reports index, time and size as for other formats, with empty `data`.
-- Coded frames live in buffers the player recycles; it allocates only when the queue grows
-  past its previous high-water mark, keeping the no-allocation-per-frame property in steady
-  playback.
+- `take_coded_frames(track) -> &[CodedFrame]` returns the frames queued since the last
+  call, oldest first, and empties the queue; each must be reconstructed in order, since P
+  frames build on the previous one. A keyframe clears the queue, so it never holds more
+  than `keyint` frames. Empty for tracks of other formats.
+- `video_frame(track)` reports index, time and size as for other formats, with empty
+  `data`; `index` changes with every decoded frame.
+- Coded frames live in buffers the player recycles: a taken frame's buffer is reused for
+  the next decoded frame, so steady playback does not allocate.
+- `set_decode_threads(n)`: the most threads entropy-decoding the slices of a motion frame
+  (default 8 or the core count, see [Parallel entropy decoding](#parallel-entropy-decoding)).
+  The player otherwise owns no threads; files without motion tracks start none.
 - The coded frame layout (macroblock records, coefficient blocks) is public and documented,
   so an engine with its own renderer can write the reconstruction shaders itself, as it
   uploads block textures itself today.
 
 ### GPU decoder (`praxi-wgpu`)
 
-`VideoRenderer::prepare` takes the queued coded frames of motion tracks and, per frame:
+`VideoRenderer::prepare(device, queue, player, opacity)` takes the queued coded frames of
+each motion track (`player` is `&mut` for this) and reconstructs them in order. Per track
+it keeps two plane buffers (the frame being built and its reference, swapping roles each
+frame), the upload buffers, and the `Rgba8Unorm` texture it draws.
 
-1. Uploads the coded frame: macroblocks (20 bytes each: 163 KB at 1080p), blocks and
-   coefficient lists (about 1 MB for a 1080p delta frame at BC7 quality).
-2. Dispatches the prediction of every transform block from the reference planes, then one
-   workgroup of 64 threads per coded block: scatter its levels into workgroup memory,
-   dequantize, inverse transform, add and clamp. Planes are storage buffers; the two plane
-   sets swap roles each frame.
-3. After the last queued frame only: a color pass from the planes into the track's
-   `Rgba8Unorm` texture (sRGB-encoded bytes; storage textures cannot be sRGB, so the draw
-   shader decodes sRGB itself).
+- **Planes** are storage buffers of `u32` words holding 4 pixels each, little-endian, in
+  the [`Layout`](#coded-frames) of the CPU reference (Y, Co, Cg, A one after another, rows
+  padded to whole macroblocks). Plane widths are multiples of 8 and transform blocks
+  start on word boundaries, so every word belongs to one block and one invocation writes
+  it whole: no atomics.
+- **Per frame**: `write_buffer` of the coded frame's `mbs`, `blocks` and `coeffs` (grown to
+  the next power of two when too small) and of a uniform with the block count, keyframe
+  flag and dequantization scales, then one command buffer with the passes below and a
+  `submit`. Writes land before the next submit's commands, so frames queued together are
+  submitted one after another and each sees its own data.
+- **Prediction pass**: one invocation per plane word (4 horizontal pixels). It finds the
+  macroblock and the quadrant vector of its pixels as `predict_transform_block` does (luma
+  and 4:4:4 planes: the 8x8 block's quadrant; 4:2:0 chroma: the 4x4 part's quadrant) and
+  computes the normative `predict` of each pixel from the reference planes: the separable
+  filter in exact integer arithmetic, coordinates clamped to the plane. Intra macroblocks
+  write 128.
+- **Residual pass**: one workgroup of 64 invocations per coded block, after the prediction
+  pass. It scatters the block's levels into workgroup memory, dequantizes them with the
+  plane's scale, runs the two passes of `inverse_transform` (one invocation per output
+  value, barriers between), and 16 invocations add the residuals to the predicted words
+  and clamp. Blocks do not overlap, so blocks run in any order.
+- **Color pass**, after the last queued frame only: one invocation per pixel converts the
+  planes to RGBA as `to_rgba` does (YCoCg-R, 9/3/3/1 chroma upsampling with clamped
+  coordinates) and stores it in the track's `Rgba8Unorm` storage texture as `value /
+  255`. sRGB-encoded bytes: storage textures cannot be sRGB, so the draw shader decodes
+  sRGB itself for sRGB tracks.
+- Workgroup counts above 65535 (residual pass of a large keyframe) are split over two
+  dispatch dimensions.
+- All arithmetic is `i32` and stays below 2^31: products of levels and scales are at most
+  16383 * 14592, transform sums at most 8 * 89 * 32767.
 
-Requirements: compute shaders and storage buffers (`wgpu` downlevel `COMPUTE_SHADERS`):
-Vulkan, Metal, DX12 and GLES 3.1, not WebGL 2. `praxi_wgpu::capabilities` lists `motion`
-only when the adapter qualifies.
+`prepare` returns how many tracks got a new frame, counting reconstructed motion tracks.
+
+Requirements: compute shaders, 3 storage buffers per stage and write-only `Rgba8Unorm`
+storage textures (`wgpu` downlevel `COMPUTE_SHADERS`): Vulkan, Metal, DX12 and GLES 3.1,
+not WebGL 2. `praxi_wgpu::capabilities` lists `motion` after the block formats, only when
+the adapter qualifies, so a file with both block and motion variants plays the block
+variant.
+
+**Tests** (`praxi-wgpu`): clips encoded with `praxi-encoder` (4:2:0 and 4:4:4, alpha,
+sizes not multiple of 16, keyframes and delta frames with every macroblock kind) play
+through the player and the GPU decoder; the plane buffers read back must equal
+`reconstruct` byte for byte after every frame and the texture must equal `to_rgba`. The
+tests run on any adapter `wgpu` finds, including lavapipe, and are skipped with a message
+when there is none.
 
 Upload sizes at BC7 quality on the bench input: a 1080p keyframe has 1.3 million nonzero
 levels, 5.6 MB of lists; delta frames about 1 MB.
@@ -382,8 +421,8 @@ of copying into the output on keyframes.
 
 - 4x4 transforms and an in-loop deblocking filter at lower bitrates.
 - Default `qp` and the `qp` that matches BC7 PSNR on the bench input.
-- Keyframes over 1 ms of entropy decoding: the player's coded frame queue (phase 2) can
-  decode a frame ahead so that a keyframe's extra time does not land in one game frame.
+- Keyframes over 1 ms of entropy decoding: the player could decode a keyframe a frame
+  ahead so that its extra time does not land in one game frame.
 
 Tried in phase 1 and dropped, each under 1% on the bench input: rate-distortion optimized
 quantization, bit estimates from the previous frame's Huffman tables, a lower keyframe

@@ -77,7 +77,7 @@ let mut player = Player::open(file, &caps)?;
 let mut video = praxi_wgpu::VideoRenderer::new(&device, surface_format, &player);
 // every frame:
 player.advance(dt)?;
-video.prepare(&queue, &player, opacity);   // uploads changed frames, sets opacity
+video.prepare(&device, &queue, &mut player, opacity);   // uploads or decodes changed frames, sets opacity
 // inside the engine's render pass:
 video.draw(&mut pass, praxi_wgpu::Rect::fit(width, height, target_w, target_h));
 ```
@@ -85,12 +85,13 @@ video.draw(&mut pass, praxi_wgpu::Rect::fit(width, height, target_w, target_h));
 | Item | Meaning |
 |---|---|
 | `supported_formats(features)` | Texture formats `wgpu` features allow, most preferred first: BC7, BC3, BC1, BC5, BC4, then ASTC 4x4, 5x5, 6x6, 8x8. |
-| `capabilities(adapter, only)` | `Capabilities` from the adapter's features, or only `only` (error if not supported). |
+| `supports_motion(adapter)` | Whether the adapter can run the motion decoder's compute shaders ([motion-codec.md](motion-codec.md#gpu-decoder-praxi-wgpu)). |
+| `capabilities(adapter, only)` | `Capabilities` from the adapter's features, then `motion` when supported, or only `only` (error if not supported). |
 | `required_features(adapter)` | The texture compression features to request with the device. |
 | `wgpu_format(format, srgb)` | The `wgpu` texture format of a praxi texture format. |
 | `Rect` | A pixel rectangle of the render target; `Rect::fit(w, h, target_w, target_h)` letterboxes. |
 | `VideoRenderer::new(device, target_format, player)` | Pipelines for `target_format` and one texture per video track of `player`. One renderer per player. |
-| `prepare(queue, player, opacity)` | Uploads the tracks whose frame changed; returns how many. Sets the opacity (0 to 1) for the next draws. |
+| `prepare(device, queue, player, opacity)` | Uploads the tracks whose frame changed and reconstructs the queued frames of `motion` tracks on the GPU; returns how many tracks changed. Sets the opacity (0 to 1) for the next draws. |
 | `draw(pass, rect)` | Draws every track that has a frame into `rect`, in track order, each blended over what is already there (straight alpha times opacity). Sets the pass's viewport to `rect`. |
 | `draw_replace(pass, rect)` | Like `draw`, but track 0 replaces the target pixels, alpha included, for offscreen rendering such as screenshots. |
 

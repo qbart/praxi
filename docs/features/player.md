@@ -1,8 +1,8 @@
 # Player
 
 The `praxi` crate plays a `.praxi` file. It is pull based: the engine advances it once per
-game frame and reads the current video frames and events. It owns no threads and does not
-allocate per frame after start-up.
+game frame and reads the current video frames and events. It does not allocate per frame
+after start-up, and owns no threads except the entropy decoders of `motion` tracks.
 
 ## API
 
@@ -50,6 +50,9 @@ for track in 0..player.tracks().len() {
 - `video_frame(track)`: the latest decoded frame of a track (`None` before its first
   frame): texture format, sRGB flag, width, height, block data, frame index and timestamp.
   `index` changes only when a new frame was decoded, so engines can skip redundant uploads.
+- `take_coded_frames(track)` and `set_decode_threads(n)`: tracks in the `motion` format
+  queue coded frames for a GPU decoder instead of block data
+  ([motion-codec.md](motion-codec.md#player-api)).
 - `cue_streams()` and `set_cue_stream_enabled(stream, bool)`: see [cues.md](cues.md).
 - `replace_cues(tracks)`: play these cues in place of the file's cue streams
   ([cue-preview.md](cue-preview.md#player)).
