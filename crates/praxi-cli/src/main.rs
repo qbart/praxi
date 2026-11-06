@@ -561,14 +561,29 @@ fn frame(args: FrameArgs) -> AnyResult<()> {
     player.seek(std::time::Duration::from_secs_f64(args.at))?;
     let params = player.tracks()[args.track].params;
     let frame = player.video_frame(args.track).ok_or("no frame at that time")?;
-    let rgba = praxi_encoder::decode_frame(&params, frame.data)?;
+    let time = frame.time;
+    let rgba = if params.format == TextureFormat::Motion {
+        // Seeking queued the frames from the preceding keyframe: rebuild them on the CPU.
+        use praxi::format::motion;
+        let layout = motion::Layout::new(&params);
+        let (mut planes, mut reference) = (vec![0; layout.size], vec![0; layout.size]);
+        for coded in player.take_coded_frames(args.track) {
+            std::mem::swap(&mut planes, &mut reference);
+            motion::reconstruct(&layout, coded, &reference, &mut planes);
+        }
+        let mut rgba = Vec::new();
+        motion::to_rgba(&layout, &planes, &mut rgba);
+        rgba
+    } else {
+        praxi_encoder::decode_frame(&params, frame.data)?
+    };
     let png = ktx::lodepng::encode(&rgba, params.width, params.height, &mut ktx::lodepng::State::new())
         .map_err(|code| format!("PNG encoding failed: {}", ktx::lodepng::lodepng_error_text(code)))?;
     std::fs::write(&args.output, png)?;
     println!(
         "{}: frame at {:.3} s, {} {}x{}",
         args.output.display(),
-        frame.time.as_secs_f64(),
+        time.as_secs_f64(),
         params.format,
         params.width,
         params.height
