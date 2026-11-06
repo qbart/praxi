@@ -330,6 +330,12 @@ levels, 5.6 MB of lists; delta frames about 1 MB.
   gains the fields.
 - `praxi frame` (through the reference reconstruction, offline), `praxi info`.
 - Viewer and editor: play `motion` tracks through `praxi-wgpu`.
+- `motion_timing` example of `praxi-wgpu` (`cargo run --release -p praxi-wgpu --example
+  motion_timing -- FILE`): plays the motion track of `FILE` through the player and the GPU
+  decoder, waiting for the GPU after every frame, and prints the time of `prepare` plus
+  that wait for keyframes and delta frames (mean, median, p95, max over two passes after a
+  warm-up pass). `WGPU_ADAPTER_NAME` selects the adapter. It measures wall time, an upper
+  bound of the GPU time.
 
 ## Format changes
 
