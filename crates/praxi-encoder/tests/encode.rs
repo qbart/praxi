@@ -349,3 +349,55 @@ fn motion_frames_decode_close_to_the_source() {
         assert!(keyframes[0] && keyframes[4], "{keyframes:?}");
     }
 }
+
+#[test]
+fn player_queues_motion_frames() {
+    use praxi::format::motion;
+    let config = EncoderConfig::new(72, 40, 10, 1)
+        .variant(VariantConfig::motion().qp(20).slices(2))
+        .keyint(4)
+        .threads(2);
+    let mut enc = Encoder::new(Cursor::new(Vec::new()), config).unwrap();
+    for i in 0..10 {
+        enc.push_frame(&moving_frame(i * 3)).unwrap();
+    }
+    let bytes = enc.finish().unwrap().0.into_inner();
+
+    let mut reader = Reader::new(Cursor::new(bytes.clone())).unwrap();
+    let params = *reader.streams()[0].video_params().unwrap();
+    let mut decoder = motion::Decoder::new(&params);
+    let mut expected = Vec::new();
+    let mut payload = Vec::new();
+    while let Some(chunk) = reader.next_chunk().unwrap() {
+        reader.read_payload(&chunk, &mut payload).unwrap();
+        let mut coded = motion::CodedFrame::default();
+        decoder.decode(chunk.keyframe(), &payload, &mut coded).unwrap();
+        expected.push(coded);
+    }
+
+    // Decoding frames `from..=to` queues them from the last keyframe among them on.
+    let queued = |from: usize, to: usize| {
+        let start = (from..=to).rev().find(|&i| expected[i].keyframe).unwrap_or(from);
+        &expected[start..=to]
+    };
+    assert!(expected.iter().filter(|f| f.keyframe).count() < 6, "most frames are delta frames");
+
+    let mut p = Player::open(Cursor::new(bytes), &Capabilities::new([TextureFormat::Motion])).unwrap();
+    assert_eq!(p.tracks()[0].params.format, TextureFormat::Motion);
+    p.set_decode_threads(1);
+    p.play().unwrap();
+    let f = p.video_frame(0).unwrap();
+    assert!(f.data.is_empty());
+    assert_eq!(p.take_coded_frames(0), queued(0, 0));
+    assert!(p.take_coded_frames(0).is_empty(), "taking empties the queue");
+    let mut at = 0;
+    for frames in [2, 3, 1, 2] {
+        p.advance(Duration::from_millis(100 * frames as u64)).unwrap();
+        assert_eq!(p.take_coded_frames(0), queued(at + 1, at + frames), "frames {}..={}", at + 1, at + frames);
+        at += frames;
+    }
+    p.seek(Duration::from_millis(700)).unwrap();
+    // Seeking decodes from the keyframe before the target.
+    assert_eq!(p.take_coded_frames(0), queued(0, 7));
+    assert!(p.take_coded_frames(1).is_empty(), "no such track");
+}
