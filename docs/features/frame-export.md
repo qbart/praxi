@@ -32,6 +32,10 @@ praxi frame intro.praxi --at 2.5 --format astc6x6 --track 1 -o overlay.png
   viewers expect, so no conversion happens.
 - Supported formats: BC1, BC7 and ASTC (LDR, every block size). BC3, BC4 and BC5 fail with
   an error until a decoder is added.
+- `motion` frames are rebuilt with the CPU reference reconstruction
+  (`motion::reconstruct` and `motion::to_rgba`, [motion-codec.md](motion-codec.md#coded-frames))
+  from the coded frames the player queued since the preceding keyframe. The GPU decoder
+  produces the same pixels.
 - The command prints the frame's timestamp, format and size.
 
 ## Library
