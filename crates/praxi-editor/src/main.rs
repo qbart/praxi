@@ -717,7 +717,7 @@ impl eframe::App for Editor {
             self.keys(&ctx);
         }
         if let Some(state) = frame.wgpu_render_state() {
-            self.video.update(state, &self.player);
+            self.video.update(state, &mut self.player);
         }
 
         egui::Panel::top("toolbar").show(ui, |ui| {

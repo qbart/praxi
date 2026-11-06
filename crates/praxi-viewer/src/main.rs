@@ -218,7 +218,7 @@ fn screenshot(args: &Args) -> AnyResult<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None))?;
     describe_adapter(&adapter);
-    let player = open_player(args, &praxi_wgpu::capabilities(&adapter, args.format)?)?;
+    let mut player = open_player(args, &praxi_wgpu::capabilities(&adapter, args.format)?)?;
     describe_tracks(&player);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("praxi-viewer"),
@@ -228,7 +228,7 @@ fn screenshot(args: &Args) -> AnyResult<()> {
 
     let target_format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let mut renderer = VideoRenderer::new(&device, target_format, &player);
-    renderer.prepare(&queue, &player, 1.0);
+    renderer.prepare(&device, &queue, &mut player, 1.0);
     let video = player.tracks()[0].params;
     let (width, height) = args.size.unwrap_or((video.width, video.height));
     let target = device.create_texture(&wgpu::TextureDescriptor {
@@ -548,7 +548,7 @@ impl Viewer {
         self.player.advance(dt)?;
         let advanced = Instant::now();
         self.drain_events();
-        let uploads = self.renderer.prepare(&self.queue, &self.player, 1.0);
+        let uploads = self.renderer.prepare(&self.device, &self.queue, &mut self.player, 1.0);
         let uploaded = Instant::now();
 
         let frame = match self.surface.get_current_texture() {

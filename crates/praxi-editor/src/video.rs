@@ -48,8 +48,8 @@ impl VideoView {
     }
 
     /// Uploads and draws the frames that changed since the last call.
-    pub fn update<R: Read + Seek>(&mut self, state: &RenderState, player: &Player<R>) {
-        if self.renderer.prepare(&state.queue, player, 1.0) == 0 {
+    pub fn update<R: Read + Seek>(&mut self, state: &RenderState, player: &mut Player<R>) {
+        if self.renderer.prepare(&state.device, &state.queue, player, 1.0) == 0 {
             return;
         }
         let mut encoder = state.device.create_command_encoder(&Default::default());

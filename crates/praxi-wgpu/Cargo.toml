@@ -7,7 +7,9 @@ edition.workspace = true
 [dependencies]
 praxi.workspace = true
 wgpu.workspace = true
+bytemuck.workspace = true
 
 [dev-dependencies]
+praxi-encoder.workspace = true
 winit.workspace = true
 pollster.workspace = true

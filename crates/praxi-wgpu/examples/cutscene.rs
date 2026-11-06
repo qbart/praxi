@@ -119,7 +119,7 @@ impl Game {
         player.seek(Duration::ZERO).map_err(|e| e.to_string())?;
         while player.poll_event().is_some() {}
         let mut video = VideoRenderer::new(&device, config.format, &player);
-        video.prepare(&queue, &player, 0.0);
+        video.prepare(&device, &queue, &mut player, 0.0);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scene"),
@@ -246,7 +246,7 @@ impl Game {
             }
             Phase::Ending { since } => 1.0 - (now - since).as_secs_f32() / FADE.as_secs_f32(),
         };
-        self.video.prepare(&self.queue, &self.player, opacity);
+        self.video.prepare(&self.device, &self.queue, &mut self.player, opacity);
 
         let flash = match self.flash {
             Some((color, at, length)) if now - at < length => (color, 1.0 - (now - at).as_secs_f32() / length.as_secs_f32()),

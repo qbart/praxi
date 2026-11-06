@@ -7,6 +7,7 @@
 mod audio;
 
 use audio::us_to_frames;
+use praxi_format::motion::{CodedFrame, Decoder};
 use praxi_format::{CHUNK_HEADER_SIZE, ChunkHeader, Cue, IndexEntry, Reader, StreamInfo, StreamParams, TimeBase};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, VecDeque};
@@ -207,7 +208,8 @@ pub struct VideoFrame<'a> {
     pub alpha: bool,
     pub width: u32,
     pub height: u32,
-    /// Blocks in row-major order, ready to upload as a compressed texture.
+    /// Blocks in row-major order, ready to upload as a compressed texture. Empty for
+    /// `motion` tracks, whose frames come from [`Player::take_coded_frames`].
     pub data: &'a [u8],
     /// Changes whenever a new frame is decoded.
     pub index: u64,
@@ -223,12 +225,41 @@ struct Track {
     pts: u64,
     /// Chunks before this offset are ignored (set by seeking).
     resume_offset: u64,
+    /// Entropy decoding of `motion` tracks.
+    motion: Option<MotionQueue>,
+}
+
+/// The coded frames of a `motion` track waiting for the GPU decoder.
+struct MotionQueue {
+    decoder: Decoder,
+    /// Recycled buffers; the first `queued` hold frames not taken yet, oldest first.
+    frames: Vec<CodedFrame>,
+    queued: usize,
+}
+
+impl MotionQueue {
+    fn push(&mut self, keyframe: bool, payload: &[u8]) -> std::result::Result<(), String> {
+        // Frames before a keyframe are not needed to reconstruct it.
+        if keyframe {
+            self.queued = 0;
+        }
+        if self.frames.len() == self.queued {
+            self.frames.push(CodedFrame::default());
+        }
+        self.decoder.decode(keyframe, payload, &mut self.frames[self.queued])?;
+        self.queued += 1;
+        Ok(())
+    }
 }
 
 impl Track {
     fn apply(&mut self, chunk: &ChunkHeader, payload: &[u8], index: u64) -> Result<()> {
         let p = &self.info.params;
-        if chunk.keyframe() {
+        if let Some(m) = &mut self.motion {
+            if let Err(e) = m.push(chunk.keyframe(), payload) {
+                return corrupt(format!("motion frame at {}: {e}", chunk.offset));
+            }
+        } else if chunk.keyframe() {
             if payload.len() != p.frame_size() {
                 return corrupt(format!("keyframe at {} has {} bytes, expected {}", chunk.offset, payload.len(), p.frame_size()));
             }
@@ -341,8 +372,7 @@ impl<R: Read + Seek> Player<R> {
         let mut routes = vec![Route::Skip; streams.len()];
         let mut tracks = Vec::new();
         for (&group, members) in &groups {
-            // Motion tracks need the coded frame queue, which is not there yet.
-            let chosen = caps.formats.iter().filter(|f| **f != TextureFormat::Motion).find_map(|f| {
+            let chosen = caps.formats.iter().find_map(|f| {
                 members.iter().copied().find(|&s| streams[s as usize].video_params().is_some_and(|v| v.format == *f))
             });
             let Some(stream) = chosen else {
@@ -359,6 +389,11 @@ impl<R: Read + Seek> Player<R> {
                 index: 0,
                 pts: 0,
                 resume_offset: 0,
+                motion: (params.format == TextureFormat::Motion).then(|| MotionQueue {
+                    decoder: Decoder::new(&params),
+                    frames: Vec::new(),
+                    queued: 0,
+                }),
             });
         }
         let mut audio_groups: BTreeMap<u16, Vec<u16>> = BTreeMap::new();
@@ -677,6 +712,25 @@ impl<R: Read + Seek> Player<R> {
             index: t.index,
             time: Duration::from_micros(t.time_base.to_micros(t.pts)),
         })
+    }
+
+    /// The coded frames of `motion` track `track` decoded since the last call, oldest
+    /// first, for a GPU decoder to reconstruct in order (`docs/features/motion-codec.md`).
+    /// Empty for other tracks. A keyframe drops the frames queued before it.
+    pub fn take_coded_frames(&mut self, track: usize) -> &[CodedFrame] {
+        let Some(m) = self.tracks.get_mut(track).and_then(|t| t.motion.as_mut()) else {
+            return &[];
+        };
+        let n = std::mem::take(&mut m.queued);
+        &m.frames[..n]
+    }
+
+    /// Sets the most threads entropy-decoding the slices of one `motion` frame; 1 decodes
+    /// on the calling thread only.
+    pub fn set_decode_threads(&mut self, threads: usize) {
+        for m in self.tracks.iter_mut().filter_map(|t| t.motion.as_mut()) {
+            m.decoder.set_threads(threads);
+        }
     }
 
     /// The next queued event, oldest first.
