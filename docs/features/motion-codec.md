@@ -5,10 +5,11 @@ transform coding with motion compensation, the family of H.264, decoded mostly o
 GPU. It trades a little decode work for files several times smaller than BC7 at the
 same or better quality.
 
-Status: phase 1 (bitstream and encoder) and phase 2 (GPU decoder) done; the byte layout
-is in [PRAXI.md](../spec/PRAXI.md#motion-payload) (format 0.9). Playback decodes on the
-GPU only; there is no CPU playback path. The GPU decoder matches the reference byte for
-byte on lavapipe; its time on a hardware GPU is not measured yet.
+Status: phases 1 (bitstream and encoder), 2 (GPU decoder) and 3 (integration) done; the
+byte layout is in [PRAXI.md](../spec/PRAXI.md#motion-payload) (format 0.9). Playback
+decodes on the GPU only; there is no CPU playback path. The viewer, editor, `cutscene`
+and `praxi frame` take `motion` tracks (`--format motion`). The GPU decoder matches the
+reference byte for byte on lavapipe; its time on a hardware GPU is not measured yet.
 
 ## Why
 
@@ -378,7 +379,9 @@ The encoder comes first in any order: nothing can be decoded before something is
    that GPU output equals the reference byte for byte (lavapipe locally, and in CI if the
    runner allows), GPU timing.
 3. **Integration**: viewer, editor and `cutscene` example on `motion` tracks; engine guide
-   and texture-variants pages updated.
+   and texture-variants pages updated. Done: `--format motion`, `TextureFormat::parse`,
+   `praxi_wgpu::required_limits` (eframe on GL starts from WebGL 2 limits). The viewer's
+   screenshot and `praxi frame --format motion` give identical pixels.
 
 ## Measurements
 

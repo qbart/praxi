@@ -29,8 +29,8 @@ upload: no YUV conversion and no per-pixel CPU work. Frames stay compressed in V
 ## Non-goals
 
 - Competing with H.265/AV1 on file size. The block formats trade size for decode cost (see
-  [Baseline measurements](#baseline-measurements)); the planned motion codec
-  ([motion-codec.md](motion-codec.md)) aims at H.264-class sizes at high quality.
+  [Baseline measurements](#baseline-measurements)); the motion codec
+  ([motion-codec.md](motion-codec.md)) gets within reach of H.264 at high quality.
 - Real-time encoding. Encoding is an offline asset-pipeline step and may be slow.
 - Container compatibility with KTX2, MP4 or Matroska. praxi has its own container
   ([docs/spec/PRAXI.md](../spec/PRAXI.md)) without per-frame overhead.
@@ -91,6 +91,9 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
    ([cue-editing.md](cue-editing.md)), live preview of cue sheets in the viewer
    ([cue-preview.md](cue-preview.md)), a cue editor with a timeline
    ([cue-editor.md](cue-editor.md)).
+7. **M6** Motion codec: transform coding with motion compensation, about 1/6 of BC7's size
+   at equal PSNR, entropy decoded on CPU slices in parallel and reconstructed on the GPU,
+   playable in the viewer, editor and `cutscene` ([motion-codec.md](motion-codec.md)).
 
 ## Next
 
@@ -113,7 +116,7 @@ Not scheduled; smallest first.
 - **Real hardware**: measure on discrete and integrated GPUs, macOS and a phone (ASTC);
   everything so far ran on llvmpipe/lavapipe.
 - **Engine plugins**: Bevy or Godot integration on top of `praxi-wgpu`.
-- **Motion codec**: transform coding with motion compensation, decoded on the GPU, for
-  files several times smaller than BC7 at equal quality ([motion-codec.md](motion-codec.md)).
+- **Motion codec on hardware**: GPU decode time on an integrated GPU (goal: 1 ms per
+  1080p frame), keyframe decode-ahead ([motion-codec.md](motion-codec.md#open-questions)).
 - **Perceptual audio**: Opus, smaller than ADPCM at a higher decode cost
   ([audio.md](audio.md)).
