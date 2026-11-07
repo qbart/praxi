@@ -66,10 +66,7 @@ enum ClockArg {
 }
 
 fn parse_format(s: &str) -> Result<TextureFormat, String> {
-    TextureFormat::ALL
-        .into_iter()
-        .find(|f| f.name().replace(' ', "").eq_ignore_ascii_case(s))
-        .ok_or_else(|| format!("unknown format {s:?}"))
+    TextureFormat::parse(s).ok_or_else(|| format!("unknown format {s:?}"))
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -223,6 +220,7 @@ fn screenshot(args: &Args) -> AnyResult<()> {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("praxi-viewer"),
         required_features: praxi_wgpu::required_features(&adapter),
+        required_limits: praxi_wgpu::required_limits(&adapter, wgpu::Limits::default()),
         ..Default::default()
     }))?;
 
@@ -429,6 +427,7 @@ impl Viewer {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("praxi-viewer"),
             required_features: praxi_wgpu::required_features(&adapter),
+            required_limits: praxi_wgpu::required_limits(&adapter, wgpu::Limits::default()),
             ..Default::default()
         }))?;
         let size = window.inner_size();
@@ -651,6 +650,7 @@ mod tests {
     fn parses_arguments() {
         assert_eq!(parse_format("astc6x6"), Ok(TextureFormat::Astc6x6));
         assert_eq!(parse_format("BC7"), Ok(TextureFormat::Bc7));
+        assert_eq!(parse_format("motion"), Ok(TextureFormat::Motion));
         assert!(parse_format("etc2").is_err());
         assert_eq!(parse_size("640x480"), Ok((640, 480)));
         assert!(parse_size("640").is_err());

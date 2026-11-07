@@ -130,6 +130,11 @@ impl TextureFormat {
         Self::ALL.into_iter().chain([TextureFormat::Motion]).find(|f| f.id() == id)
     }
 
+    /// The format whose name matches `s`, ignoring case and spaces: `bc7`, `astc6x6`, `motion`.
+    pub fn parse(s: &str) -> Option<TextureFormat> {
+        Self::ALL.into_iter().chain([TextureFormat::Motion]).find(|f| f.name().replace(' ', "").eq_ignore_ascii_case(s))
+    }
+
     /// Block width and height in pixels; the macroblock for `Motion`.
     pub fn block_size(self) -> (u32, u32) {
         match self {

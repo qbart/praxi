@@ -278,13 +278,35 @@ fn source(pass: &str) -> String {
     format!("{COMMON}{pass}")
 }
 
-/// Whether the adapter can run the motion decoder: compute shaders, and the storage
-/// buffers and textures the passes bind.
+/// The device limits the passes need, raised from `base`.
+fn raise(base: wgpu::Limits) -> wgpu::Limits {
+    const BUFFER: u64 = 128 << 20;
+    wgpu::Limits {
+        max_storage_buffers_per_shader_stage: base.max_storage_buffers_per_shader_stage.max(3),
+        max_storage_textures_per_shader_stage: base.max_storage_textures_per_shader_stage.max(1),
+        max_storage_buffer_binding_size: base.max_storage_buffer_binding_size.max(BUFFER),
+        max_buffer_size: base.max_buffer_size.max(BUFFER),
+        max_compute_workgroup_storage_size: base.max_compute_workgroup_storage_size.max(512),
+        max_compute_invocations_per_workgroup: base.max_compute_invocations_per_workgroup.max(64),
+        max_compute_workgroup_size_x: base.max_compute_workgroup_size_x.max(64),
+        max_compute_workgroup_size_y: base.max_compute_workgroup_size_y.max(8),
+        max_compute_workgroup_size_z: base.max_compute_workgroup_size_z.max(1),
+        max_compute_workgroups_per_dimension: base.max_compute_workgroups_per_dimension.max(65535),
+        ..base
+    }
+}
+
+/// Whether the adapter can run the motion decoder: compute shaders, and the limits of
+/// `docs/features/motion-codec.md#gpu-decoder-praxi-wgpu`.
 pub fn supported(adapter: &wgpu::Adapter) -> bool {
     let limits = adapter.limits();
     adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
-        && limits.max_storage_buffers_per_shader_stage >= 3
-        && limits.max_storage_textures_per_shader_stage >= 1
+        && raise(wgpu::Limits::downlevel_webgl2_defaults()).check_limits(&limits)
+}
+
+/// `base` raised to the limits the motion decoder needs, when the adapter supports it.
+pub fn required_limits(adapter: &wgpu::Adapter, base: wgpu::Limits) -> wgpu::Limits {
+    if supported(adapter) { raise(base) } else { base }
 }
 
 /// Binding types of the passes, in binding order after the uniform.

@@ -48,10 +48,7 @@ struct Args {
 }
 
 fn parse_format(s: &str) -> Result<TextureFormat, String> {
-    TextureFormat::ALL
-        .into_iter()
-        .find(|f| f.name().replace(' ', "").eq_ignore_ascii_case(s))
-        .ok_or_else(|| format!("unknown format {s:?}"))
+    TextureFormat::parse(s).ok_or_else(|| format!("unknown format {s:?}"))
 }
 
 /// `intro.praxi` → `intro.cues.json`.
@@ -76,9 +73,13 @@ fn main() -> ExitCode {
     };
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
         let base = setup.device_descriptor.clone();
-        setup.device_descriptor = Arc::new(move |adapter| wgpu::DeviceDescriptor {
-            required_features: praxi_wgpu::required_features(adapter),
-            ..base(adapter)
+        setup.device_descriptor = Arc::new(move |adapter| {
+            let base = base(adapter);
+            wgpu::DeviceDescriptor {
+                required_features: praxi_wgpu::required_features(adapter),
+                required_limits: praxi_wgpu::required_limits(adapter, base.required_limits.clone()),
+                ..base
+            }
         });
     }
     let mut error = None;

@@ -18,7 +18,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !praxi_wgpu::supports_motion(&adapter) {
         return Err("the adapter cannot run the motion decoder".into());
     }
-    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))?;
+    let required_limits = praxi_wgpu::required_limits(&adapter, wgpu::Limits::default());
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { required_limits, ..Default::default() }))?;
     let caps = Capabilities::new([TextureFormat::Motion]);
     let mut player = Player::open(BufReader::new(File::open(&path)?), &caps)?;
     let track = player.tracks()[0];

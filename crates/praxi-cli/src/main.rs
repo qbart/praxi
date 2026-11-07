@@ -144,6 +144,7 @@ enum FormatArg {
     Astc5x5,
     Astc6x6,
     Astc8x8,
+    Motion,
 }
 
 impl FormatArg {
@@ -158,6 +159,7 @@ impl FormatArg {
             FormatArg::Astc5x5 => TextureFormat::Astc5x5,
             FormatArg::Astc6x6 => TextureFormat::Astc6x6,
             FormatArg::Astc8x8 => TextureFormat::Astc8x8,
+            FormatArg::Motion => TextureFormat::Motion,
         }
     }
 }

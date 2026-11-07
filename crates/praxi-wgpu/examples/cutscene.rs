@@ -102,6 +102,7 @@ impl Game {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("cutscene"),
             required_features: praxi_wgpu::required_features(&adapter),
+            required_limits: praxi_wgpu::required_limits(&adapter, wgpu::Limits::default()),
             ..Default::default()
         }))
         .map_err(|e| e.to_string())?;

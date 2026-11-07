@@ -6,7 +6,7 @@ mod motion;
 use praxi::{Capabilities, Player, TextureFormat};
 use std::io::{Read, Seek};
 
-pub use motion::supported as supports_motion;
+pub use motion::{required_limits, supported as supports_motion};
 
 /// BC formats in order of preference, then ASTC.
 const BC: [TextureFormat; 5] =
@@ -440,7 +440,8 @@ mod tests {
     }
 
     /// A device on the adapter `wgpu` picks (`WGPU_ADAPTER_NAME` selects one), if it can
-    /// run the motion decoder.
+    /// run the motion decoder. It starts from WebGL 2 limits, so the tests check that
+    /// `required_limits` raises everything the decoder needs.
     fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None)).ok()?;
@@ -448,7 +449,8 @@ mod tests {
             return None;
         }
         eprintln!("adapter: {}", adapter.get_info().name);
-        pollster::block_on(adapter.request_device(&Default::default())).ok()
+        let required_limits = required_limits(&adapter, wgpu::Limits::downlevel_webgl2_defaults());
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { required_limits, ..Default::default() })).ok()
     }
 
     fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u8> {
