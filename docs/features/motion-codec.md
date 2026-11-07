@@ -278,11 +278,26 @@ frame), the upload buffers, and the `Rgba8Unorm` texture it draws.
 
 `prepare` returns how many tracks got a new frame, counting reconstructed motion tracks.
 
-Requirements: compute shaders, 3 storage buffers per stage and write-only `Rgba8Unorm`
-storage textures (`wgpu` downlevel `COMPUTE_SHADERS`): Vulkan, Metal, DX12 and GLES 3.1,
-not WebGL 2. `praxi_wgpu::capabilities` lists `motion` after the block formats, only when
-the adapter qualifies, so a file with both block and motion variants plays the block
-variant.
+Requirements: compute shaders (`wgpu` downlevel `COMPUTE_SHADERS`) and write-only
+`Rgba8Unorm` storage textures: Vulkan, Metal, DX12 and GLES 3.1, not WebGL 2. The device
+limits the passes need:
+
+| Limit | Needed | Why |
+|---|---|---|
+| `max_storage_buffers_per_shader_stage` | 3 | prediction: reference, planes, macroblocks |
+| `max_storage_textures_per_shader_stage` | 1 | color pass |
+| `max_storage_buffer_binding_size`, `max_buffer_size` | 128 MiB | planes of frames up to 128 MiB (8-bit planes of 4K 4:4:4 with alpha: 33 MB) and the coded frame lists |
+| `max_compute_workgroup_storage_size` | 512 | residual pass: two arrays of 64 `i32` |
+| `max_compute_invocations_per_workgroup` | 64 | |
+| `max_compute_workgroup_size_x` / `_y` / `_z` | 64 / 8 / 1 | |
+| `max_compute_workgroups_per_dimension` | 65535 | dispatch splitting assumes it |
+
+`praxi_wgpu::supports_motion(adapter)` checks the downlevel flag and these limits against
+the adapter; `praxi_wgpu::required_limits(adapter, base)` raises each of them in `base` to
+the needed value when the adapter supports motion, so engines and eframe, which start from
+lower limits on GL, get a device that can create the pipelines. `praxi_wgpu::capabilities`
+lists `motion` after the block formats, only when the adapter qualifies, so a file with
+both block and motion variants plays the block variant.
 
 **Tests** (`praxi-wgpu`): clips encoded with `praxi-encoder` (4:2:0 and 4:4:4, alpha,
 sizes not multiple of 16, keyframes and delta frames with every macroblock kind) play

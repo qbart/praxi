@@ -72,7 +72,8 @@ continuous sound, `Clock::Audio` lets the video follow the sound card
 
 ```rust
 let caps = praxi_wgpu::capabilities(&adapter, None)?;
-let device_features = praxi_wgpu::required_features(&adapter); // request these
+let device_features = praxi_wgpu::required_features(&adapter);               // request these
+let device_limits = praxi_wgpu::required_limits(&adapter, wgpu::Limits::default()); // and these
 let mut player = Player::open(file, &caps)?;
 let mut video = praxi_wgpu::VideoRenderer::new(&device, surface_format, &player);
 // every frame:
@@ -88,6 +89,7 @@ video.draw(&mut pass, praxi_wgpu::Rect::fit(width, height, target_w, target_h));
 | `supports_motion(adapter)` | Whether the adapter can run the motion decoder's compute shaders ([motion-codec.md](motion-codec.md#gpu-decoder-praxi-wgpu)). |
 | `capabilities(adapter, only)` | `Capabilities` from the adapter's features, then `motion` when supported, or only `only` (error if not supported). |
 | `required_features(adapter)` | The texture compression features to request with the device. |
+| `required_limits(adapter, base)` | `base` raised to what the motion decoder needs when the adapter supports it (`base` unchanged otherwise). Request the device with it whenever `capabilities` may contain `motion`: a device made with lower limits fails validation when a motion track's pipelines are created. |
 | `wgpu_format(format, srgb)` | The `wgpu` texture format of a praxi texture format. |
 | `Rect` | A pixel rectangle of the render target; `Rect::fit(w, h, target_w, target_h)` letterboxes. |
 | `VideoRenderer::new(device, target_format, player)` | Pipelines for `target_format` and one texture per video track of `player`. One renderer per player. |
@@ -101,7 +103,10 @@ video.draw(&mut pass, praxi_wgpu::Rect::fit(width, height, target_w, target_h));
 |---|---|---|
 | `game_loop` (crate `praxi`, no dependencies) | `cargo run --release -p praxi --example game_loop -- FILE` | The frame loop above at a fixed 60 Hz without a GPU: variant selection, uploads skipped when the frame index did not change, events, an audio "device" pulling from `AudioOutput` on another thread. Prints a summary. |
 | `decode_thread` (crate `praxi`, no dependencies) | `cargo run --release -p praxi --example decode_thread -- FILE [NEXT]` | The player on a worker thread, frames handed to the game thread in recycled buffers, events forwarded; with `NEXT`, a second file prerolled during the first and started on the next frame after the first finishes. |
-| `cutscene` (crate `praxi-wgpu`, window) | `cargo run --release -p praxi-wgpu --example cutscene -- FILE` | An animated stand-in for gameplay; Space starts the prerolled video with a fade-in over it, Escape skips with a fade-out, the end fades out by itself. `light.flash` cues flash the screen in their `color` field (`red`, `green`, `blue`, `white`). `--auto` starts at once and quits after the fade-out. |
+| `cutscene` (crate `praxi-wgpu`, window) | `cargo run --release -p praxi-wgpu --example cutscene -- FILE` | Works with block and `motion` variants alike. An animated stand-in for gameplay; Space starts the prerolled video with a fade-in over it, Escape skips with a fade-out, the end fades out by itself. `light.flash` cues flash the screen in their `color` field (`red`, `green`, `blue`, `white`). `--auto` starts at once and quits after the fade-out. |
+
+`motion_timing` (crate `praxi-wgpu`) times the GPU decoder on a `motion` file
+([motion-codec.md](motion-codec.md#tools)).
 
 `make examples` encodes the first 2 seconds of the sample video with two cues and runs
 `game_loop` and `decode_thread` on it; CI runs it in the bench job.

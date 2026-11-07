@@ -15,7 +15,7 @@ praxi frame intro.praxi --at 2.5 --format astc6x6 --track 1 -o overlay.png
 | Option | Default | Meaning |
 |---|---|---|
 | `--at <SECONDS>` | `0` | Time of the frame |
-| `--format <F>` | first variant | Variant to decode: `bc1`, `bc3`, `bc4`, `bc5`, `bc7`, `astc4x4`, `astc5x5`, `astc6x6`, `astc8x8` |
+| `--format <F>` | first variant | Variant to decode: `bc1`, `bc3`, `bc4`, `bc5`, `bc7`, `astc4x4`, `astc5x5`, `astc6x6`, `astc8x8`, `motion` |
 | `--track <N>` | `0` | Track (group) index, as listed by the player |
 | `-o, --output <PNG>` | | Output file |
 

@@ -40,7 +40,11 @@ the viewer.
 - `SHEET` defaults to `FILE` with its extension replaced by `.cues.json`.
 - If `SHEET` exists, the editor opens it (an unreadable sheet is an error); otherwise it
   starts from the cues stored in `FILE` and saving creates `SHEET`.
-- Options: `--format <F>` as in the viewer, `--no-audio`.
+- Options: `--format <F>` as in the viewer (`motion` included), `--no-audio`.
+- eframe creates the device; the editor adds `praxi_wgpu::required_features` and
+  `praxi_wgpu::required_limits` to eframe's descriptor. On GL, eframe starts from WebGL 2
+  limits, which have no storage buffers; `required_limits` raises them when the adapter can
+  run the motion decoder.
 
 ## Window
 

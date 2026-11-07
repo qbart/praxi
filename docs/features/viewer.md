@@ -34,7 +34,7 @@ praxi-viewer intro.praxi --screenshot frame.png --at 2.5
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--format <F>` | best supported | Only accept this texture format: `bc1`, `bc3`, `bc4`, `bc5`, `bc7`, `astc4x4`, `astc5x5`, `astc6x6`, `astc8x8`. Fails if the GPU cannot sample it. |
+| `--format <F>` | best supported | Only accept this format: `bc1`, `bc3`, `bc4`, `bc5`, `bc7`, `astc4x4`, `astc5x5`, `astc6x6`, `astc8x8`, `motion` (case and spaces ignored, as parsed by `TextureFormat::parse`). Fails if the GPU cannot sample it or, for `motion`, cannot run compute shaders. |
 | `--loop` | off | Start with looping on. |
 | `--paused` | off | Open paused at the first frame. |
 | `--at <SECONDS>` | `0` | Start position. |
@@ -55,7 +55,11 @@ The viewer builds the player's `Capabilities` from the adapter's features:
 2. Otherwise BC formats if `TEXTURE_COMPRESSION_BC` is available (BC7, BC3, BC1, BC5,
    BC4), followed by ASTC formats if `TEXTURE_COMPRESSION_ASTC` is available (4x4, 5x5,
    6x6, 8x8). Desktop GPUs get BC, mobile and Apple silicon ASTC, as in
-   [texture-variants.md](texture-variants.md).
+   [texture-variants.md](texture-variants.md). Then `motion` if the adapter can run the
+   motion decoder (`praxi_wgpu::supports_motion`).
+
+The device is requested with `praxi_wgpu::required_features` and
+`praxi_wgpu::required_limits` on top of `wgpu`'s default limits.
 
 `max_audio_channels` is the output device's default channel count. The viewer prints the
 adapter, backend and the selected variant of every track at start-up.
@@ -68,6 +72,9 @@ adapter, backend and the selected variant of every track at start-up.
 - When a track's `VideoFrame::index` changes, the whole frame is uploaded with
   `Queue::write_texture` (rows of `blocks_x * block_bytes` bytes). There is no CPU decode
   and no conversion.
+- `motion` tracks are reconstructed on the GPU by compute shaders into an `Rgba8Unorm`
+  texture ([motion-codec.md](motion-codec.md#gpu-decoder-praxi-wgpu)); the exit summary
+  counts that time in uploads.
 - Tracks are drawn in track order, all stretched to the same rectangle: the largest one
   with track 0's aspect ratio that fits the window (letterboxed). Alpha is straight, so
   later tracks are blended with `src_alpha, 1 - src_alpha`.
@@ -117,4 +124,4 @@ spent in `advance` and in uploads, per presented frame.
 - Outside the video rectangle (when `--size` has another aspect ratio) pixels are
   transparent black.
 - At the video size, the PNG matches `praxi frame` up to differences between the GPU's
-  and the CPU's block decoders.
+  and the CPU's block decoders; `motion` tracks match exactly.

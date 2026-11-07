@@ -37,6 +37,13 @@ A CPU fallback (decoding blocks to RGBA) may be added later behind an opt-in fea
 | ASTC 5x5 | 5x5 | 16 | yes | no (reserved) |
 | ASTC 6x6 | 6x6 | 16 | yes | yes |
 | ASTC 8x8 | 8x8 | 16 | yes | yes |
+| motion | 16x16 macroblock | variable | yes | yes |
+
+`motion` is not a GPU texture format: it is a transform codec with motion compensation,
+about 1/6 of BC7's size at equal quality, decoded into an `Rgba8Unorm` texture by compute
+shaders ([motion-codec.md](motion-codec.md)). It needs compute shaders (Vulkan, Metal,
+DX12, GLES 3.1; not WebGL 2), so `praxi-wgpu` lists it after the block formats: a group
+that has both plays the block variant, which costs nothing to decode.
 
 Numeric ids are in [PRAXI.md](../spec/PRAXI.md#texture-formats). Color data is sRGB encoded;
 the stream's sRGB flag tells the engine to sample it with an sRGB texture format.
@@ -47,3 +54,5 @@ the stream's sRGB flag tells the engine to sample it with an sRGB texture format
 - Mobile: `astc6x6` (good size/quality balance) or `astc4x4` (higher quality).
 - Shipping one file everywhere: `bc7` + `astc6x6`. Platform-specific builds may encode one
   variant each instead.
+- Smallest files on GPUs with compute shaders: `motion` alone, or `motion` + `astc6x6` for
+  devices without compute shaders.
