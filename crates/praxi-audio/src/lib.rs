@@ -57,9 +57,9 @@ impl Device {
         };
         let latency_us = Arc::new(AtomicU64::new(0));
         let stream = match format {
-            cpal::SampleFormat::F32 => self.build::<f32>(config.clone(), outputs, muted, latency_us.clone()),
-            cpal::SampleFormat::I16 => self.build::<i16>(config.clone(), outputs, muted, latency_us.clone()),
-            cpal::SampleFormat::I32 => self.build::<i32>(config.clone(), outputs, muted, latency_us.clone()),
+            cpal::SampleFormat::F32 => self.build::<f32>(config, outputs, muted, latency_us.clone()),
+            cpal::SampleFormat::I16 => self.build::<i16>(config, outputs, muted, latency_us.clone()),
+            cpal::SampleFormat::I32 => self.build::<i32>(config, outputs, muted, latency_us.clone()),
             f => return Err(format!("unsupported device sample format {f}")),
         }?;
         stream.play().map_err(|e| e.to_string())?;
@@ -121,7 +121,7 @@ struct Source {
 
 impl Source {
     fn new(output: AudioOutput, rate: u32) -> Source {
-        let channels = output.channels() as usize;
+        let channels = output.channels();
         let resampler = (output.sample_rate() != rate).then(|| Resampler::new(channels, output.sample_rate(), rate));
         Source { output, resampler, channels, read: Vec::new(), converted: Vec::new() }
     }

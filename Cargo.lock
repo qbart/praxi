@@ -2190,6 +2190,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "praxi-audio"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "praxi",
+]
+
+[[package]]
 name = "praxi-cli"
 version = "0.1.0"
 dependencies = [
@@ -2207,9 +2215,9 @@ name = "praxi-editor"
 version = "0.1.0"
 dependencies = [
  "clap",
- "cpal",
  "eframe",
  "praxi",
+ "praxi-audio",
  "praxi-wgpu",
  "wgpu",
 ]
@@ -2237,10 +2245,10 @@ name = "praxi-viewer"
 version = "0.1.0"
 dependencies = [
  "clap",
- "cpal",
  "png",
  "pollster 0.4.0",
  "praxi",
+ "praxi-audio",
  "praxi-wgpu",
  "wgpu",
  "winit",
