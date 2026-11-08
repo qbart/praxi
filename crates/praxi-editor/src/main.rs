@@ -13,7 +13,6 @@ mod waveform;
 
 use clap::Parser;
 use doc::{Document, EditCue, Stream};
-use eframe::egui_wgpu::RenderState;
 use file::SharedFile;
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 use inspector::{CueDraft, valid_stream_name};
@@ -152,7 +151,6 @@ struct Editor {
     /// The player's file, closed before "Write into file".
     player_file: SharedFile,
     caps: Capabilities,
-    render: RenderState,
     video: VideoView,
     waveform: Option<Waveform>,
     /// Time base of video track 0, for frame stepping and snapping.
@@ -211,7 +209,6 @@ impl Editor {
             player,
             player_file,
             caps,
-            render: state.clone(),
             video,
             waveform,
             frame_base,
