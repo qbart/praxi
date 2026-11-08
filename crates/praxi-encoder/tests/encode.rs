@@ -192,15 +192,15 @@ fn bc1_is_opaque_and_half_of_bc7() {
         assert!(stats.variants[0].bytes < bc7.variants[0].bytes, "{} >= {}", stats.variants[0].bytes, bc7.variants[0].bytes);
         p.seek(Duration::from_millis(300)).unwrap();
         let data = p.video_frame(0).unwrap().data.to_vec();
-        for block in data.chunks_exact(8) {
+        for block in data.as_chunks::<8>().0 {
             let (c0, c1) = (u16::from_le_bytes([block[0], block[1]]), u16::from_le_bytes([block[2], block[3]]));
             assert!(c0 > c1, "four-color mode");
         }
         let rgba = praxi_encoder::decode_frame(&params, &data).unwrap();
-        assert!(rgba.chunks_exact(4).all(|px| px[3] == 255), "decodes opaque");
+        assert!(rgba.as_chunks::<4>().0.iter().all(|px| px[3] == 255), "decodes opaque");
         let se: f64 = rgba
-            .chunks_exact(4)
-            .zip(source[3].chunks_exact(4))
+            .as_chunks::<4>().0.iter()
+            .zip(source[3].as_chunks::<4>().0)
             .flat_map(|(a, b)| (0..3).map(move |c| (a[c] as f64 - b[c] as f64).powi(2)))
             .sum();
         let psnr = 10.0 * (255.0f64.powi(2) / (se / (W * H * 3) as f64)).log10();
