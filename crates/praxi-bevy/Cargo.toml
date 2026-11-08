@@ -1,0 +1,17 @@
+[package]
+name = "praxi-bevy"
+description = "Bevy plugin playing praxi video"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+praxi = { workspace = true, features = ["cue-sheet"] }
+praxi-wgpu.workspace = true
+wgpu.workspace = true
+bevy = { version = "0.20.1", default-features = false, features = ["std", "multi_threaded", "bevy_asset", "bevy_image", "bevy_render"] }
+
+[dev-dependencies]
+praxi-encoder.workspace = true
+clap.workspace = true
+bevy = { version = "0.20.1", default-features = false, features = ["std", "multi_threaded", "bevy_asset", "bevy_image", "bevy_render", "bevy_core_pipeline", "bevy_window", "bevy_winit", "x11", "wayland"] }
+bevy_egui = { version = "0.43.1", default-features = false, features = ["render", "default_fonts"] }
