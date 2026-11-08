@@ -49,7 +49,8 @@ output frames:
 | `--scale -1x720 --fps 30` | 1280x720 | 3.38 |
 
 Bitrate falls more slowly than pixels and frames: 720p keeps 60% of the bitrate for 44%
-of the pixels, and 30 fps 64% for half the frames, since larger and further-apart frames
+of the pixels, and 30 fps 64% for half the frames: each pixel of a smaller frame carries
+more detail, and frames further apart
 predict less well. All variants become streams of group 0. The first audio stream of the input is
 encoded too, through a separate `ffmpeg` process per audio variant.
 
