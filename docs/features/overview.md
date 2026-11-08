@@ -48,6 +48,7 @@ Cargo workspace under `crates/`:
 | `praxi-wgpu` | Texture upload and drawing for `wgpu` engines ([engine-integration.md](engine-integration.md)) | `praxi`, `wgpu` |
 | `praxi-viewer` | GPU viewer: plays files in a window, screenshots ([viewer.md](viewer.md)) | `praxi-wgpu`, `winit`, `praxi-audio` |
 | `praxi-editor` | Cue editor: timeline, waveform, inspector ([cue-editor.md](cue-editor.md)) | `praxi-wgpu`, `eframe`, `praxi-audio` |
+| `praxi-bevy` | Bevy plugin: video into an `Image`, events as messages, a cue editor example ([bevy.md](bevy.md)) | `praxi-wgpu`, `bevy`, `bevy_egui` (example) |
 | `praxi-audio` | Audio output for the viewer and the editor, with rate and channel conversion ([audio-output.md](audio-output.md)) | `praxi`, `cpal` |
 
 The runtime (`praxi`, `praxi-format`) does not depend on `ktx-rs`. Only the encoder does,

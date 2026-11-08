@@ -68,11 +68,11 @@ Motion decode-ahead works on one frame
 
 ## 6. Bevy + egui cue editor
 
-- [ ] `praxi-bevy`: a Bevy plugin on top of `praxi-wgpu` (video as a Bevy image, events
-  as Bevy messages). It needs a Bevy release on the same `wgpu` version.
-- [ ] A simple cue editor in Bevy with `bevy_egui`: a video, a cue list and a timeline,
-  reusing the editing model of `praxi-editor` and cue preview through
-  `Player::replace_cues`.
+- [x] `praxi-bevy`: a Bevy plugin on top of `praxi-wgpu` (video as a Bevy image, events
+  as Bevy messages); Bevy 0.20 is on `wgpu` 30 like praxi ([bevy.md](docs/features/bevy.md)).
+- [x] A simple cue editor in Bevy with `bevy_egui`: video, timeline, inspector, Save and
+  Write into file, cue preview through `Player::replace_cues`. Its own small editing
+  model (no undo); the full editor stays `praxi-editor`.
 
 ## Not scheduled
 
@@ -82,5 +82,7 @@ Motion decode-ahead works on one frame
 - **More block formats**: BC4/BC5 for one- and two-channel content, ASTC 5x5.
 - **Motion codec**: 4x4 transforms and deblocking at lower bitrates; `praxi encode --psnr`.
 - **Godot integration**.
+- **Audio in `praxi-bevy`**: Bevy's audio cannot take `AudioOutput` samples without a
+  custom source.
 - **CPU fallback** for GPUs without a file's formats (not planned while playback is
   GPU-only).

@@ -106,8 +106,10 @@ video.draw(&mut pass, praxi_wgpu::Rect::fit(width, height, target_w, target_h));
 | `decode_thread` (crate `praxi`, no dependencies) | `cargo run --release -p praxi --example decode_thread -- FILE [NEXT]` | The player on a worker thread, frames handed to the game thread in recycled buffers, events forwarded; with `NEXT`, a second file prerolled during the first and started on the next frame after the first finishes. |
 | `cutscene` (crate `praxi-wgpu`, window) | `cargo run --release -p praxi-wgpu --example cutscene -- FILE` | Works with block and `motion` variants alike. An animated stand-in for gameplay; Space starts the prerolled video with a fade-in over it, Escape skips with a fade-out, the end fades out by itself. `light.flash` cues flash the screen in their `color` field (`red`, `green`, `blue`, `white`). `--auto` starts at once and quits after the fade-out. |
 
+| `cue_editor` (crate `praxi-bevy`, window) | `cargo run --release -p praxi-bevy --example cue_editor -- FILE [SHEET]` | The Bevy plugin ([bevy.md](bevy.md)) in a tool: the video image in `bevy_egui`, a cue timeline and inspector, cue preview through `replace_cues`, Save and Write into file. |
+
 `motion_timing` (crate `praxi-wgpu`) times the GPU decoder on a `motion` file
 ([motion-codec.md](motion-codec.md#tools)).
 
 `make examples` encodes the first 2 seconds of the sample video with two cues and runs
-`game_loop` and `decode_thread` on it; CI runs it in the bench job.
+`game_loop` and `decode_thread` on it.

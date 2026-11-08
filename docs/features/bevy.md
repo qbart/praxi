@@ -75,8 +75,15 @@ A simple cue editor: the full editor is `praxi-editor` ([cue-editor.md](cue-edit
 ## Tests
 
 `praxi-bevy` has a headless test that runs the plugin in a Bevy app without a window
-(`MinimalPlugins`, the render plugins with no surface) when an adapter is available:
-it opens an encoded clip, plays it for a few updates and checks that frames were drawn,
-the image was copied and the cue events arrived as messages. Without an adapter it skips,
-as the other GPU tests do ([testing.md](testing.md)). The editor example is a manual
-check; it can run under Xvfb.
+(`MinimalPlugins`, `WindowPlugin` with no primary window, `AssetPlugin`, `RenderPlugin`,
+`ImagePlugin`, `MeshPlugin`) when an adapter is available. For a motion clip, and a BC7
+clip when the adapter samples BC, it plays for ten updates of 50 ms and checks that frames
+were drawn, the latest drawn frame was copied into the image's GPU texture and the clip's
+cue arrived as a `PraxiEvent`. The copied pixels are not read back. Without an adapter it
+skips, as the other GPU tests do ([testing.md](testing.md)).
+
+The editor example is a manual check. It also runs under Xvfb on lavapipe:
+`Xvfb :77 &`, then `DISPLAY=:77 cue_editor FILE`, with `xdotool` for input (`xdotool
+windowfocus` first, since there is no window manager to give the window keyboard focus)
+and `ffmpeg -f x11grab` for screenshots. Selecting, playing, editing a type, deleting,
+Save and Write into file were checked that way.

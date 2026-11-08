@@ -52,7 +52,8 @@ if let Some(frame) = player.video_frame(0) { /* upload frame.data as a compresse
 
 Engine integration guide, the `praxi-wgpu` helper crate and runnable examples (a headless
 game loop, decoding on a worker thread, a wgpu cutscene with fades):
-[docs/features/engine-integration.md](docs/features/engine-integration.md).
+[docs/features/engine-integration.md](docs/features/engine-integration.md). Bevy plugin and
+a Bevy + egui cue editor: [docs/features/bevy.md](docs/features/bevy.md).
 
 ## Docs
 
