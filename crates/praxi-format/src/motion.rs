@@ -663,10 +663,52 @@ pub struct Decoder {
     primed: bool,
     /// The keyframe decoding on the workers ahead of time, if any.
     ahead: Option<Ahead>,
-    /// What the slices of a decode-ahead read and their outputs; swapped with `frame` and
-    /// `parts` when it finishes.
+    /// What the slices of a decode-ahead read, swapped with `frame` when it finishes.
     ahead_frame: Arc<Frame>,
-    ahead_parts: Vec<Part>,
+    /// Where the slices of a decode-ahead put their outputs.
+    assembly: Arc<Mutex<Assembly>>,
+}
+
+/// The output of a decode-ahead, put together by the threads that decode its slices: each
+/// appends the finished slices that follow the output so far, so the frame is complete
+/// when the last slice is.
+#[derive(Default)]
+struct Assembly {
+    parts: Vec<Part>,
+    /// Which slices are done.
+    back: Vec<bool>,
+    /// Slices appended to `out`.
+    appended: usize,
+    out: CodedFrame,
+    first_error: Option<(usize, String)>,
+}
+
+impl Assembly {
+    fn start(&mut self, slices: usize) {
+        self.parts.resize_with(slices, Part::default);
+        self.back.clear();
+        self.back.resize(slices, false);
+        self.appended = 0;
+        self.first_error = None;
+    }
+
+    fn add(&mut self, s: usize, part: Part, result: Result<(), String>) {
+        if let Err(e) = result
+            && self.first_error.as_ref().is_none_or(|(first, _)| s < *first)
+        {
+            self.first_error = Some((s, e));
+        }
+        self.parts[s] = part;
+        self.back[s] = true;
+        while self.first_error.is_none() && self.appended < self.parts.len() && self.back[self.appended] {
+            if self.appended == 0 {
+                std::mem::swap(&mut self.parts[0].out, &mut self.out);
+            } else {
+                append(&mut self.out, &self.parts[self.appended].out);
+            }
+            self.appended += 1;
+        }
+    }
 }
 
 /// A keyframe started by [`Decoder::decode_ahead`].
@@ -776,6 +818,8 @@ struct Job {
     frame: Arc<Frame>,
     part: Part,
     result: Result<(), String>,
+    /// Where the output goes for a decode-ahead; otherwise it comes back with the job.
+    assembly: Option<Arc<Mutex<Assembly>>>,
     done: mpsc::Sender<Job>,
 }
 
@@ -784,6 +828,10 @@ impl Job {
         let frame = Arc::clone(&self.frame);
         self.result = frame.decode_slice(&frame.payload, self.s, &mut self.part);
         drop(frame);
+        if let Some(assembly) = &self.assembly {
+            let result = std::mem::replace(&mut self.result, Ok(()));
+            assembly.lock().expect("assembly lock").add(self.s, std::mem::take(&mut self.part), result);
+        }
         // The decoder waits for every job, so it is still listening.
         let _ = self.done.clone().send(self);
     }
@@ -816,7 +864,14 @@ impl Shared {
     }
 
     /// Queues the slices of `frame`, taking their outputs from `parts`, and wakes `workers`.
-    fn push(&self, frame: &Arc<Frame>, parts: &mut [Part], done: &mpsc::Sender<Job>, workers: usize) {
+    fn push(
+        &self,
+        frame: &Arc<Frame>,
+        parts: &mut [Part],
+        assembly: Option<&Arc<Mutex<Assembly>>>,
+        done: &mpsc::Sender<Job>,
+        workers: usize,
+    ) {
         {
             let mut queue = self.queue.lock().expect("queue lock");
             for (s, part) in parts.iter_mut().enumerate() {
@@ -825,6 +880,7 @@ impl Shared {
                     frame: Arc::clone(frame),
                     part: std::mem::take(part),
                     result: Ok(()),
+                    assembly: assembly.cloned(),
                     done: done.clone(),
                 });
             }
@@ -885,7 +941,7 @@ impl Decoder {
             primed: false,
             ahead: None,
             ahead_frame: Arc::new(Frame::new(Layout::new(params))),
-            ahead_parts: Vec::new(),
+            assembly: Arc::default(),
         }
     }
 
@@ -960,7 +1016,7 @@ impl Decoder {
         pool.grow(threads - 1);
         let (done, results) = mpsc::channel();
         let slices = self.parts.len();
-        pool.shared.push(&self.frame, &mut self.parts, &done, threads - 1);
+        pool.shared.push(&self.frame, &mut self.parts, None, &done, threads - 1);
         drop(done);
         // Finished slices are appended while others still decode, as soon as the slices
         // before them are in.
@@ -1030,11 +1086,14 @@ impl Decoder {
         frame.payload.clear();
         frame.payload.extend_from_slice(payload);
         let slices = frame.slices.len();
-        self.ahead_parts.resize_with(slices, Part::default);
+        let mut assembly = self.assembly.lock().expect("assembly lock");
+        assembly.start(slices);
         let pool = self.pool.get_or_insert_with(Pool::new);
         pool.grow(self.threads - 1);
         let (done, results) = mpsc::channel();
-        pool.shared.push(&self.ahead_frame, &mut self.ahead_parts, &done, (self.threads - 1).min(slices));
+        let workers = (self.threads - 1).min(slices);
+        pool.shared.push(&self.ahead_frame, &mut assembly.parts, Some(&self.assembly), &done, workers);
+        drop(assembly);
         self.ahead = Some(Ahead { tag, qp, results });
         true
     }
@@ -1052,14 +1111,13 @@ impl Decoder {
             self.primed = false;
             return Some(Err(e));
         }
+        let mut assembly = self.assembly.lock().expect("assembly lock");
+        std::mem::swap(&mut assembly.out, out);
+        std::mem::swap(&mut assembly.parts, &mut self.parts);
+        drop(assembly);
         std::mem::swap(&mut self.frame, &mut self.ahead_frame);
-        std::mem::swap(&mut self.parts, &mut self.ahead_parts);
-        std::mem::swap(&mut self.parts[0].out, out);
         out.keyframe = true;
         self.set_scales(ahead.qp, out);
-        for part in &self.parts[1..] {
-            append(out, &part.out);
-        }
         self.primed = true;
         Some(Ok(()))
     }
@@ -1071,25 +1129,21 @@ impl Decoder {
         }
     }
 
-    /// Decodes the queued slices of the decode-ahead on the calling thread, waits for the
-    /// others and puts their outputs back into `ahead_parts`. Returns the error of the
-    /// first failing slice.
+    /// Decodes the queued slices of the decode-ahead on the calling thread and waits for the
+    /// others. Returns the error of the first failing slice.
     fn wait_ahead(&mut self, ahead: &Ahead) -> Result<(), String> {
         let pool = self.pool.as_ref().expect("a decode-ahead runs on the pool");
         while let Some(job) = pool.shared.pop_for(&self.ahead_frame) {
             job.run();
         }
-        let mut first_error: Option<(usize, String)> = None;
-        for _ in 0..self.ahead_parts.len() {
-            let job = ahead.results.recv().expect("a slice thread panicked");
-            if let Err(e) = job.result
-                && first_error.as_ref().is_none_or(|(s, _)| job.s < *s)
-            {
-                first_error = Some((job.s, e));
-            }
-            self.ahead_parts[job.s] = job.part;
+        let slices = self.ahead_frame.slices.len();
+        for _ in 0..slices {
+            ahead.results.recv().expect("a slice thread panicked");
         }
-        first_error.map_or(Ok(()), |(_, e)| Err(e))
+        match self.assembly.lock().expect("assembly lock").first_error.take() {
+            Some((_, e)) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
