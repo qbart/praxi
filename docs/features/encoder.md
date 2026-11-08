@@ -36,7 +36,21 @@ file size: 720p has 44% of 1080p's pixels, 30 fps half the frames of 60 fps. The
 ffmpeg filters, `fps=N/D` first (so dropped frames are not scaled), then
 `scale=W:H:flags=lanczos`; the file's width, height and frame rate are the output's.
 Audio is not affected; with `--fps` and `--frames`, the audio length follows the output
-frame rate. All variants become streams of group 0. The first audio stream of the input is
+frame rate.
+
+Measured on the bench input (Big Buck Bunny 1080p60), `motion` at `qp` 16, the first 120
+output frames:
+
+| Options | Size | MB/s |
+|---|---|---|
+| none (1920x1080, 60 fps) | 1920x1080 | 8.75 |
+| `--scale 1280x-1` | 1280x720 | 5.24 |
+| `--fps 30` | 1920x1080 | 5.58 |
+| `--scale -1x720 --fps 30` | 1280x720 | 3.38 |
+
+Bitrate falls more slowly than pixels and frames: 720p keeps 60% of the bitrate for 44%
+of the pixels, and 30 fps 64% for half the frames, since larger and further-apart frames
+predict less well. All variants become streams of group 0. The first audio stream of the input is
 encoded too, through a separate `ffmpeg` process per audio variant.
 
 It prints per-variant statistics: bytes, MB/s, skipped blocks, keyframes, and bytes and
