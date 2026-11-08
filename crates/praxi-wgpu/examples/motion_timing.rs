@@ -19,8 +19,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("the adapter cannot run the motion decoder".into());
     }
     let required_limits = praxi_wgpu::required_limits(&adapter, wgpu::Limits::default());
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { required_limits, ..Default::default() }))?;
+    let required_features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features,
+        required_limits,
+        ..Default::default()
+    }))?;
     let caps = Capabilities::new([TextureFormat::Motion]);
     let mut player = Player::open(BufReader::new(File::open(&path)?), &caps)?;
     let track = player.tracks()[0];
@@ -34,7 +38,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let mut renderer = praxi_wgpu::VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, &player);
+    let timed = renderer.set_gpu_timing(&device, true);
+    if !timed {
+        println!("no timestamp queries: wall times only");
+    }
     let (mut keyframes, mut deltas) = (Vec::new(), Vec::new());
+    // GPU times of the passes: prediction, residual, color; keyframes, then delta frames.
+    let mut passes: [[Vec<f64>; 3]; 2] = Default::default();
     for pass in 0..3 {
         player.seek(Duration::ZERO)?;
         renderer.prepare(&device, &queue, &mut player, 1.0);
@@ -56,25 +66,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             renderer.prepare(&device, &queue, &mut player, 1.0);
             device.poll(wgpu::PollType::wait_indefinitely())?;
             let ms = start.elapsed().as_secs_f64() * 1e3;
+            let gpu = renderer.gpu_times(&device, &queue);
             if pass > 0 {
                 if keyframe { keyframes.push(ms) } else { deltas.push(ms) }
+                for t in gpu {
+                    let kind = &mut passes[usize::from(!t.keyframe)];
+                    let color = t.color.unwrap_or_default();
+                    for (times, d) in kind.iter_mut().zip([t.predict, t.residual, color]) {
+                        times.push(d.as_secs_f64() * 1e3);
+                    }
+                }
             }
         }
     }
-    for (name, mut times) in [("keyframes", keyframes), ("delta frames", deltas)] {
-        if times.is_empty() {
-            continue;
+    println!("wall time of prepare and the wait for the GPU:");
+    for (name, times) in [("keyframes", keyframes), ("delta frames", deltas)] {
+        print_stats(name, times);
+    }
+    if timed {
+        println!("GPU time per pass:");
+        for (kind, stages) in ["keyframes", "delta frames"].iter().zip(passes) {
+            for (stage, times) in ["prediction", "residual", "color"].iter().zip(stages) {
+                print_stats(&format!("{kind}, {stage}"), times);
+            }
         }
-        times.sort_by(f64::total_cmp);
-        let at = |q: usize| times[(times.len() - 1) * q / 100];
-        let mean = times.iter().sum::<f64>() / times.len() as f64;
-        println!(
-            "{name}: {} frames, mean {mean:.3} ms, median {:.3}, p95 {:.3}, max {:.3}",
-            times.len(),
-            at(50),
-            at(95),
-            at(100)
-        );
     }
     Ok(())
+}
+
+fn print_stats(name: &str, mut times: Vec<f64>) {
+    if times.is_empty() {
+        return;
+    }
+    times.sort_by(f64::total_cmp);
+    let at = |q: usize| times[(times.len() - 1) * q / 100];
+    let mean = times.iter().sum::<f64>() / times.len() as f64;
+    println!(
+        "  {name}: {} frames, mean {mean:.3} ms, median {:.3}, p95 {:.3}, max {:.3}",
+        times.len(),
+        at(50),
+        at(95),
+        at(100)
+    );
 }

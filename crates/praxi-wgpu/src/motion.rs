@@ -3,6 +3,7 @@
 //! `praxi::format::motion::reconstruct`, and convert them to RGBA.
 
 use praxi::format::motion::{CodedFrame, DCT, FILTER_4, FILTER_8, Layout, MB_INTRA, MB_WORDS};
+use std::time::Duration;
 
 /// Bytes of the `Params` uniform: 4 planes of 32 bytes, then 3 rows of 16.
 const PARAMS_SIZE: usize = 4 * 32 + 3 * 16;
@@ -412,6 +413,46 @@ pub(crate) struct Decoder {
     view: wgpu::TextureView,
     /// Index `i` builds into `planes[i]` from the other plane buffer.
     groups: [BindGroups; 2],
+    timing: Option<Timing>,
+}
+
+/// Most frames timed between two reads of the times.
+const TIMED_FRAMES: usize = 64;
+/// Timestamps per timed frame: start and end of the prediction, residual and color passes.
+const FRAME_QUERIES: usize = 6;
+
+/// Timestamp queries of the frames reconstructed since the times were last read.
+struct Timing {
+    queries: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    /// Keyframe flag and whether it was converted to RGBA, per timed frame.
+    frames: Vec<(bool, bool)>,
+}
+
+impl Timing {
+    fn new(device: &wgpu::Device) -> Timing {
+        let size = (TIMED_FRAMES * FRAME_QUERIES * 8) as u64;
+        let buffer = |label, usage| device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size, usage, mapped_at_creation: false });
+        Timing {
+            queries: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("motion timing"),
+                ty: wgpu::QueryType::Timestamp,
+                count: (TIMED_FRAMES * FRAME_QUERIES) as u32,
+            }),
+            resolve: buffer("motion timing resolve", wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC),
+            readback: buffer("motion timing readback", wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST),
+            frames: Vec::new(),
+        }
+    }
+}
+
+/// GPU time of one reconstructed frame.
+pub(crate) struct FrameTime {
+    pub keyframe: bool,
+    pub predict: Duration,
+    pub residual: Duration,
+    pub color: Option<Duration>,
 }
 
 /// Byte size of a storage buffer of `words` words, at least one word.
@@ -455,7 +496,43 @@ impl Decoder {
         let coeffs = storage_buffer(device, "motion coefficients", words_size(0));
         let view = texture.create_view(&Default::default());
         let groups = bind_groups(device, pipelines, &params, &planes, &mbs, &blocks, &coeffs, &view);
-        Decoder { layout, params, params_bytes, planes, current: 0, mbs, blocks, coeffs, view, groups }
+        Decoder { layout, params, params_bytes, planes, current: 0, mbs, blocks, coeffs, view, groups, timing: None }
+    }
+
+    /// Starts or stops timing the passes; the device must have `TIMESTAMP_QUERY`.
+    pub(crate) fn set_timing(&mut self, device: &wgpu::Device, enabled: bool) {
+        if enabled != self.timing.is_some() {
+            self.timing = enabled.then(|| Timing::new(device));
+        }
+    }
+
+    /// The GPU times of the frames timed since the last call, waiting for the GPU.
+    pub(crate) fn read_times(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<FrameTime> {
+        let Some(timing) = &mut self.timing else { return Vec::new() };
+        let frames = std::mem::take(&mut timing.frames);
+        if frames.is_empty() {
+            return Vec::new();
+        }
+        let count = frames.len() * FRAME_QUERIES;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("motion timing") });
+        encoder.resolve_query_set(&timing.queries, 0..count as u32, &timing.resolve, 0);
+        encoder.copy_buffer_to_buffer(&timing.resolve, 0, &timing.readback, 0, (count * 8) as u64);
+        queue.submit([encoder.finish()]);
+        let slice = timing.readback.slice(..(count * 8) as u64);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU wait");
+        let ticks: Vec<u64> = bytemuck::cast_slice(&slice.get_mapped_range().expect("mapped timestamps")).to_vec();
+        timing.readback.unmap();
+        let period = queue.get_timestamp_period() as f64;
+        let span = |i: usize| Duration::from_nanos((ticks[i + 1].saturating_sub(ticks[i]) as f64 * period) as u64);
+        frames
+            .iter()
+            .enumerate()
+            .map(|(f, &(keyframe, shown))| {
+                let at = f * FRAME_QUERIES;
+                FrameTime { keyframe, predict: span(at), residual: span(at + 2), color: shown.then(|| span(at + 4)) }
+            })
+            .collect()
     }
 
     /// The plane buffer holding the latest frame, in the layout of `motion::Layout`.
@@ -507,24 +584,43 @@ impl Decoder {
         let next = 1 - self.current;
         let groups = &self.groups[next];
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("motion") });
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("motion"), timestamp_writes: None });
-            pass.set_pipeline(&pipelines.predict.0);
-            pass.set_bind_group(0, &groups.predict, &[]);
-            let (x, y) = split((self.layout.size / 4) as u32, PREDICT_GROUP);
-            pass.dispatch_workgroups(x, y, 1);
-            if block_count > 0 {
-                pass.set_pipeline(&pipelines.residual.0);
-                pass.set_bind_group(0, &groups.residual, &[]);
-                let (x, y) = split(block_count, 1);
-                pass.dispatch_workgroups(x, y, 1);
-            }
-            if show {
-                pass.set_pipeline(&pipelines.color.0);
-                pass.set_bind_group(0, &groups.color, &[]);
-                pass.dispatch_workgroups(self.layout.width.div_ceil(8), self.layout.height.div_ceil(8), 1);
-            }
+        // Timed frames run each stage in its own pass, with timestamps at its start and end.
+        let timed = self.timing.as_mut().filter(|t| t.frames.len() < TIMED_FRAMES).map(|t| {
+            t.frames.push((frame.keyframe, show));
+            (&t.queries, ((t.frames.len() - 1) * FRAME_QUERIES) as u32)
+        });
+        let writes = |stage: u32| {
+            timed.map(|(query_set, base)| wgpu::ComputePassTimestampWrites {
+                query_set,
+                beginning_of_pass_write_index: Some(base + 2 * stage),
+                end_of_pass_write_index: Some(base + 2 * stage + 1),
+            })
+        };
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("motion"), timestamp_writes: writes(0) });
+        pass.set_pipeline(&pipelines.predict.0);
+        pass.set_bind_group(0, &groups.predict, &[]);
+        let (x, y) = split((self.layout.size / 4) as u32, PREDICT_GROUP);
+        pass.dispatch_workgroups(x, y, 1);
+        if timed.is_some() {
+            drop(pass);
+            pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("motion residual"), timestamp_writes: writes(1) });
         }
+        if block_count > 0 {
+            pass.set_pipeline(&pipelines.residual.0);
+            pass.set_bind_group(0, &groups.residual, &[]);
+            let (x, y) = split(block_count, 1);
+            pass.dispatch_workgroups(x, y, 1);
+        }
+        if show {
+            if timed.is_some() {
+                drop(pass);
+                pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("motion color"), timestamp_writes: writes(2) });
+            }
+            pass.set_pipeline(&pipelines.color.0);
+            pass.set_bind_group(0, &groups.color, &[]);
+            pass.dispatch_workgroups(self.layout.width.div_ceil(8), self.layout.height.div_ceil(8), 1);
+        }
+        drop(pass);
         queue.submit([encoder.finish()]);
         self.current = next;
     }

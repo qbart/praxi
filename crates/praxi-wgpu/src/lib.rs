@@ -5,6 +5,7 @@ mod motion;
 
 use praxi::{Capabilities, Player, TextureFormat};
 use std::io::{Read, Seek};
+use std::time::Duration;
 
 pub use motion::{required_limits, supported as supports_motion};
 
@@ -144,6 +145,18 @@ struct TrackTexture {
     uploaded: Option<u64>,
     /// The GPU decoder of a `motion` track.
     motion: Option<motion::Decoder>,
+}
+
+/// GPU time of one frame reconstructed by the motion decoder
+/// (`docs/features/motion-codec.md#gpu-timing`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MotionGpuTime {
+    pub track: usize,
+    pub keyframe: bool,
+    pub predict: Duration,
+    pub residual: Duration,
+    /// The color pass, for the frame that was converted to RGBA.
+    pub color: Option<Duration>,
 }
 
 /// The textures of one player's video tracks and the pipelines that draw them.
@@ -333,6 +346,34 @@ impl VideoRenderer {
         TrackTexture { texture, params, bind_group, format, blocks, uploaded: None, motion: None }
     }
 
+    /// Starts or stops measuring the GPU time of the motion decoder's passes with timestamp
+    /// queries, for profiling. Returns whether timing is on: never when `device` was created
+    /// without `Features::TIMESTAMP_QUERY`.
+    pub fn set_gpu_timing(&mut self, device: &wgpu::Device, enabled: bool) -> bool {
+        let enabled = enabled && device.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        for decoder in self.tracks.iter_mut().filter_map(|t| t.motion.as_mut()) {
+            decoder.set_timing(device, enabled);
+        }
+        enabled
+    }
+
+    /// The GPU times of the motion frames reconstructed since the last call, in order (up to
+    /// 64 per track). Waits for the GPU to finish them.
+    pub fn gpu_times(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<MotionGpuTime> {
+        let mut times = Vec::new();
+        for (track, t) in self.tracks.iter_mut().enumerate() {
+            let Some(decoder) = &mut t.motion else { continue };
+            times.extend(decoder.read_times(device, queue).into_iter().map(|f| MotionGpuTime {
+                track,
+                keyframe: f.keyframe,
+                predict: f.predict,
+                residual: f.residual,
+                color: f.color,
+            }));
+        }
+        times
+    }
+
     /// Uploads the frames that changed since the last call, reconstructs the coded frames
     /// queued by `motion` tracks, and sets the opacity (clamped to 0..=1) of the next draws.
     /// Returns how many tracks got a new frame.
@@ -450,7 +491,13 @@ mod tests {
         }
         eprintln!("adapter: {}", adapter.get_info().name);
         let required_limits = required_limits(&adapter, wgpu::Limits::downlevel_webgl2_defaults());
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { required_limits, ..Default::default() })).ok()
+        let required_features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features,
+            required_limits,
+            ..Default::default()
+        }))
+        .ok()
     }
 
     fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u8> {
@@ -526,7 +573,8 @@ mod tests {
             eprintln!("skipped: no adapter that runs compute shaders");
             return;
         };
-        for (chroma, w, h, alpha) in [(Chroma::C420, 72, 40, true), (Chroma::C444, 50, 34, false)] {
+        // The 4:4:4 clip runs timed, in separate passes per stage.
+        for (chroma, w, h, alpha, timed) in [(Chroma::C420, 72, 40, true, false), (Chroma::C444, 50, 34, false, true)] {
             let config = EncoderConfig::new(w, h, 10, 1)
                 .variant(VariantConfig::motion().qp(12).slices(2).chroma(chroma))
                 .keyint(4)
@@ -547,8 +595,9 @@ mod tests {
             let layout = Layout::new(&params);
             let mut decoder = motion::Decoder::new(&params);
             let (mut payload, mut coded) = (Vec::new(), motion::CodedFrame::default());
-            let mut expected: Vec<Vec<u8>> = Vec::new();
+            let (mut expected, mut keyframes): (Vec<Vec<u8>>, Vec<bool>) = (Vec::new(), Vec::new());
             while let Some(chunk) = reader.next_chunk().unwrap() {
+                keyframes.push(chunk.keyframe());
                 reader.read_payload(&chunk, &mut payload).unwrap();
                 decoder.decode(chunk.keyframe(), &payload, &mut coded).unwrap();
                 let mut planes = vec![0; layout.size];
@@ -558,8 +607,24 @@ mod tests {
 
             let mut player = Player::open(Cursor::new(bytes), &Capabilities::new([TextureFormat::Motion])).unwrap();
             let mut renderer = VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, &player);
+            let timed = timed && renderer.set_gpu_timing(&device, true);
+            if !timed && chroma == Chroma::C444 {
+                eprintln!("timing not checked: the adapter has no timestamp queries");
+            }
             let mut check = |player: &mut Player<Cursor<Vec<u8>>>, what: &str| {
                 assert_eq!(renderer.prepare(&device, &queue, player, 1.0), 1, "{chroma:?} {what}");
+                let times = renderer.gpu_times(&device, &queue);
+                if timed {
+                    // One entry per reconstructed frame; only the last one is converted.
+                    let (last, rest) = times.split_last().expect("timed frames");
+                    assert!(last.color.is_some() && rest.iter().all(|t| t.color.is_none()), "{what}: {times:?}");
+                    assert!(times.iter().all(|t| t.track == 0));
+                    let last = player.video_frame(0).unwrap().time.as_millis() as usize / 100;
+                    let flags: Vec<bool> = times.iter().map(|t| t.keyframe).collect();
+                    assert_eq!(flags, keyframes[last + 1 - times.len()..=last], "{what}");
+                } else {
+                    assert!(times.is_empty());
+                }
                 let t = (player.video_frame(0).unwrap().time.as_millis() / 100) as usize;
                 let track = &renderer.tracks[0];
                 let planes = read_buffer(&device, &queue, track.motion.as_ref().unwrap().planes());
