@@ -6,7 +6,7 @@ edition.workspace = true
 
 [features]
 default = ["audio"]
-audio = ["dep:cpal"]
+audio = ["dep:praxi-audio"]
 
 [dependencies]
 praxi = { workspace = true, features = ["cue-sheet"] }
@@ -16,4 +16,4 @@ wgpu.workspace = true
 winit.workspace = true
 pollster.workspace = true
 png = "0.18"
-cpal = { version = "0.18", optional = true }
+praxi-audio = { workspace = true, optional = true }

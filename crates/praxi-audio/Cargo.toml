@@ -1,0 +1,9 @@
+[package]
+name = "praxi-audio"
+description = "Audio output for the praxi viewer and editor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+praxi.workspace = true
+cpal = "0.18"

@@ -2,8 +2,7 @@
 //! (`docs/features/cue-editor.md`).
 
 #[cfg(feature = "audio")]
-#[path = "../../praxi-viewer/src/audio.rs"]
-mod audio;
+use praxi_audio as audio;
 mod doc;
 mod file;
 mod inspector;
@@ -733,18 +732,24 @@ fn open_player(file: &Path, caps: &Capabilities) -> Result<(FilePlayer, SharedFi
     Ok((player, shared))
 }
 
-/// Plays the audio tracks with the rate and channels of track 0 on `device`.
+/// Starts the audio stream for every audio track, converted to the device's format where
+/// needed, or prints why not.
 #[cfg(feature = "audio")]
 fn start_audio(device: &audio::Device, player: &FilePlayer, muted: &Arc<AtomicBool>) -> Option<audio::Stream> {
     let tracks = player.audio_tracks();
-    let first = &tracks.first()?.params;
-    let outputs = (0..tracks.len())
-        .filter(|&i| tracks[i].params.sample_rate == first.sample_rate && tracks[i].params.channels == first.channels)
-        .filter_map(|i| player.audio_output(i))
-        .collect();
+    let outputs: Vec<_> = (0..tracks.len()).filter_map(|i| player.audio_output(i)).collect();
+    if outputs.is_empty() {
+        return None;
+    }
     match device.start(outputs, muted.clone()) {
         Ok(stream) => {
-            println!("audio device: {}, {} Hz, {} ch", device.name(), first.sample_rate, first.channels);
+            let (rate, channels) = stream.config();
+            println!("audio device: {}, {rate} Hz, {channels} ch", device.name());
+            for (i, t) in tracks.iter().enumerate() {
+                if (t.params.sample_rate, t.params.channels) != (rate, channels) {
+                    println!("audio {i}: converted from {} Hz {} ch", t.params.sample_rate, t.params.channels);
+                }
+            }
             Some(stream)
         }
         Err(e) => {

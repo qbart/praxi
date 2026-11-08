@@ -46,8 +46,9 @@ Cargo workspace under `crates/`:
 | `praxi-encoder` | Encoder library: RGBA frames to `.praxi` | `ktx-rs`, `praxi-format` |
 | `praxi-cli` | `praxi` command line tool (encode via ffmpeg, inspect files, edit cues) | `praxi-encoder`, `clap`, `serde_json` |
 | `praxi-wgpu` | Texture upload and drawing for `wgpu` engines ([engine-integration.md](engine-integration.md)) | `praxi`, `wgpu` |
-| `praxi-viewer` | GPU viewer: plays files in a window, screenshots ([viewer.md](viewer.md)) | `praxi-wgpu`, `winit`, `cpal` |
-| `praxi-editor` | Cue editor: timeline, waveform, inspector ([cue-editor.md](cue-editor.md)) | `praxi-wgpu`, `eframe`, `cpal` |
+| `praxi-viewer` | GPU viewer: plays files in a window, screenshots ([viewer.md](viewer.md)) | `praxi-wgpu`, `winit`, `praxi-audio` |
+| `praxi-editor` | Cue editor: timeline, waveform, inspector ([cue-editor.md](cue-editor.md)) | `praxi-wgpu`, `eframe`, `praxi-audio` |
+| `praxi-audio` | Audio output for the viewer and the editor, with rate and channel conversion ([audio-output.md](audio-output.md)) | `praxi`, `cpal` |
 
 The runtime (`praxi`, `praxi-format`) does not depend on `ktx-rs`. Only the encoder does,
 with default features off (no Vulkan loader). See [video-codec.md](video-codec.md) and

@@ -88,10 +88,11 @@ adapter, backend and the selected variant of every track at start-up.
   When audio plays, the clock follows the output (`Clock::Audio` on the first mixed track,
   latency from cpal's callback and playback timestamps); `--clock game` keeps the wall
   clock as master.
-- Every enabled audio track with the same sample rate and channel count as audio track 0
-  is mixed (summed) into one output stream opened at that rate and channel count; other
-  tracks are reported and skipped. The viewer does not resample: if the device refuses the
-  rate or channel count, the viewer prints why and plays without sound.
+- Every audio track is mixed (summed) into one output stream through `praxi-audio`
+  ([audio-output.md](audio-output.md)): at audio track 0's rate and channel count when the
+  device supports them, otherwise at the device's default configuration, each track
+  converted to it. The viewer prints the stream format and which tracks are converted;
+  if the device cannot be opened, it prints why and plays without sound.
 - Events are printed to stdout with the position, for example
   `[   2.500] cue explosion id=4096 stream=2 power=0.8`.
 - The window title shows the file name, position, duration, state and track 0's format,

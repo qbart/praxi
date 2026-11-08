@@ -38,6 +38,7 @@ value these tests fail instead, which shows they all ran.
 | `praxi-wgpu` | Format mapping, the GPU motion decoder against the CPU reference, block formats drawn against the CPU decoder |
 | `praxi-cli` | Argument parsing, SRT conversion, cue add and remove; `tests/cli.rs` runs the binary end to end on a video ffmpeg generates: `encode` (BC1, BC7, motion, `--scale`, `--fps`, audio, cues), `info`, `frame`, `cues export / import / add / remove / srt` and `bench --json` |
 | `praxi-viewer`, `praxi-editor` | Argument parsing, the editor's document, drafts and file closing |
+| `praxi-audio` | Resampling and channel mapping, without a device |
 
 ## Manual checks
 

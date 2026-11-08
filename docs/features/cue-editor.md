@@ -21,7 +21,7 @@ praxi-editor intro.praxi subs.en.json      # edits another sheet
 | `eframe` (egui, wgpu backend) | Window, widgets, timeline drawing |
 | `praxi-wgpu` | Video textures and drawing ([engine-integration.md](engine-integration.md#praxi-wgpu)) |
 | `praxi` with `cue-sheet` | Player, cue sheets, cue replacement |
-| `cpal` (feature `audio`, default) | Audio output, through the viewer's output module (`crates/praxi-viewer/src/audio.rs`, included by path) |
+| `praxi-audio` (feature `audio`, default) | Audio output, shared with the viewer ([audio-output.md](audio-output.md)) |
 | `clap` | Arguments |
 
 The video is drawn into an `Rgba8UnormSrgb` texture and copied into the `Rgba8Unorm`

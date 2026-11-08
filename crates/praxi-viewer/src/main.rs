@@ -1,7 +1,7 @@
 //! `praxi-viewer`: plays a `.praxi` file on the GPU (`docs/features/viewer.md`).
 
 #[cfg(feature = "audio")]
-mod audio;
+use praxi_audio as audio;
 mod checker;
 
 use clap::Parser;
@@ -614,25 +614,24 @@ impl Viewer {
     }
 }
 
-/// Starts the audio stream for every track matching audio track 0, or prints why not.
+/// Starts the audio stream for every audio track, converted to the device's format where
+/// needed, or prints why not.
 #[cfg(feature = "audio")]
 fn start_audio(device: &audio::Device, player: &FilePlayer, muted: Arc<AtomicBool>) -> Option<audio::Stream> {
     let tracks = player.audio_tracks();
-    let first = &tracks.first()?.params;
-    let mut outputs = Vec::new();
-    for (i, t) in tracks.iter().enumerate() {
-        if t.params.sample_rate == first.sample_rate && t.params.channels == first.channels {
-            outputs.extend(player.audio_output(i));
-        } else {
-            println!(
-                "audio {i}: skipped, {} Hz {} ch differs from audio 0 ({} Hz {} ch)",
-                t.params.sample_rate, t.params.channels, first.sample_rate, first.channels
-            );
-        }
+    let outputs: Vec<_> = (0..tracks.len()).filter_map(|i| player.audio_output(i)).collect();
+    if outputs.is_empty() {
+        return None;
     }
     match device.start(outputs, muted) {
         Ok(stream) => {
-            println!("audio device: {}, {} Hz, {} ch", device.name(), first.sample_rate, first.channels);
+            let (rate, channels) = stream.config();
+            println!("audio device: {}, {rate} Hz, {channels} ch", device.name());
+            for (i, t) in tracks.iter().enumerate() {
+                if (t.params.sample_rate, t.params.channels) != (rate, channels) {
+                    println!("audio {i}: converted from {} Hz {} ch", t.params.sample_rate, t.params.channels);
+                }
+            }
             Some(stream)
         }
         Err(e) => {
