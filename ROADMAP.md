@@ -16,7 +16,8 @@ copied byte for byte, nothing is re-encoded. Missing:
   the command line with the encoder's `--cue` syntax, without writing a sheet by hand.
 - [x] **Editor "Write into file" on Windows**: the editor renames over the file its player
   has open, which Windows refuses. Release the file before the rename, reopen it after and
-  keep the position. Not yet run on Windows.
+  keep the position. Checked on Linux under Xvfb (the file gets the cues, playback goes
+  on); not yet run on Windows.
 - [x] **Tests** for both, plus a cue round trip through `cues import` on a motion file.
 - [ ] Editor close dialog under a window manager (needs a desktop: manual check).
 
