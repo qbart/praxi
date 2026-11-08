@@ -45,13 +45,33 @@ value these tests fail instead, which shows they all ran.
 | `praxi-audio` | Resampling and channel mapping, without a device |
 | `praxi-bevy` | The plugin in a headless Bevy app: frames drawn and copied into the image, events as messages |
 
+## Window checks under Xvfb
+
+The windowed programs run on a virtual display with lavapipe, without a desktop:
+
+```sh
+Xvfb :77 -screen 0 1280x800x24 &
+export DISPLAY=:77
+praxi-editor FILE --no-audio &
+xdotool mousemove 421 16 click 1                         # input; xdotool windowfocus first for keys
+ffmpeg -f x11grab -video_size 1280x800 -i :77 -frames:v 1 shot.png
+python3 tools/wm_close.py $(xdotool search --pid $! | tail -1)   # the close button
+```
+
+There is no window manager, so `tools/wm_close.py` sends `WM_DELETE_WINDOW` as a window
+manager's close button does. Checked this way: the editor's close dialog (no dialog
+without changes; Cancel keeps the window, Discard closes without saving, Save writes the
+sheet and closes), the editor's "Write into file", and the Bevy cue editor
+([bevy.md](bevy.md#tests)). Coordinates depend on the layout, so these are not scripted
+tests.
+
 ## Manual checks
 
 These need a desktop and are not covered by tests:
 
 - The viewer window: playback, keys, audio (`praxi-viewer FILE`).
-- The editor: timeline input, inspector, saving, "Write into file" (on Windows too), the
-  close dialog under a window manager ([cue-editor.md](cue-editor.md)).
+- The editor on a desktop: timeline input, inspector, saving, "Write into file" on
+  Windows ([cue-editor.md](cue-editor.md)).
 - The `cutscene` example (`cargo run -p praxi-wgpu --example cutscene -- FILE`).
 - The Bevy cue editor (`cargo run --release -p praxi-bevy --example cue_editor -- FILE`),
   also under Xvfb ([bevy.md](bevy.md#tests)).

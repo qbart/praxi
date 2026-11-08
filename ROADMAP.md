@@ -17,9 +17,11 @@ copied byte for byte, nothing is re-encoded. Missing:
 - [x] **Editor "Write into file" on Windows**: the editor renames over the file its player
   has open, which Windows refuses. Release the file before the rename, reopen it after and
   keep the position. Checked on Linux under Xvfb (the file gets the cues, playback goes
-  on); not yet run on Windows.
+  on); every crate type-checks for Windows (`make check-windows`) and the rename retries
+  while antivirus holds the new file; not yet run on Windows.
 - [x] **Tests** for both, plus a cue round trip through `cues import` on a motion file.
-- [ ] Editor close dialog under a window manager (needs a desktop: manual check).
+- [x] Editor close dialog: checked under Xvfb with the close message a window manager
+  sends ([testing.md](docs/features/testing.md#window-checks-under-xvfb)).
 
 ## 2. BC1
 
