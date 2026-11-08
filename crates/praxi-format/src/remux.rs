@@ -106,6 +106,25 @@ pub fn replace_cues_in_file(input: &Path, output: &Path, tracks: &[CueTrack]) ->
         let _ = std::fs::remove_file(&temp);
         return result;
     }
-    std::fs::rename(&temp, output)?;
+    rename(&temp, output)?;
     Ok(())
+}
+
+/// Renames `from` over `to`; on Windows, retries while another process (antivirus, search
+/// indexer) briefly holds one of them open.
+fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut attempts = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied && attempts < 10 => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(from);
+                return Err(e);
+            }
+            Ok(()) => return Ok(()),
+        }
+    }
 }

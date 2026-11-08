@@ -105,7 +105,10 @@ The CLI is built on `praxi_format`, so an editor application can do the same in 
   sheets.
 
 - `replace_cues_in_file(input, output, tracks)`: the same through a temporary file, as
-  `cues import` does.
+  `cues import` does. Both files are closed before the rename. On Windows a rename that
+  fails with "access denied" is retried up to 10 times, 100 ms apart, since antivirus and
+  search indexers briefly open new files; the file being replaced must not be open
+  elsewhere (the editors close theirs first).
 
 To watch edits to a sheet without importing it, see [cue-preview.md](cue-preview.md). To
 edit cues on a timeline, see [cue-editor.md](cue-editor.md).
