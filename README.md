@@ -60,3 +60,4 @@ game loop, decoding on a worker thread, a wgpu cutscene with fades):
 - File format: [docs/spec/PRAXI.md](docs/spec/PRAXI.md)
 - Benchmark results format: [docs/spec/BENCH.md](docs/spec/BENCH.md)
 - Roadmap: [ROADMAP.md](ROADMAP.md)
+- Tests and manual checks: [docs/features/testing.md](docs/features/testing.md) (`make check`)

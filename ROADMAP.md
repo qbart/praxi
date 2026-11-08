@@ -22,8 +22,8 @@ copied byte for byte, nothing is re-encoded. Missing:
 
 ## 2. BC1
 
-Half the size of BC7 for opaque video, reserved in
-[texture-variants.md](docs/features/texture-variants.md#formats).
+Half the size of BC7 for opaque video
+([texture-variants.md](docs/features/texture-variants.md#formats)).
 
 - [x] Format code and stream parameters ([PRAXI.md](docs/spec/PRAXI.md)).
 - [x] Encoder variant `bc1` (`--variant bc1`), temporal skip and byte planes as for BC7.
@@ -35,11 +35,13 @@ Half the size of BC7 for opaque video, reserved in
 
 CI on Forgejo is skipped for now; every check must run by hand instead.
 
-- [ ] `make test` runs every test of the workspace, GPU tests included (they skip with a
-  message when no adapter is available); `make check` adds clippy.
-- [ ] Tests for the paths that only examples cover today.
-- [ ] `docs/features/testing.md`: what each target runs, what needs ffmpeg, a GPU or the
-  sample video.
+- [x] `make test` runs every test of the workspace, GPU tests included (they skip with a
+  message when no adapter is available); `make check` adds clippy; `make test-strict`
+  fails instead of skipping.
+- [x] Tests for the paths that only examples cover today: the CLI end to end through
+  ffmpeg (audio with `--fps` included), block formats drawn on the GPU.
+- [x] [testing.md](docs/features/testing.md): what each target runs, what needs ffmpeg, a
+  GPU or the sample video, and the manual checks.
 
 ## 4. Decode-ahead of several frames
 
