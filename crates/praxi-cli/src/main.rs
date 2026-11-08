@@ -89,7 +89,7 @@ struct VideoOptions {
     #[arg(long, default_value_t = praxi_format::DEFAULT_PLANE_MIN_SAVING)]
     plane_min_saving: f64,
     /// Resize to WxH pixels; one side may be -1 to keep the aspect ratio.
-    #[arg(long, value_parser = parse_scale)]
+    #[arg(long, value_parser = parse_scale, allow_hyphen_values = true)]
     scale: Option<(i64, i64)>,
     /// Resample to N or N/D frames per second.
     #[arg(long, value_parser = parse_fps)]
