@@ -29,7 +29,8 @@ praxi info intro.praxi
 
 The CLI runs `ffprobe` for width, height and frame rate, and `ffmpeg` to decode frames as
 raw RGBA (`-f rawvideo -pix_fmt rgba`), so alpha is kept when the source has it. Both must be
-on `PATH`.
+on `PATH`. All variants become streams of group 0. The first audio stream of the input is
+encoded too, through a separate `ffmpeg` process per audio variant.
 
 Size grows with pixels times frame rate, so `--scale` and `--fps` are the main levers on
 file size: 720p has 44% of 1080p's pixels, 30 fps half the frames of 60 fps. They become
@@ -50,9 +51,7 @@ output frames:
 
 Bitrate falls more slowly than pixels and frames: 720p keeps 60% of the bitrate for 44%
 of the pixels, and 30 fps 64% for half the frames: each pixel of a smaller frame carries
-more detail, and frames further apart
-predict less well. All variants become streams of group 0. The first audio stream of the input is
-encoded too, through a separate `ffmpeg` process per audio variant.
+more detail, and frames further apart predict less well.
 
 It prints per-variant statistics: bytes, MB/s, skipped blocks, keyframes, and bytes and
 MB/s per audio stream.
