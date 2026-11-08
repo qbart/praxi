@@ -56,12 +56,15 @@ Motion decode-ahead works on one frame
 
 ## 5. Audio
 
-- [ ] **`praxi-audio` crate**: the editor includes `crates/praxi-viewer/src/audio.rs` by
+- [x] **`praxi-audio` crate**: the editor includes `crates/praxi-viewer/src/audio.rs` by
   path. Move the output into a shared crate, and resample to the device rate so the viewer
-  and the editor play tracks the device does not support natively (today they skip them).
-- [ ] **Opus evaluation**: smaller than ADPCM at a higher decode cost
-  ([audio.md](docs/features/audio.md)). Measure size and decode time; only with a
-  pure-Rust decoder.
+  and the editor play tracks the device does not support natively (today they skip them)
+  ([audio-output.md](docs/features/audio-output.md)). Not yet heard on a real device.
+- [x] **Opus evaluation** ([audio.md](docs/features/audio.md#opus-evaluation)): 128 kbps
+  stereo is 3.4 times smaller than `adpcm`, decoded in 1.2 ms per second of audio by the
+  pure-Rust `opus1`, bit-close to libopus.
+- [ ] **Opus integration** (decision needed): `--audio-format opus`, depending on `opus1`
+  or `opus-pure`, with pre-roll after seeks.
 
 ## 6. Bevy + egui cue editor
 

@@ -55,8 +55,45 @@ at about 4 bits per sample:
 | Noisy footsteps (2.5 s) | 33.4 dB | 27.2 dB | 26.4 dB |
 
 Noise-like sounds compress worst, as with any predictive codec; keep them in `s16` when
-the noise floor matters. Perceptual codecs (Opus, Vorbis) are smaller at equal quality but
-cost far more to decode and have no pure-Rust encoder fit for praxi.
+the noise floor matters.
+
+### Opus evaluation
+
+Opus is a perceptual codec: much smaller than ADPCM, at a higher decode cost. It was
+evaluated, not integrated. Big Buck Bunny's 5.1 soundtrack (10 s, 48 kHz, AAC source) was
+encoded with ffmpeg's libopus, then decoded with pure-Rust decoders on one core of the
+Ryzen AI 9 HX 370 and compared with libopus's own decode of the same packets. ADPCM is
+praxi's `adpcm` of the same audio.
+
+| Audio | Size | Decode, per second of audio | Matches libopus |
+|---|---|---|---|
+| Stereo `s16` | 1536 kbps | none | |
+| Stereo `adpcm` | 433 kbps | 0.14 ms | |
+| Stereo Opus, 64 kbps CBR | 64 kbps | 0.63 ms (`opus1`), 0.99 ms (`opus-pure`) | 79 dB SNR |
+| Stereo Opus, 96 kbps CBR | 96 kbps | 0.85 ms, 1.29 ms | 85 dB |
+| Stereo Opus, 128 kbps CBR | 128 kbps | 1.17 ms, 1.49 ms | 96 dB |
+| Stereo Opus, 160 kbps CBR | 160 kbps | 1.14 ms, 1.63 ms | 110 dB |
+| 5.1 `adpcm` | 1299 kbps | 0.42 ms | |
+| 5.1 Opus, 256 kbps VBR | 344 kbps | 4.70 ms, 6.04 ms | 99 dB |
+
+- **Size**: 128 kbps stereo Opus is 3.4 times smaller than `adpcm` and 12 times smaller
+  than `s16`. VBR overshoots on this dense soundtrack: `-b:a 64k` gave 93 kbps and 256k
+  for 5.1 gave 344 kbps.
+- **Decode cost**: about 1.2 ms per second of stereo, 0.02 ms per frame of a 60 Hz game,
+  8 times ADPCM's cost but small next to video. The longest packet (20 ms of audio) took
+  0.1 ms in stereo and 0.25 ms in 5.1.
+- **Decoders**: `opus1` (0.3, a port of libopus 1.x) and `opus-pure` (0.2.3), both
+  BSD-3-Clause, decode every packet like libopus, within floating-point rounding (SNR
+  above 79 dB against libopus's output). `opus-decoder` (0.1.1) took 250 ms per second of
+  audio, matched libopus only to 45 dB, and rejected the 5.1 packets.
+- **Quality**: no perceptual metric was run here. SNR against the source says little about
+  a perceptual codec. Published listening tests generally put stereo Opus at 128 kbps or
+  more near transparent for most listeners.
+- **What integrating it would take**: a sample format id and Opus parameters in the stream
+  table ([PRAXI.md](../spec/PRAXI.md)); encoding through ffmpeg's libopus, which the CLI
+  already runs (or the crates' pure-Rust encoders); decoding from the packets before the
+  target after a seek, since Opus needs about 80 ms of pre-roll (RFC 7845); Opus's 48 kHz
+  family of rates; and depending on a young crate maintained by one person.
 
 ## Model
 
