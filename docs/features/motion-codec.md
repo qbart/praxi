@@ -503,24 +503,31 @@ spawning threads per frame cost about 0.1 ms; the slice queue on waiting workers
 both. Appending finished slices while others still decode hides most of the 0.15-0.25 ms
 of copying into the output on keyframes.
 
-Keyframe decode-ahead, measured through `Player::advance` at 60 fps steps with a 14 ms
-sleep between them for the game's frame (first 300 frames, 16 slices); without it, the
-decode-ahead was cancelled before each keyframe's `advance`:
+Decode-ahead, measured through `Player::advance` with a sleep between calls for the game's
+frame (14 ms at 60 Hz, 30 ms at 30 Hz; first 300 frames, 16 slices). Without it, the
+decode-ahead was cancelled outside the timed region before each `advance`. Columns are
+`advance` calls that decode a keyframe and calls that decode only delta frames:
 
-| Threads | Keyframe `advance` | Frame before | Other delta frames |
-|---|---|---|---|
-| 4, without | 2.59 ms | 1.55 ms | 1.27 ms (max 2.06) |
-| 4, with | 0.04 ms | 1.35 ms | 1.28 ms (max 2.11) |
-| 8, without | 2.20 ms | 1.33 ms | 1.15 ms (max 1.91) |
-| 8, with | 0.04 ms | 1.38 ms | 1.15 ms (max 1.92) |
+| Game, threads | Keyframe `advance` without / with | Delta `advance` without / with (max) |
+|---|---|---|
+| 60 Hz, 4 | 2.72 / 0.18 ms | 1.35 / 0.14 ms (2.23 / 0.70) |
+| 60 Hz, 8 | 2.16 / 0.18 ms | 1.12 / 0.16 ms (1.58 / 0.59) |
+| 30 Hz, 4 | 3.05 / 1.68 ms | 1.99 / 1.34 ms (3.48 / 2.44) |
+| 30 Hz, 8 | 2.92 / 1.24 ms | 1.89 / 1.19 ms (2.69 / 1.84) |
 
-Paced like a game, every frame takes about 3.5 times as long as in the back-to-back runs
-above: the cores clock down or sleep between frames, and the workers wake up cold. Delta
-frames then miss the 1 ms goal too; decoding every frame ahead, not only keyframes, would
-take entropy decoding off the game thread entirely.
+Paced like a game, decoding takes about 3.5 times as long as in the back-to-back runs
+above: the cores clock down or sleep between frames, and the workers wake up cold. With
+decode-ahead a 60 Hz game pays about 0.15 ms per frame: reading the next chunk and its
+header. A 30 Hz game advances two video frames per call and only the first of them was
+decoded ahead (see [Open questions](#open-questions)).
 
 ## Open questions
 
+- Decode-ahead of several frames: a frame's slices do not depend on the frame before it,
+  only its header does (inherited tables), so the headers of the next few frames could be
+  read in order and their slices decoded at once, each with its own copy of the tables and
+  output. Helps games that advance more than one video frame per call (30 Hz games on 60
+  fps video).
 - 4x4 transforms and an in-loop deblocking filter at lower bitrates.
 
 Tried in phase 1 and dropped, each under 1% on the bench input: rate-distortion optimized
