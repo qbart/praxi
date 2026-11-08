@@ -115,8 +115,11 @@ Keys act when no text field has focus.
 
 - **Save** writes the sheet with `cue_sheet::write`.
 - **Write into file** writes `FILE` with its cue streams replaced, through a temporary file
-  renamed over it, exactly like `praxi cues import FILE SHEET -o FILE`. The editor keeps
-  playing the file it opened. It does not save the sheet.
+  renamed over it, exactly like `praxi cues import FILE SHEET -o FILE`. It does not save
+  the sheet. Windows refuses to rename over a file that is open, so the editor first
+  closes its player's file, writes, then opens the file again (the new one, or the old one
+  if writing failed) and restores the position, play state, loop and audio output. Cues
+  active at the playhead are emitted again.
 - The title shows the file, the sheet and `*` when the document differs from the last saved
   or written state. Closing the window with unsaved changes asks to save, discard or
   cancel.

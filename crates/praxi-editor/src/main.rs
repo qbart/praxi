@@ -5,6 +5,7 @@
 #[path = "../../praxi-viewer/src/audio.rs"]
 mod audio;
 mod doc;
+mod file;
 mod inspector;
 mod timeline;
 mod video;
@@ -12,6 +13,8 @@ mod waveform;
 
 use clap::Parser;
 use doc::{Document, EditCue, Stream};
+use eframe::egui_wgpu::RenderState;
+use file::SharedFile;
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 use inspector::{CueDraft, valid_stream_name};
 use praxi::format::{Cue, Reader, TimeBase, cue_sheet};
@@ -28,7 +31,7 @@ use timeline::{Action, Timeline, View, clock};
 use video::VideoView;
 use waveform::Waveform;
 
-type FilePlayer = Player<BufReader<File>>;
+type FilePlayer = Player<BufReader<SharedFile>>;
 
 /// Player events kept in the log.
 const MAX_EVENTS: usize = 200;
@@ -146,6 +149,10 @@ struct Editor {
     file: PathBuf,
     sheet: PathBuf,
     player: FilePlayer,
+    /// The player's file, closed before "Write into file".
+    player_file: SharedFile,
+    caps: Capabilities,
+    render: RenderState,
     video: VideoView,
     waveform: Option<Waveform>,
     /// Time base of video track 0, for frame stepping and snapping.
@@ -162,6 +169,8 @@ struct Editor {
     active: Vec<CueEvent>,
     status: String,
     muted: Arc<AtomicBool>,
+    #[cfg(feature = "audio")]
+    audio_device: Option<audio::Device>,
     #[cfg(feature = "audio")]
     audio: Option<audio::Stream>,
     last: Instant,
@@ -180,7 +189,7 @@ impl Editor {
             Some(channels) => caps.max_audio_channels(channels),
             None => caps,
         };
-        let mut player = open_player(&args.file, &caps)?;
+        let (mut player, player_file) = open_player(&args.file, &caps)?;
         let streams = Reader::new(BufReader::new(File::open(&args.file).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())?.streams().to_vec();
         let frame_base = streams[player.tracks()[0].stream as usize].time_base;
         let waveform = match player.audio_tracks().first() {
@@ -193,30 +202,16 @@ impl Editor {
         player.seek(Duration::ZERO).map_err(|e| e.to_string())?;
         let muted = Arc::new(AtomicBool::new(false));
         #[cfg(feature = "audio")]
-        let audio = device_audio.and_then(|device| {
-            let tracks = player.audio_tracks();
-            let first = &tracks.first()?.params;
-            let outputs = (0..tracks.len())
-                .filter(|&i| tracks[i].params.sample_rate == first.sample_rate && tracks[i].params.channels == first.channels)
-                .filter_map(|i| player.audio_output(i))
-                .collect();
-            match device.start(outputs, muted.clone()) {
-                Ok(stream) => {
-                    println!("audio device: {}, {} Hz, {} ch", device.name(), first.sample_rate, first.channels);
-                    Some(stream)
-                }
-                Err(e) => {
-                    eprintln!("audio device: {}: {e}; editing without sound", device.name());
-                    None
-                }
-            }
-        });
+        let audio = device_audio.as_ref().and_then(|device| start_audio(device, &player, &muted));
         let status = if sheet.exists() { format!("Opened {}", sheet.display()) } else { format!("Cues from the file; Save creates {}", sheet.display()) };
         let selected_stream = doc.streams().first().map(|s| s.uid);
         Ok(Editor {
             file: args.file.clone(),
             sheet,
             player,
+            player_file,
+            caps,
+            render: state.clone(),
             video,
             waveform,
             frame_base,
@@ -231,6 +226,8 @@ impl Editor {
             active: Vec::new(),
             status,
             muted,
+            #[cfg(feature = "audio")]
+            audio_device: device_audio,
             #[cfg(feature = "audio")]
             audio,
             last: Instant::now(),
@@ -355,13 +352,46 @@ impl Editor {
     }
 
     fn write_into_file(&mut self) {
-        match praxi::format::replace_cues_in_file(&self.file, &self.file, &self.doc.tracks()) {
-            Ok(()) => {
+        // Windows cannot rename over a file that is open.
+        self.player_file.close();
+        let written = praxi::format::replace_cues_in_file(&self.file, &self.file, &self.doc.tracks());
+        let reopened = self.reopen();
+        self.status = match (written, reopened) {
+            (Ok(()), Ok(())) => {
                 self.doc.mark_saved();
-                self.status = format!("Wrote the cues into {}", self.file.display());
+                format!("Wrote the cues into {}", self.file.display())
             }
-            Err(e) => self.status = format!("Write failed: {e}"),
+            (Err(e), Ok(())) => format!("Write failed: {e}"),
+            (Ok(()), Err(e)) => {
+                self.doc.mark_saved();
+                format!("Wrote the cues, but reopening failed: {e}")
+            }
+            (Err(e), Err(r)) => format!("Write failed: {e}; reopening failed: {r}"),
+        };
+    }
+
+    /// Opens the file again and puts playback back where it was.
+    fn reopen(&mut self) -> Result<(), String> {
+        let (at, playing, looping) = (self.player.position(), self.player.is_playing(), self.player.looping());
+        let (player, player_file) = open_player(&self.file, &self.caps)?;
+        #[cfg(feature = "audio")]
+        {
+            self.audio = None;
         }
+        self.player = player;
+        self.player_file = player_file;
+        self.player.set_looping(looping);
+        self.player.replace_cues(self.doc.tracks());
+        self.active.clear();
+        self.player.seek(at).map_err(|e| e.to_string())?;
+        if playing {
+            self.player.play().map_err(|e| e.to_string())?;
+        }
+        #[cfg(feature = "audio")]
+        {
+            self.audio = self.audio_device.as_ref().and_then(|d| start_audio(d, &self.player, &self.muted));
+        }
+        Ok(())
     }
 
     // --- Playback ------------------------------------------------------------------------
@@ -697,13 +727,34 @@ fn frame_index(tb: TimeBase, us: u64) -> u64 {
     (us as f64 / unit).round() as u64
 }
 
-fn open_player(file: &Path, caps: &Capabilities) -> Result<FilePlayer, String> {
-    let reader = BufReader::new(File::open(file).map_err(|e| format!("{}: {e}", file.display()))?);
-    let player = Player::open(reader, caps).map_err(|e| format!("{}: {e}", file.display()))?;
+fn open_player(file: &Path, caps: &Capabilities) -> Result<(FilePlayer, SharedFile), String> {
+    let shared = SharedFile::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let player = Player::open(BufReader::new(shared.clone()), caps).map_err(|e| format!("{}: {e}", file.display()))?;
     if player.tracks().is_empty() {
         return Err("the file has no video track this GPU can show".into());
     }
-    Ok(player)
+    Ok((player, shared))
+}
+
+/// Plays the audio tracks with the rate and channels of track 0 on `device`.
+#[cfg(feature = "audio")]
+fn start_audio(device: &audio::Device, player: &FilePlayer, muted: &Arc<AtomicBool>) -> Option<audio::Stream> {
+    let tracks = player.audio_tracks();
+    let first = &tracks.first()?.params;
+    let outputs = (0..tracks.len())
+        .filter(|&i| tracks[i].params.sample_rate == first.sample_rate && tracks[i].params.channels == first.channels)
+        .filter_map(|i| player.audio_output(i))
+        .collect();
+    match device.start(outputs, muted.clone()) {
+        Ok(stream) => {
+            println!("audio device: {}, {} Hz, {} ch", device.name(), first.sample_rate, first.channels);
+            Some(stream)
+        }
+        Err(e) => {
+            eprintln!("audio device: {}: {e}; editing without sound", device.name());
+            None
+        }
+    }
 }
 
 impl eframe::App for Editor {
