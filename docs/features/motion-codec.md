@@ -203,9 +203,13 @@ keyframe on the worker threads before it is due:
   waiting; the calling thread does not take any of them. It returns `false` and starts
   nothing when the decoder has one thread or the header is invalid (the regular decode
   then reports the error). A second `decode_ahead` cancels the first.
+- The workers also put the output together: a thread that finishes a slice appends, under
+  a lock, every finished slice that follows the output so far, so the frame is complete
+  when its last slice is. Appending a keyframe's 5.6 MB of lists takes about 0.6 ms, which
+  would otherwise land on the calling thread.
 - `Decoder::finish_ahead(tag, out) -> Option<Result>` collects it: the calling thread
-  decodes the slices no worker has started, waits for the rest and appends them to `out`
-  in order. The result is identical to `decode(true, payload, out)`. `None` when no
+  decodes the slices no worker has started, waits for the rest and swaps the output into
+  `out`. The result is identical to `decode(true, payload, out)`. `None` when no
   decode-ahead with `tag` is running.
 - The decode-ahead uses its own copy of what slices read (layout, tables, payload) and its
   own slice outputs, swapped in by `finish_ahead`, so delta frames before the keyframe
@@ -220,8 +224,8 @@ frame). If that keyframe is due within the `dt` of this `advance` from the clock
 means the next `advance` of the same length will decode it, the player reads its payload
 and calls `decode_ahead` with the chunk offset as tag. When the chunk becomes due, the
 player calls `finish_ahead` instead of reading and decoding the payload again. The frame
-before the keyframe pays for reading the payload and its header; the keyframe's frame pays
-for slices not yet done (normally none) and appending, about 0.2 ms.
+before the keyframe pays for reading the payload and its header (about 0.1 ms); the
+keyframe's frame pays for slices not yet done, normally none.
 
 There is no decode-ahead while seeking (`seek` decodes synchronously, as before), with one
 decoder thread, or across the loop point (the first keyframe of the next pass).
@@ -486,6 +490,22 @@ delta columns decode payloads from memory, 4 passes after a warm-up:
 | 4 | 0.53 / 0.69 / 2.8 ms | 1.26 ms | 0.41 ms |
 | 8 (default) | 0.37 / 0.45 / 3.2 ms | 1.05 ms | 0.33 ms |
 | 12 | | 0.94 ms | 0.31 ms |
+
+Keyframe decode-ahead, measured through `Player::advance` at 60 fps steps with a 14 ms
+sleep between them for the game's frame (first 300 frames, 16 slices); without it, the
+decode-ahead was cancelled before each keyframe's `advance`:
+
+| Threads | Keyframe `advance` | Frame before | Other delta frames |
+|---|---|---|---|
+| 4, without | 2.59 ms | 1.55 ms | 1.27 ms (max 2.06) |
+| 4, with | 0.04 ms | 1.35 ms | 1.28 ms (max 2.11) |
+| 8, without | 2.20 ms | 1.33 ms | 1.15 ms (max 1.91) |
+| 8, with | 0.04 ms | 1.38 ms | 1.15 ms (max 1.92) |
+
+Paced like a game, every frame takes about 3.5 times as long as in the back-to-back runs
+below: the cores clock down or sleep between frames, and the workers wake up cold. Delta
+frames then miss the 1 ms goal too; decoding every frame ahead, not only keyframes, would
+take entropy decoding off the game thread entirely.
 
 Delta frames meet the goal from 4 threads. Keyframes do not: 1.26 ms on 4 threads, about
 1 ms on 8. Fixed shares of slices per thread (the first version) reached only 2.4x on 8
