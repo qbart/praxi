@@ -4,6 +4,7 @@
 
 use crate::huffman::{TABLE_SIZE, canonical_codes, code_lengths, single_table};
 use crate::{Chroma, MotionParams, VideoParams};
+use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 
 /// Largest `qp`.
@@ -648,6 +649,9 @@ const LENGTHS_SIZE: usize = 128;
 /// Most threads a [`Decoder`] uses by default, leaving cores to the game.
 pub const DEFAULT_THREADS: usize = 8;
 
+/// Most frames decoding ahead at once ([`Decoder::decode_ahead`]).
+pub const MAX_AHEAD: usize = 4;
+
 /// Turns motion payloads into coded frames. Keeps the Huffman tables, which delta frames may
 /// inherit from the previous frame, and the threads that decode slices in parallel.
 pub struct Decoder {
@@ -661,11 +665,16 @@ pub struct Decoder {
     pool: Option<Pool>,
     /// A keyframe was decoded since the start, so delta frames have tables and a reference.
     primed: bool,
-    /// The frame decoding on the workers ahead of time, if any.
-    ahead: Option<Ahead>,
-    /// What the slices of a decode-ahead read, swapped with `frame` when it finishes.
-    ahead_frame: Arc<Frame>,
-    /// Where the slices of a decode-ahead put their outputs.
+    /// The frames decoding on the workers ahead of time, in decoding order.
+    ahead: VecDeque<Ahead>,
+    /// Slots of finished decode-aheads, reused by the next ones.
+    spare: Vec<Slot>,
+}
+
+/// What the slices of a decode-ahead read, swapped with the decoder's frame when it
+/// finishes, and where they put their outputs.
+struct Slot {
+    frame: Arc<Frame>,
     assembly: Arc<Mutex<Assembly>>,
 }
 
@@ -717,6 +726,7 @@ struct Ahead {
     keyframe: bool,
     qp: u8,
     results: mpsc::Receiver<Job>,
+    slot: Slot,
 }
 
 /// The parts of a frame that its slices read.
@@ -940,15 +950,14 @@ impl Decoder {
             threads: std::thread::available_parallelism().map_or(1, |n| n.get().min(DEFAULT_THREADS)),
             pool: None,
             primed: false,
-            ahead: None,
-            ahead_frame: Arc::new(Frame::new(Layout::new(params))),
-            assembly: Arc::default(),
+            ahead: VecDeque::new(),
+            spare: Vec::new(),
         }
     }
 
     /// Sets the most threads decoding the slices of one frame, the calling thread included;
     /// 1 decodes on the calling thread only. Worker threads start when first needed.
-    /// Cancels a running decode-ahead.
+    /// Cancels the frames decoding ahead.
     pub fn set_threads(&mut self, threads: usize) {
         self.cancel_ahead();
         self.threads = threads.max(1);
@@ -1070,84 +1079,109 @@ impl Decoder {
     }
 
     /// Starts entropy-decoding `payload` on the worker threads and returns without waiting;
-    /// [`Decoder::finish_ahead`] with the same `tag` collects it. A delta frame inherits the
-    /// tables of the latest decoded frame, so it starts after the frame before it. Returns
-    /// `false`, starting nothing, with one thread, for a delta frame before any keyframe, or
-    /// for an invalid header. Cancels an earlier decode-ahead.
+    /// [`Decoder::finish_ahead`] with the same `tag` collects it. Frames queue in decoding
+    /// order, up to [`MAX_AHEAD`]; a delta frame inherits the tables of the frame queued
+    /// before it, or of the latest decoded frame. Returns `false`, starting nothing, with one
+    /// thread, for a delta frame before any keyframe, when the queue is full, or for an
+    /// invalid header; frames after a refused one must not be queued.
     pub fn decode_ahead(&mut self, tag: u64, keyframe: bool, payload: &[u8]) -> bool {
-        self.cancel_ahead();
-        if self.threads == 1 || !keyframe && !self.primed {
+        if self.threads == 1 || self.ahead.len() >= MAX_AHEAD || !keyframe && !self.primed && self.ahead.is_empty() {
             return false;
         }
-        let frame = Arc::get_mut(&mut self.ahead_frame).expect("no decode-ahead is running");
+        let mut slot = self.spare.pop().unwrap_or_else(|| Slot {
+            frame: Arc::new(Frame::new(self.frame.layout.clone())),
+            assembly: Arc::default(),
+        });
+        let frame = Arc::get_mut(&mut slot.frame).expect("spare slots are not shared");
         if !keyframe {
-            for (table, latest) in frame.tables.iter_mut().zip(&self.frame.tables) {
+            let latest = self.ahead.back().map_or(&self.frame, |a| &a.slot.frame);
+            for (table, latest) in frame.tables.iter_mut().zip(&latest.tables) {
                 table.clone_from(latest);
             }
         }
         let Ok(qp) = frame.parse(keyframe, payload) else {
+            self.spare.push(slot);
             return false;
         };
         frame.payload.clear();
         frame.payload.extend_from_slice(payload);
         let slices = frame.slices.len();
-        let mut assembly = self.assembly.lock().expect("assembly lock");
+        let mut assembly = slot.assembly.lock().expect("assembly lock");
         assembly.start(slices);
         let pool = self.pool.get_or_insert_with(Pool::new);
         pool.grow(self.threads - 1);
         let (done, results) = mpsc::channel();
         let workers = (self.threads - 1).min(slices);
-        pool.shared.push(&self.ahead_frame, &mut assembly.parts, Some(&self.assembly), &done, workers);
+        pool.shared.push(&slot.frame, &mut assembly.parts, Some(&slot.assembly), &done, workers);
         drop(assembly);
-        self.ahead = Some(Ahead { tag, keyframe, qp, results });
+        self.ahead.push_back(Ahead { tag, keyframe, qp, results, slot });
         true
     }
 
-    /// Collects the decode-ahead started with `tag` into `out`, decoding the slices no
-    /// worker has started on the calling thread; the result equals `decode(keyframe,
-    /// payload, out)`. `None` when no decode-ahead with `tag` is running.
+    /// Frames decoding ahead.
+    pub fn ahead(&self) -> usize {
+        self.ahead.len()
+    }
+
+    /// Collects the first frame decoding ahead into `out` if it was started with `tag`,
+    /// decoding the slices no worker has started on the calling thread; the result equals
+    /// `decode(keyframe, payload, out)`. `None` when the first frame has another tag or none
+    /// is decoding ahead. An error cancels the frames after it.
     pub fn finish_ahead(&mut self, tag: u64, out: &mut CodedFrame) -> Option<Result<(), String>> {
-        if self.ahead.as_ref().is_none_or(|a| a.tag != tag) {
+        if self.ahead.front().is_none_or(|a| a.tag != tag) {
             return None;
         }
-        let ahead = self.ahead.take().expect("checked above");
-        if let Err(e) = self.wait_ahead(&ahead) {
-            // The delta frames after a broken frame have no tables to decode with.
-            self.primed = false;
-            return Some(Err(e));
-        }
-        let mut assembly = self.assembly.lock().expect("assembly lock");
+        let Ahead { keyframe, qp, mut slot, .. } = {
+            let ahead = self.ahead.pop_front().expect("checked above");
+            if let Err(e) = self.wait_ahead(&ahead, true) {
+                self.spare.push(ahead.slot);
+                self.cancel_ahead();
+                // The delta frames after a broken frame have no tables to decode with.
+                self.primed = false;
+                return Some(Err(e));
+            }
+            ahead
+        };
+        let mut assembly = slot.assembly.lock().expect("assembly lock");
         std::mem::swap(&mut assembly.out, out);
         std::mem::swap(&mut assembly.parts, &mut self.parts);
         drop(assembly);
-        std::mem::swap(&mut self.frame, &mut self.ahead_frame);
-        out.keyframe = ahead.keyframe;
-        self.set_scales(ahead.qp, out);
+        std::mem::swap(&mut self.frame, &mut slot.frame);
+        self.spare.push(slot);
+        out.keyframe = keyframe;
+        self.set_scales(qp, out);
         self.primed = true;
         Some(Ok(()))
     }
 
-    /// Waits for a running decode-ahead and discards it.
+    /// Discards every frame decoding ahead: slices no worker has started are dropped, the
+    /// others waited for.
     fn cancel_ahead(&mut self) {
-        if let Some(ahead) = self.ahead.take() {
-            let _ = self.wait_ahead(&ahead);
+        while let Some(ahead) = self.ahead.pop_front() {
+            let _ = self.wait_ahead(&ahead, false);
+            self.spare.push(ahead.slot);
         }
     }
 
-    /// Decodes the queued slices of the decode-ahead on the calling thread and waits for the
-    /// others. Returns the error of the first failing slice.
-    fn wait_ahead(&mut self, ahead: &Ahead) -> Result<(), String> {
+    /// Decodes the queued slices of `ahead` on the calling thread (or drops them unless
+    /// `run`) and waits for the others. Returns the error of the first failing slice.
+    fn wait_ahead(&self, ahead: &Ahead, run: bool) -> Result<(), String> {
         let pool = self.pool.as_ref().expect("a decode-ahead runs on the pool");
-        while let Some(job) = pool.shared.pop_for(&self.ahead_frame) {
-            job.run();
+        let mut left = ahead.slot.frame.slices.len();
+        while let Some(job) = pool.shared.pop_for(&ahead.slot.frame) {
+            if run {
+                job.run();
+            } else {
+                left -= 1;
+            }
         }
-        let slices = self.ahead_frame.slices.len();
-        for _ in 0..slices {
+        for _ in 0..left {
             ahead.results.recv().expect("a slice thread panicked");
         }
-        match self.assembly.lock().expect("assembly lock").first_error.take() {
-            Some((_, e)) => Err(e),
-            None => Ok(()),
+        let first_error = ahead.slot.assembly.lock().expect("assembly lock").first_error.take();
+        match first_error {
+            Some((_, e)) if run => Err(e),
+            _ => Ok(()),
         }
     }
 }
@@ -1800,8 +1834,10 @@ mod tests {
         let mut dec = Decoder::new(&p);
         dec.set_threads(4);
         assert!(dec.decode_ahead(9, true, &payload));
+        assert!(dec.decode_ahead(10, true, &payload));
         let err = dec.finish_ahead(9, &mut CodedFrame::default()).unwrap().unwrap_err();
         assert!(err.starts_with("slice 1:"), "{err}");
+        assert_eq!(dec.ahead(), 0, "the frames after an error are cancelled");
     }
 
     #[test]
@@ -1829,6 +1865,17 @@ mod tests {
         let mut ahead = CodedFrame::default();
         dec.finish_ahead(4, &mut ahead).unwrap().unwrap();
         assert_eq!(ahead, frame);
+        // Frames queue in order, up to MAX_AHEAD, and are collected in order.
+        for tag in 0..MAX_AHEAD as u64 {
+            assert!(dec.decode_ahead(tag, tag > 0, &payload), "frame {tag}");
+        }
+        assert!(!dec.decode_ahead(9, false, &payload), "the queue is full");
+        assert_eq!(dec.ahead(), MAX_AHEAD);
+        assert!(dec.finish_ahead(1, &mut CodedFrame::default()).is_none(), "not the first frame");
+        dec.finish_ahead(0, &mut ahead).unwrap().unwrap();
+        assert_eq!(ahead, frame);
+        dec.decode(true, &payload, &mut CodedFrame::default()).unwrap();
+        assert_eq!(dec.ahead(), 0, "cancelled by the decode");
     }
 
     #[test]
@@ -1943,9 +1990,12 @@ mod tests {
             expected.keyframe = keyframe;
             frames.push((payload, expected));
         }
-        // Every frame decoded ahead, delta frames inheriting tables from the frame before.
+        // Every frame decoded ahead, delta frames inheriting tables from the frame before:
+        // one at a time, and in batches of three queued before the first is collected.
         let mut ahead = Decoder::new(&p);
         ahead.set_threads(3);
+        let mut batched = Decoder::new(&p);
+        batched.set_threads(4);
         for (frame_no, (payload, expected)) in frames.iter().enumerate() {
             let keyframe = expected.keyframe;
             let mut frame = CodedFrame::default();
@@ -1959,6 +2009,13 @@ mod tests {
             let mut other = CodedFrame::default();
             ahead.finish_ahead(frame_no as u64, &mut other).unwrap().unwrap();
             assert_eq!(other, frame, "frame {frame_no} decoded ahead");
+            if frame_no % 3 == 0 {
+                for (n, (payload, expected)) in frames.iter().enumerate().skip(frame_no).take(3) {
+                    assert!(batched.decode_ahead(n as u64, expected.keyframe, payload), "frame {n} queued");
+                }
+            }
+            batched.finish_ahead(frame_no as u64, &mut other).unwrap().unwrap();
+            assert_eq!(other, frame, "frame {frame_no} decoded ahead in a batch");
             assert_eq!(frame.scales[..3], [dequant_scale(30); 3]);
             assert_eq!(frame.mbs, expected.mbs, "frame {frame_no}");
             assert_eq!(frame.block_count(), expected.block_count(), "frame {frame_no}");

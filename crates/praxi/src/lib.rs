@@ -7,7 +7,7 @@
 mod audio;
 
 use audio::us_to_frames;
-use praxi_format::motion::{CodedFrame, Decoder};
+use praxi_format::motion::{CodedFrame, Decoder, MAX_AHEAD};
 use praxi_format::{CHUNK_HEADER_SIZE, ChunkHeader, Cue, IndexEntry, Reader, StreamInfo, StreamParams, TimeBase};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, VecDeque};
@@ -235,8 +235,8 @@ struct MotionQueue {
     /// Recycled buffers; the first `queued` hold frames not taken yet, oldest first.
     frames: Vec<CodedFrame>,
     queued: usize,
-    /// Chunk offset of the frame the decoder is decoding ahead.
-    ahead: Option<u64>,
+    /// Chunk offsets of the frames the decoder is decoding ahead, in decoding order.
+    ahead: VecDeque<u64>,
 }
 
 impl MotionQueue {
@@ -254,20 +254,25 @@ impl MotionQueue {
 
     fn push(&mut self, keyframe: bool, payload: &[u8]) -> std::result::Result<(), String> {
         // Decoding cancels the decoder's decode-ahead.
-        self.ahead = None;
+        self.ahead.clear();
         self.next(keyframe);
         self.decoder.decode(keyframe, payload, &mut self.frames[self.queued])?;
         self.queued += 1;
         Ok(())
     }
 
-    /// Collects the frame of `chunk` if it was decoded ahead.
+    /// Collects the frame of `chunk` if it is the first frame decoded ahead.
     fn finish_ahead(&mut self, chunk: &ChunkHeader) -> Option<std::result::Result<(), String>> {
-        if self.ahead.take() != Some(chunk.offset) {
+        if self.ahead.front() != Some(&chunk.offset) {
             return None;
         }
+        self.ahead.pop_front();
         self.next(chunk.keyframe());
         let result = self.decoder.finish_ahead(chunk.offset, &mut self.frames[self.queued])?;
+        if result.is_err() {
+            // The decoder cancels the frames after a broken one.
+            self.ahead.clear();
+        }
         self.queued += 1;
         Some(result)
     }
@@ -434,7 +439,7 @@ impl<R: Read + Seek> Player<R> {
                     decoder: Decoder::new(&params),
                     frames: Vec::new(),
                     queued: 0,
-                    ahead: None,
+                    ahead: VecDeque::new(),
                 }),
             });
         }
@@ -777,7 +782,7 @@ impl<R: Read + Seek> Player<R> {
         for m in self.tracks.iter_mut().filter_map(|t| t.motion.as_mut()) {
             // Changing threads cancels the decode-ahead.
             m.decoder.set_threads(threads);
-            m.ahead = None;
+            m.ahead.clear();
         }
     }
 
@@ -936,32 +941,42 @@ impl<R: Read + Seek> Player<R> {
         Ok(())
     }
 
-    /// Starts decoding the next frame of each `motion` track on the decoder's workers when
-    /// the next `advance` of the same length will reach it
+    /// Starts decoding the frames of each `motion` track on the decoder's workers that the
+    /// next `advance` of the same length will reach
     /// (`docs/features/motion-codec.md#decode-ahead`).
     fn start_frames_ahead(&mut self) -> Result<()> {
-        let idle = |t: &Track| t.motion.as_ref().is_some_and(|m| m.ahead.is_none() && m.decoder.threads() > 1);
-        let mut wanted = self.tracks.iter().filter(|t| idle(t)).count();
+        // Tracks that may queue more frames.
+        let mut open: Vec<bool> = self
+            .tracks
+            .iter()
+            .map(|t| t.motion.as_ref().is_some_and(|m| m.decoder.threads() > 1 && m.decoder.ahead() < MAX_AHEAD))
+            .collect();
         let limit = self.clock_us.saturating_add(self.ahead_window_us);
-        let mut seen = vec![false; self.tracks.len()];
         let mut next = self.pending;
         while let Some(chunk) = next
-            && wanted > 0
+            && open.contains(&true)
         {
             let stream = &self.reader.streams()[chunk.stream as usize];
             if stream.decode_time_us(chunk.pts) > limit {
                 break;
             }
             if let Route::Video(ti) = self.routes[chunk.stream as usize]
-                && !seen[ti]
-                && idle(&self.tracks[ti])
+                && open[ti]
             {
-                seen[ti] = true;
-                wanted -= 1;
-                if chunk.offset >= self.tracks[ti].resume_offset {
+                let track = &self.tracks[ti];
+                let m = track.motion.as_ref().expect("motion track");
+                // Frames before the resume point are not decoded, so neither are later ones.
+                if chunk.offset < track.resume_offset {
+                    open[ti] = false;
+                } else if m.ahead.back().is_none_or(|&last| chunk.offset > last) {
                     self.reader.read_payload(&chunk, &mut self.payload)?;
                     let m = self.tracks[ti].motion.as_mut().expect("motion track");
-                    m.ahead = m.decoder.decode_ahead(chunk.offset, chunk.keyframe(), &self.payload).then_some(chunk.offset);
+                    if m.decoder.decode_ahead(chunk.offset, chunk.keyframe(), &self.payload) {
+                        m.ahead.push_back(chunk.offset);
+                        open[ti] = m.decoder.ahead() < MAX_AHEAD;
+                    } else {
+                        open[ti] = false;
+                    }
                 }
             }
             let end = chunk.offset + CHUNK_HEADER_SIZE + chunk.stored_size as u64;

@@ -203,34 +203,41 @@ only collects the result:
 
 - `Decoder::decode_ahead(tag, keyframe, payload) -> bool` reads the frame's header, tables
   and slice sizes on the calling thread, queues its slices for the workers and returns
-  without waiting; the calling thread does not take any of them. A delta frame starts from
-  the tables of the latest decoded frame, which it may inherit, so it can only start once
-  the frame before it is decoded. It returns `false` and starts nothing with one thread,
-  for a delta frame before any keyframe, or when the header is invalid (the regular decode
-  then reports the error). A second `decode_ahead` cancels the first.
+  without waiting; the calling thread does not take any of them. Several frames can decode
+  ahead at once, up to `MAX_AHEAD` (4), in decoding order: a frame's slices do not depend
+  on the frame before it, only its tables do, and those are known once that frame's header
+  is read. A delta frame starts from the tables of the frame queued before it, or of the
+  latest decoded frame when none is queued. The workers take slices in queue order, so the
+  first frame finishes first. It returns `false` and starts nothing with one thread, for a
+  delta frame before any keyframe, when `MAX_AHEAD` frames are queued, or when the header
+  is invalid (the regular decode then reports the error); frames after a refused one must
+  not be queued, since they would start from the wrong tables.
 - The workers also put the output together: a thread that finishes a slice appends, under
   a lock, every finished slice that follows the output so far, so the frame is complete
   when its last slice is. Appending a keyframe's 5.6 MB of lists took 0.6-0.75 ms on the
   calling thread when it ran after the slices (measured with the cores idle before).
-- `Decoder::finish_ahead(tag, out) -> Option<Result>` collects it: the calling thread
-  decodes the slices no worker has started, waits for the rest and swaps the output into
-  `out`. The result is identical to `decode(keyframe, payload, out)`. `None` when no
-  decode-ahead with `tag` is running.
-- The decode-ahead uses its own copy of what slices read (layout, tables, payload) and its
-  own slice outputs, swapped in by `finish_ahead`.
-- `decode` and `set_threads` cancel a running decode-ahead: the calling thread waits for
-  its slices and discards them.
+- `Decoder::finish_ahead(tag, out) -> Option<Result>` collects the first queued frame: the
+  calling thread decodes its slices no worker has started, waits for the rest and swaps
+  the output into `out`. The result is identical to `decode(keyframe, payload, out)`.
+  `None` when the first queued frame does not have `tag` (or none is queued); the queue is
+  left as it is. An error cancels the frames queued after it.
+- Each queued frame uses its own copy of what slices read (layout, tables, payload) and
+  its own slice outputs, swapped in by `finish_ahead`; the copies are reused by later
+  frames.
+- `decode` and `set_threads` cancel every queued frame: the calling thread waits for their
+  slices and discards them. `Decoder::ahead()` is the number of queued frames.
 
 In the player, after `advance` has decoded every due chunk, the chunks after the clock are
 scanned in file order (headers only, starting at the next chunk, which the player has
 already read) up to decode time `clock + dt`, where `dt` is the clock step of this
-`advance`: the next `advance` of the same length will decode them. The first chunk of each
-`motion` track among them that has no decode-ahead running is read and passed to
-`decode_ahead` with its offset as tag. When the chunk becomes due, the player calls
-`finish_ahead` instead of reading and decoding the payload again; any further chunks of
-the track due in the same `advance` decode as before. The game thread pays for reading
-the next frame's chunk and its header; collecting the frame costs about 0.01 ms when the
-workers are done.
+`advance`: the next `advance` of the same length will decode them. Every chunk of a
+`motion` track among them that is not queued yet is read and passed to `decode_ahead`
+with its offset as tag, in file order, until the decoder refuses one or holds
+`MAX_AHEAD` frames. A 30 Hz game playing 60 fps video so queues the two frames its next
+`advance` shows. When a chunk becomes due, the player calls `finish_ahead` instead of
+reading and decoding the payload again; chunks that were not queued decode as before
+(which cancels the queue). The game thread pays for reading the next frames' chunks and
+headers; collecting a frame costs about 0.01 ms when the workers are done.
 
 There is no decode-ahead while seeking (`seek` decodes synchronously, as before), with one
 decoder thread, or across the loop point (the first frame of the next pass).
