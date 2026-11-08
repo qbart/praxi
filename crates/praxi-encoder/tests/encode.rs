@@ -383,7 +383,7 @@ fn player_queues_motion_frames() {
     assert!(expected.iter().filter(|f| f.keyframe).count() < 6, "most frames are delta frames");
 
     let step = |p: &mut Player<_>, frames: u64| p.advance(Duration::from_millis(100 * frames)).unwrap();
-    // One thread decodes every frame when due; with three, keyframes start decoding one
+    // One thread decodes every frame when due; with three, frames start decoding one
     // `advance` early.
     for threads in [1, 3] {
         let mut p = Player::open(Cursor::new(bytes.clone()), &Capabilities::new([TextureFormat::Motion])).unwrap();
@@ -404,7 +404,8 @@ fn player_queues_motion_frames() {
         p.seek(Duration::from_millis(700)).unwrap();
         // Seeking decodes from the keyframe before the target.
         assert_eq!(p.take_coded_frames(0), queued(0, 7));
-        // A seek onto the keyframe being decoded ahead uses it; one elsewhere cancels it.
+        // A seek onto the frame being decoded ahead (keyframe 4) uses it; one elsewhere
+        // cancels it.
         for (to, expect) in [(400, queued(0, 4)), (0, queued(0, 0))] {
             p.seek(Duration::from_millis(250)).unwrap();
             p.play().unwrap();

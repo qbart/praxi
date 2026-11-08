@@ -225,8 +225,6 @@ struct Track {
     pts: u64,
     /// Chunks before this offset are ignored (set by seeking).
     resume_offset: u64,
-    /// Offset of the chunk of the latest frame.
-    last_offset: Option<u64>,
     /// Entropy decoding of `motion` tracks.
     motion: Option<MotionQueue>,
 }
@@ -237,7 +235,7 @@ struct MotionQueue {
     /// Recycled buffers; the first `queued` hold frames not taken yet, oldest first.
     frames: Vec<CodedFrame>,
     queued: usize,
-    /// Chunk offset of the keyframe the decoder is decoding ahead.
+    /// Chunk offset of the frame the decoder is decoding ahead.
     ahead: Option<u64>,
 }
 
@@ -255,33 +253,31 @@ impl MotionQueue {
     }
 
     fn push(&mut self, keyframe: bool, payload: &[u8]) -> std::result::Result<(), String> {
-        if keyframe {
-            // Decoding a keyframe cancels the decoder's decode-ahead.
-            self.ahead = None;
-        }
+        // Decoding cancels the decoder's decode-ahead.
+        self.ahead = None;
         self.next(keyframe);
         self.decoder.decode(keyframe, payload, &mut self.frames[self.queued])?;
         self.queued += 1;
         Ok(())
     }
 
-    /// Collects the keyframe at chunk offset `offset` if it was decoded ahead.
-    fn finish_ahead(&mut self, offset: u64) -> Option<std::result::Result<(), String>> {
-        if self.ahead.take() != Some(offset) {
+    /// Collects the frame of `chunk` if it was decoded ahead.
+    fn finish_ahead(&mut self, chunk: &ChunkHeader) -> Option<std::result::Result<(), String>> {
+        if self.ahead.take() != Some(chunk.offset) {
             return None;
         }
-        self.next(true);
-        let result = self.decoder.finish_ahead(offset, &mut self.frames[0])?;
-        self.queued = 1;
+        self.next(chunk.keyframe());
+        let result = self.decoder.finish_ahead(chunk.offset, &mut self.frames[self.queued])?;
+        self.queued += 1;
         Some(result)
     }
 }
 
 impl Track {
-    /// Applies the motion keyframe `chunk` if it was decoded ahead; `false` when it was not,
+    /// Applies the motion frame `chunk` if it was decoded ahead; `false` when it was not,
     /// and the payload has to be read and applied.
     fn apply_ahead(&mut self, chunk: &ChunkHeader, index: u64) -> Result<bool> {
-        let Some(result) = self.motion.as_mut().and_then(|m| m.finish_ahead(chunk.offset)) else {
+        let Some(result) = self.motion.as_mut().and_then(|m| m.finish_ahead(chunk)) else {
             return Ok(false);
         };
         if let Err(e) = result {
@@ -295,7 +291,6 @@ impl Track {
         self.has_frame = true;
         self.index = index;
         self.pts = chunk.pts;
-        self.last_offset = Some(chunk.offset);
     }
 
     fn apply(&mut self, chunk: &ChunkHeader, payload: &[u8], index: u64) -> Result<()> {
@@ -386,8 +381,8 @@ pub struct Player<R: Read + Seek> {
     clock_us: u64,
     /// Nanoseconds of `dt` below a whole microsecond, carried to the next `advance`.
     dt_carry_ns: u32,
-    /// The clock step of the latest `advance`: keyframes due within it of the clock start
-    /// decoding ahead.
+    /// The clock step of the latest `advance`: `motion` frames due within it of the clock
+    /// start decoding ahead.
     ahead_window_us: u64,
     clock: Clock,
     duration_us: u64,
@@ -435,7 +430,6 @@ impl<R: Read + Seek> Player<R> {
                 index: 0,
                 pts: 0,
                 resume_offset: 0,
-                last_offset: None,
                 motion: (params.format == TextureFormat::Motion).then(|| MotionQueue {
                     decoder: Decoder::new(&params),
                     frames: Vec::new(),
@@ -676,7 +670,7 @@ impl<R: Read + Seek> Player<R> {
             self.process_due(true)?;
             if !(self.at_end && self.clock_us >= self.duration_us) {
                 self.prefetch_next_pass()?;
-                self.start_keyframes_ahead()?;
+                self.start_frames_ahead()?;
                 self.sync_audio();
                 return Ok(());
             }
@@ -942,28 +936,36 @@ impl<R: Read + Seek> Player<R> {
         Ok(())
     }
 
-    /// Starts decoding the next keyframe of each `motion` track on the decoder's workers when
+    /// Starts decoding the next frame of each `motion` track on the decoder's workers when
     /// the next `advance` of the same length will reach it
-    /// (`docs/features/motion-codec.md#keyframe-decode-ahead`).
-    fn start_keyframes_ahead(&mut self) -> Result<()> {
-        for ti in 0..self.tracks.len() {
-            let t = &self.tracks[ti];
-            let Some(m) = &t.motion else { continue };
-            let after = t.last_offset.map_or(0, |o| o + 1).max(t.resume_offset);
-            let from = self.index.partition_point(|e| e.offset < after);
-            let Some(entry) = self.index[from..].iter().find(|e| e.stream == t.info.stream) else {
-                continue;
-            };
-            let time_us = self.reader.streams()[t.info.stream as usize].decode_time_us(entry.pts);
-            let due = time_us <= self.clock_us.saturating_add(self.ahead_window_us);
-            if !due || m.ahead == Some(entry.offset) || m.decoder.threads() == 1 {
-                continue;
+    /// (`docs/features/motion-codec.md#decode-ahead`).
+    fn start_frames_ahead(&mut self) -> Result<()> {
+        let idle = |t: &Track| t.motion.as_ref().is_some_and(|m| m.ahead.is_none() && m.decoder.threads() > 1);
+        let mut wanted = self.tracks.iter().filter(|t| idle(t)).count();
+        let limit = self.clock_us.saturating_add(self.ahead_window_us);
+        let mut seen = vec![false; self.tracks.len()];
+        let mut next = self.pending;
+        while let Some(chunk) = next
+            && wanted > 0
+        {
+            let stream = &self.reader.streams()[chunk.stream as usize];
+            if stream.decode_time_us(chunk.pts) > limit {
+                break;
             }
-            let offset = entry.offset;
-            let chunk = self.reader.chunk_at(offset)?;
-            self.reader.read_payload(&chunk, &mut self.payload)?;
-            let m = self.tracks[ti].motion.as_mut().expect("motion track");
-            m.ahead = m.decoder.decode_ahead(offset, &self.payload).then_some(offset);
+            if let Route::Video(ti) = self.routes[chunk.stream as usize]
+                && !seen[ti]
+                && idle(&self.tracks[ti])
+            {
+                seen[ti] = true;
+                wanted -= 1;
+                if chunk.offset >= self.tracks[ti].resume_offset {
+                    self.reader.read_payload(&chunk, &mut self.payload)?;
+                    let m = self.tracks[ti].motion.as_mut().expect("motion track");
+                    m.ahead = m.decoder.decode_ahead(chunk.offset, chunk.keyframe(), &self.payload).then_some(chunk.offset);
+                }
+            }
+            let end = chunk.offset + CHUNK_HEADER_SIZE + chunk.stored_size as u64;
+            next = if end < self.reader.header().index_offset { Some(self.reader.chunk_at(end)?) } else { None };
         }
         Ok(())
     }
