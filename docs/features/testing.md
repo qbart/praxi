@@ -9,6 +9,7 @@ repository root.
 |---|---|---|
 | `make test` | `cargo test --workspace`: unit tests, integration tests, doc tests; builds the examples | Rust. ffmpeg and a GPU adapter for some tests (below), which skip without them |
 | `make check` | `cargo clippy` with `-D warnings` over the workspace, then again over the viewer and the editor without default features (no audio device), then `make test` | Rust with clippy |
+| `make check-windows` | `cargo check` of the workspace for `x86_64-pc-windows-gnu`, so code that only Windows compiles differently (cpal's WASAPI backend, winit) is checked from Linux | `rustup target add x86_64-pc-windows-gnu`; no linker, nothing runs |
 | `make test-strict` | `make test` with `PRAXI_TEST_STRICT=1`: tests that would skip fail instead | ffmpeg, a GPU adapter with compute shaders and BC or ASTC |
 | `make bench` | `praxi bench` on the sample video, checked against [bench/baseline.json](../../bench/baseline.json) ([benchmarks.md](benchmarks.md)) | ffmpeg, the sample video (`make samples` downloads it) |
 | `make examples` | Encodes part of the sample and runs the `game_loop` and `decode_thread` examples on it | ffmpeg, the sample video |
