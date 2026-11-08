@@ -420,3 +420,61 @@ fn player_queues_motion_frames() {
         assert!(p.take_coded_frames(1).is_empty(), "no such track");
     }
 }
+
+#[test]
+fn cues_of_motion_files_are_replaced_without_touching_video() {
+    use praxi::format::{CueTrack, TimedCue};
+    let config = EncoderConfig::new(72, 40, 10, 1)
+        .variant(VariantConfig::motion().qp(20).slices(2))
+        .keyint(4)
+        .threads(2)
+        .cue(0.15, "old");
+    let mut enc = Encoder::new(Cursor::new(Vec::new()), config).unwrap();
+    for i in 0..6 {
+        enc.push_frame(&moving_frame(i * 3)).unwrap();
+    }
+    let bytes = enc.finish().unwrap().0.into_inner();
+    let tracks = [CueTrack {
+        name: "gameplay".into(),
+        cues: vec![
+            TimedCue { time_us: 250_000, cue: Cue { duration: 100_000, ..Cue::new("new") } },
+            TimedCue { time_us: 0, cue: Cue::new("first") },
+        ],
+    }];
+    let edited = praxi::format::replace_cues(Reader::new(Cursor::new(bytes.clone())).unwrap(), Cursor::new(Vec::new()), &tracks)
+        .unwrap()
+        .into_inner();
+
+    let video = |bytes: &[u8]| {
+        let mut reader = Reader::new(Cursor::new(bytes.to_vec())).unwrap();
+        let mut chunks = Vec::new();
+        while let Some(chunk) = reader.next_chunk().unwrap() {
+            if chunk.stream == 0 {
+                let mut payload = Vec::new();
+                reader.read_payload(&chunk, &mut payload).unwrap();
+                chunks.push((chunk.pts, chunk.keyframe(), payload));
+            }
+        }
+        (*reader.streams()[0].video_params().unwrap(), chunks)
+    };
+    assert_eq!(video(&edited), video(&bytes), "video chunks are copied as they are");
+    assert_eq!(praxi::format::read_cues(&mut Reader::new(Cursor::new(edited.clone())).unwrap()).unwrap()[0].cues[0].cue.kind, "first");
+
+    let mut p = Player::open(Cursor::new(edited), &Capabilities::new([TextureFormat::Motion])).unwrap();
+    p.play().unwrap();
+    let mut events = Vec::new();
+    while !p.is_finished() {
+        p.advance(Duration::from_millis(50)).unwrap();
+        p.take_coded_frames(0);
+        events.extend(std::iter::from_fn(|| p.poll_event()));
+    }
+    let cues: Vec<(&str, Duration)> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Cue(c) => Some((c.kind.as_str(), c.time)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cues, [("first", Duration::ZERO), ("new", Duration::from_millis(250))]);
+    assert!(events.iter().any(|e| matches!(e, Event::CueEnd { .. })), "the cue with a duration ends");
+}
