@@ -134,6 +134,10 @@ Bits 18-31 are reserved.
 | `0x0104` | ASTC 8x8 (LDR) | 8x8 | 16 |
 | `0x0201` | motion (not a texture format) | 16x16 | 0 |
 
+BC1 streams written by praxi have `color_flags` bit 1 (alpha) clear and use only the
+four-color block mode (first endpoint color greater than the second as a 16-bit
+integer).
+
 For `0x0201`, `frame_size` and the block-based derived values do not apply; the block fields
 describe the macroblock.
 

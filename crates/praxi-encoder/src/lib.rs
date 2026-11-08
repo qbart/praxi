@@ -11,7 +11,9 @@ use ktx::astcenc::{
     self, AstcencContext, AstcencImage, AstcencImageData, AstcencOutput, AstcencProfile,
     AstcencSwizzle,
 };
-use ktx::basisu::{uastc_bc7, uastc_enc};
+use ktx::basisu::dxt::Dxt1Block;
+use ktx::basisu::etc::Color32;
+use ktx::basisu::{uastc_bc1, uastc_bc7, uastc_enc};
 use praxi_format::{
     AudioParams, COLOR_FLAG_ALPHA, adpcm, COLOR_FLAG_SRGB, Compression, Cue, StreamInfo, TextureFormat, TimeBase,
     VideoParams, Writer,
@@ -72,6 +74,8 @@ pub enum Quality {
 pub enum VariantKind {
     /// UASTC transcoded to BC7, with optional UASTC RDO (`rdo_lambda > 0`).
     Bc7 { rdo_lambda: f32 },
+    /// Opaque BC1 (`docs/features/texture-variants.md#formats`).
+    Bc1,
     /// ASTC with square blocks of 4, 6 or 8 pixels.
     Astc { block: u8 },
     /// The motion codec (`docs/features/motion-codec.md`).
@@ -87,6 +91,11 @@ pub struct VariantConfig {
 impl VariantConfig {
     pub fn bc7() -> VariantConfig {
         VariantConfig { kind: VariantKind::Bc7 { rdo_lambda: 0.0 }, quality: Quality::Fast }
+    }
+
+    /// Opaque BC1: half the size of BC7, lower quality; alpha is dropped.
+    pub fn bc1() -> VariantConfig {
+        VariantConfig { kind: VariantKind::Bc1, quality: Quality::Fast }
     }
 
     pub fn astc(block: u8) -> VariantConfig {
@@ -138,6 +147,7 @@ impl VariantConfig {
     pub fn format(&self) -> Option<TextureFormat> {
         match self.kind {
             VariantKind::Bc7 { .. } => Some(TextureFormat::Bc7),
+            VariantKind::Bc1 => Some(TextureFormat::Bc1),
             VariantKind::Astc { block: 4 } => Some(TextureFormat::Astc4x4),
             VariantKind::Astc { block: 6 } => Some(TextureFormat::Astc6x6),
             VariantKind::Astc { block: 8 } => Some(TextureFormat::Astc8x8),
@@ -420,6 +430,7 @@ struct AudioTrack {
 
 enum BlockEncoder {
     Bc7 { level: u32, rdo_lambda: f32 },
+    Bc1 { flags: u32 },
     Astc { ctx: Box<AstcencContext> },
     Motion(Box<MotionEncoder>),
 }
@@ -482,7 +493,9 @@ impl<W: Write + Seek> Encoder<W> {
             let Some(format) = v.format() else {
                 return Err(Error::Config(format!("unsupported variant {:?}", v.kind)));
             };
-            let mut params = VideoParams::new(c.width, c.height, format, color_flags);
+            // BC1 is written opaque.
+            let flags = if format == TextureFormat::Bc1 { color_flags & !COLOR_FLAG_ALPHA } else { color_flags };
+            let mut params = VideoParams::new(c.width, c.height, format, flags);
             if let VariantKind::Motion { chroma, .. } = v.kind {
                 params.motion.chroma = chroma;
             }
@@ -496,6 +509,13 @@ impl<W: Write + Seek> Encoder<W> {
                     };
                     BlockEncoder::Bc7 { level, rdo_lambda }
                 }
+                VariantKind::Bc1 => BlockEncoder::Bc1 {
+                    flags: match v.quality {
+                        Quality::Fast => 0,
+                        Quality::Medium => uastc_bc1::ENCODE_BC1_HIGH_QUALITY,
+                        Quality::Thorough => uastc_bc1::ENCODE_BC1_HIGHER_QUALITY,
+                    },
+                },
                 VariantKind::Astc { block } => {
                     let preset = match v.quality {
                         Quality::Fast => astcenc::ASTCENC_PRE_FAST,
@@ -637,6 +657,7 @@ impl<W: Write + Seek> Encoder<W> {
                 BlockEncoder::Bc7 { level, rdo_lambda } => {
                     encode_bc7(&v.src_blocks, *level, *rdo_lambda, self.threads, &mut v.encoded)
                 }
+                BlockEncoder::Bc1 { flags } => encode_bc1(&v.src_blocks, *flags, self.threads, &mut v.encoded),
                 BlockEncoder::Astc { ctx } => encode_astc(ctx, rgba, w, h, &v.params, self.threads, &mut v.encoded)?,
                 BlockEncoder::Motion(_) => unreachable!("handled above"),
             }
@@ -793,6 +814,29 @@ fn encode_bc7(src_blocks: &[u8], level: u32, rdo_lambda: f32, threads: usize, ou
     for (dst, src) in out.as_chunks_mut::<16>().0.iter_mut().zip(&uastc) {
         uastc_bc7::transcode_uastc_to_bc7(src, dst);
     }
+}
+
+/// Opaque BC1 in the four-color mode; alpha is ignored.
+fn encode_bc1(src_blocks: &[u8], flags: u32, threads: usize, out: &mut Vec<u8>) {
+    let n = src_blocks.len() / 64;
+    out.resize(n * 8, 0);
+    let per_thread = n.div_ceil(threads).max(1);
+    std::thread::scope(|s| {
+        for (ci, part) in out.chunks_mut(per_thread * 8).enumerate() {
+            s.spawn(move || {
+                for (i, dst) in part.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+                    let at = (ci * per_thread + i) * 64;
+                    let px: [Color32; 16] = std::array::from_fn(|p| {
+                        let c = &src_blocks[at + p * 4..at + p * 4 + 4];
+                        Color32::new(c[0] as u32, c[1] as u32, c[2] as u32, 255)
+                    });
+                    let mut block = Dxt1Block::default();
+                    uastc_bc1::encode_bc1(&mut block, &px, flags);
+                    *dst = block.bytes;
+                }
+            });
+        }
+    });
 }
 
 fn encode_astc(

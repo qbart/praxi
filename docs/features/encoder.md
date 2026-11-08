@@ -15,8 +15,8 @@ praxi info intro.praxi
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--variant <V>` (repeatable) | `bc7` | `bc7`, `astc4x4`, `astc6x6`, `astc8x8`, `motion` ([motion-codec.md](motion-codec.md#encoder) for `--qp`, `--chroma`, `--slices`) |
-| `--quality <Q>` | `fast` | `fast`, `medium`, `thorough`: UASTC level / astcenc preset |
+| `--variant <V>` (repeatable) | `bc7` | `bc7`, `bc1` (opaque, [texture-variants.md](texture-variants.md#formats)), `astc4x4`, `astc6x6`, `astc8x8`, `motion` ([motion-codec.md](motion-codec.md#encoder) for `--qp`, `--chroma`, `--slices`) |
+| `--quality <Q>` | `fast` | `fast`, `medium`, `thorough`: UASTC level / BC1 least-squares passes (1, 2, 3) / astcenc preset |
 | `--rdo <LAMBDA>` | `0` (off) | UASTC RDO strength for `bc7`; higher is smaller and lower quality |
 | `--keyint <N>` | `60` | Frames between keyframes |
 | `--skip-threshold <T>` | `3` | Temporal skip threshold, see [video-codec.md](video-codec.md) |

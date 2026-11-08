@@ -178,6 +178,37 @@ fn decodes_frames_close_to_source() {
 }
 
 #[test]
+fn bc1_is_opaque_and_half_of_bc7() {
+    let source = frames();
+    for quality in [praxi_encoder::Quality::Fast, praxi_encoder::Quality::Thorough] {
+        let config = EncoderConfig::new(W, H, 10, 1).variant(VariantConfig::bc1().quality(quality)).alpha(true);
+        let (file, stats) = encode(config.skip_threshold(0));
+        let bc7 = encode(EncoderConfig::new(W, H, 10, 1).variant(VariantConfig::bc7()).skip_threshold(0)).1;
+        assert_eq!(stats.variants[0].format, Some(TextureFormat::Bc1));
+        let mut p = Player::open(Cursor::new(file), &Capabilities::new([TextureFormat::Bc1])).unwrap();
+        let params = p.tracks()[0].params;
+        assert!(!params.alpha(), "BC1 streams are opaque even with alpha in the source");
+        assert_eq!(params.frame_size() * 2, praxi::VideoParams { format: TextureFormat::Bc7, ..params }.frame_size());
+        assert!(stats.variants[0].bytes < bc7.variants[0].bytes, "{} >= {}", stats.variants[0].bytes, bc7.variants[0].bytes);
+        p.seek(Duration::from_millis(300)).unwrap();
+        let data = p.video_frame(0).unwrap().data.to_vec();
+        for block in data.chunks_exact(8) {
+            let (c0, c1) = (u16::from_le_bytes([block[0], block[1]]), u16::from_le_bytes([block[2], block[3]]));
+            assert!(c0 > c1, "four-color mode");
+        }
+        let rgba = praxi_encoder::decode_frame(&params, &data).unwrap();
+        assert!(rgba.chunks_exact(4).all(|px| px[3] == 255), "decodes opaque");
+        let se: f64 = rgba
+            .chunks_exact(4)
+            .zip(source[3].chunks_exact(4))
+            .flat_map(|(a, b)| (0..3).map(move |c| (a[c] as f64 - b[c] as f64).powi(2)))
+            .sum();
+        let psnr = 10.0 * (255.0f64.powi(2) / (se / (W * H * 3) as f64)).log10();
+        assert!(psnr > 25.0, "{quality:?}: PSNR {psnr:.1} dB");
+    }
+}
+
+#[test]
 fn decode_rejects_unsupported_formats() {
     let params = praxi::VideoParams::new(4, 4, TextureFormat::Bc3, 0);
     assert!(praxi_encoder::decode_frame(&params, &[0; 16]).is_err());

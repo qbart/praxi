@@ -28,7 +28,7 @@ A CPU fallback (decoding blocks to RGBA) may be added later behind an opt-in fea
 
 | Format | Block | Bytes per block | Alpha | Produced by encoder |
 |---|---|---|---|---|
-| BC1 | 4x4 | 8 | 1-bit | no (reserved) |
+| BC1 | 4x4 | 8 | no (opaque) | yes |
 | BC3 | 4x4 | 16 | yes | no (reserved) |
 | BC4 | 4x4 | 8 | single channel | no (reserved) |
 | BC5 | 4x4 | 16 | two channels | no (reserved) |
@@ -45,12 +45,19 @@ shaders ([motion-codec.md](motion-codec.md)). It needs compute shaders (Vulkan, 
 DX12, GLES 3.1; not WebGL 2), so `praxi-wgpu` lists it after the block formats: a group
 that has both plays the block variant, which costs nothing to decode.
 
+BC1 is half the size of BC7 for opaque video, at lower quality: two 16-bit endpoint
+colors and 2-bit indices per block, so gradients band and colorful blocks smear. praxi
+writes it opaque only. A BC1 stream never has the alpha flag, even when the source has
+alpha, and every block uses the four-color mode, so it decodes with alpha 1. The 1-bit
+alpha mode is not produced.
+
 Numeric ids are in [PRAXI.md](../spec/PRAXI.md#texture-formats). Color data is sRGB encoded;
 the stream's sRGB flag tells the engine to sample it with an sRGB texture format.
 
 ## Typical setups
 
-- Desktop + consoles + Apple Silicon: `bc7`.
+- Desktop + consoles + Apple Silicon: `bc7`, or `bc1` for opaque video where size matters
+  more than quality.
 - Mobile: `astc6x6` (good size/quality balance) or `astc4x4` (higher quality).
 - Shipping one file everywhere: `bc7` + `astc6x6`. Platform-specific builds may encode one
   variant each instead.

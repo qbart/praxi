@@ -173,6 +173,7 @@ impl FormatArg {
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum VariantArg {
     Bc7,
+    Bc1,
     Astc4x4,
     Astc6x6,
     Astc8x8,
@@ -183,6 +184,7 @@ impl VariantArg {
     fn format(self) -> TextureFormat {
         match self {
             VariantArg::Bc7 => TextureFormat::Bc7,
+            VariantArg::Bc1 => TextureFormat::Bc1,
             VariantArg::Astc4x4 => TextureFormat::Astc4x4,
             VariantArg::Astc6x6 => TextureFormat::Astc6x6,
             VariantArg::Astc8x8 => TextureFormat::Astc8x8,
@@ -441,6 +443,7 @@ fn video_config(p: &Probe, o: &VideoOptions) -> EncoderConfig {
     for v in &o.variants {
         let variant = match v {
             VariantArg::Bc7 => VariantConfig::bc7().rdo(o.rdo),
+            VariantArg::Bc1 => VariantConfig::bc1(),
             VariantArg::Astc4x4 => VariantConfig::astc(4),
             VariantArg::Astc6x6 => VariantConfig::astc(6),
             VariantArg::Astc8x8 => VariantConfig::astc(8),
