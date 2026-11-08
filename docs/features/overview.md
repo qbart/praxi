@@ -97,23 +97,4 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
 
 ## Next
 
-Not scheduled; smallest first.
-
-- **Check CI** on Forgejo since the editor joined the workflow.
-- **Editor write on Windows**: "Write into file" renames over the file the editor has
-  open, which Windows refuses. Close the player's file before the rename and reopen it.
-- **Editor close dialog**: test the unsaved-changes dialog under a window manager.
-- **Audio output crate**: the editor includes `crates/praxi-viewer/src/audio.rs` by path;
-  move it into a shared crate.
-- **BC1**: half the size of BC7 for opaque video (reserved in
-  [texture-variants.md](texture-variants.md#formats)). BC4/BC5 for one- and two-channel
-  content, ASTC 5x5 between 4x4 and 6x6.
-- **CPU fallback**: decode blocks to RGBA when the GPU supports none of a file's formats
-  ([texture-variants.md](texture-variants.md)).
-- **Real hardware**: measure on discrete and integrated GPUs, macOS and a phone (ASTC);
-  everything so far ran on llvmpipe/lavapipe.
-- **Engine plugins**: Bevy or Godot integration on top of `praxi-wgpu`.
-- **Motion codec on hardware**: GPU decode time on an integrated GPU (goal: 1 ms per
-  1080p frame), keyframe decode-ahead ([motion-codec.md](motion-codec.md#open-questions)).
-- **Perceptual audio**: Opus, smaller than ADPCM at a higher decode cost
-  ([audio.md](audio.md)).
+Planned work, in order, is in [ROADMAP.md](../../ROADMAP.md).
