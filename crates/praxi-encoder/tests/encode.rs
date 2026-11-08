@@ -382,22 +382,39 @@ fn player_queues_motion_frames() {
     };
     assert!(expected.iter().filter(|f| f.keyframe).count() < 6, "most frames are delta frames");
 
-    let mut p = Player::open(Cursor::new(bytes), &Capabilities::new([TextureFormat::Motion])).unwrap();
-    assert_eq!(p.tracks()[0].params.format, TextureFormat::Motion);
-    p.set_decode_threads(1);
-    p.play().unwrap();
-    let f = p.video_frame(0).unwrap();
-    assert!(f.data.is_empty());
-    assert_eq!(p.take_coded_frames(0), queued(0, 0));
-    assert!(p.take_coded_frames(0).is_empty(), "taking empties the queue");
-    let mut at = 0;
-    for frames in [2, 3, 1, 2] {
-        p.advance(Duration::from_millis(100 * frames as u64)).unwrap();
-        assert_eq!(p.take_coded_frames(0), queued(at + 1, at + frames), "frames {}..={}", at + 1, at + frames);
-        at += frames;
+    let step = |p: &mut Player<_>, frames: u64| p.advance(Duration::from_millis(100 * frames)).unwrap();
+    // One thread decodes every frame when due; with three, keyframes start decoding one
+    // `advance` early.
+    for threads in [1, 3] {
+        let mut p = Player::open(Cursor::new(bytes.clone()), &Capabilities::new([TextureFormat::Motion])).unwrap();
+        assert_eq!(p.tracks()[0].params.format, TextureFormat::Motion);
+        p.set_decode_threads(threads);
+        p.play().unwrap();
+        let f = p.video_frame(0).unwrap();
+        assert!(f.data.is_empty());
+        assert_eq!(p.take_coded_frames(0), queued(0, 0));
+        assert!(p.take_coded_frames(0).is_empty(), "taking empties the queue");
+        let mut at = 0;
+        for frames in [1, 1, 1, 1, 2, 1, 2] {
+            step(&mut p, frames as u64);
+            assert_eq!(p.take_coded_frames(0), queued(at + 1, at + frames), "{threads} threads, frames {}..={}", at + 1, at + frames);
+            at += frames;
+        }
+        p.seek(Duration::from_millis(700)).unwrap();
+        // Seeking decodes from the keyframe before the target.
+        assert_eq!(p.take_coded_frames(0), queued(0, 7));
+        // A seek onto the keyframe being decoded ahead uses it; one elsewhere cancels it.
+        for (to, expect) in [(400, queued(0, 4)), (0, queued(0, 0))] {
+            p.seek(Duration::from_millis(250)).unwrap();
+            p.play().unwrap();
+            step(&mut p, 1);
+            p.take_coded_frames(0);
+            p.seek(Duration::from_millis(to)).unwrap();
+            assert_eq!(p.take_coded_frames(0), expect, "{threads} threads, seek to {to}");
+        }
+        p.play().unwrap();
+        step(&mut p, 4);
+        assert_eq!(p.take_coded_frames(0), queued(1, 4));
+        assert!(p.take_coded_frames(1).is_empty(), "no such track");
     }
-    p.seek(Duration::from_millis(700)).unwrap();
-    // Seeking decodes from the keyframe before the target.
-    assert_eq!(p.take_coded_frames(0), queued(0, 7));
-    assert!(p.take_coded_frames(1).is_empty(), "no such track");
 }
