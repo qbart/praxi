@@ -244,11 +244,16 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
+            bevy::window::WindowPlugin { primary_window: None, ..Default::default() },
             AssetPlugin::default(),
             bevy::render::RenderPlugin { synchronous_pipeline_compilation: true, ..Default::default() },
             ImagePlugin::default(),
+            bevy::mesh::MeshPlugin,
             PraxiPlugin,
-        ));
+        ))
+        .init_resource::<ClearColor>()
+        .init_resource::<Seen>()
+        .add_systems(Update, collect.after(advance));
         while app.plugins_state() == PluginsState::Adding {
             bevy::tasks::tick_global_task_pools_on_main_thread();
         }
@@ -257,6 +262,14 @@ mod tests {
         app.world().get_resource::<RenderAdapter>()?;
         app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(50)));
         Some(app)
+    }
+
+    /// Every [`PraxiEvent`] so far.
+    #[derive(Resource, Default)]
+    struct Seen(Vec<PraxiEvent>);
+
+    fn collect(mut events: MessageReader<PraxiEvent>, mut seen: ResMut<Seen>) {
+        seen.0.extend(events.read().cloned());
     }
 
     fn clip(path: &Path, variant: VariantConfig) {
@@ -302,13 +315,9 @@ mod tests {
             assert!(video.version >= 2, "{name}: {} frames drawn", video.version);
             let copies = app.sub_app(RenderApp).world().resource::<Copies>();
             assert!(copies.copied.get(&image).is_some_and(|&v| v + 1 >= video.version), "{name}: copied {:?}", copies.copied);
-            let messages = app.world().resource::<Messages<PraxiEvent>>();
-            let cues: Vec<_> = messages
-                .iter_current_update_messages()
-                .chain(messages.get_cursor().read(messages))
-                .filter(|m| m.entity == entity && matches!(&m.event, praxi::Event::Cue(c) if c.kind == "boom"))
-                .collect();
-            assert!(!cues.is_empty(), "{name}: the cue arrives as a message");
+            let seen = &app.world().resource::<Seen>().0;
+            let cue = |m: &PraxiEvent| m.entity == entity && matches!(&m.event, praxi::Event::Cue(c) if c.kind == "boom");
+            assert!(seen.iter().any(cue), "{name}: the cue arrives as a message: {seen:?}");
             app.world_mut().despawn(entity);
         }
         std::fs::remove_dir_all(&dir).unwrap();
