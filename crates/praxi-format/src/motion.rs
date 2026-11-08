@@ -1054,9 +1054,9 @@ impl Decoder {
         }
         std::mem::swap(&mut self.frame, &mut self.ahead_frame);
         std::mem::swap(&mut self.parts, &mut self.ahead_parts);
+        std::mem::swap(&mut self.parts[0].out, out);
         out.keyframe = true;
         self.set_scales(ahead.qp, out);
-        std::mem::swap(&mut self.parts[0].out, out);
         for part in &self.parts[1..] {
             append(out, &part.out);
         }

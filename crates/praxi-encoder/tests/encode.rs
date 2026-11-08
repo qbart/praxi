@@ -397,7 +397,8 @@ fn player_queues_motion_frames() {
         let mut at = 0;
         for frames in [1, 1, 1, 1, 2, 1, 2] {
             step(&mut p, frames as u64);
-            assert_eq!(p.take_coded_frames(0), queued(at + 1, at + frames), "{threads} threads, frames {}..={}", at + 1, at + frames);
+            let want = queued(at + 1, at + frames);
+            assert_eq!(p.take_coded_frames(0), want, "{threads} threads, frames {}..={}", at + 1, at + frames);
             at += frames;
         }
         p.seek(Duration::from_millis(700)).unwrap();
