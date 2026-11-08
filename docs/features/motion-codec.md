@@ -517,24 +517,21 @@ decode-ahead was cancelled outside the timed region before each `advance`. Colum
 
 | Game, threads | Keyframe `advance` without / with | Delta `advance` without / with (max) |
 |---|---|---|
-| 60 Hz, 4 | 2.72 / 0.18 ms | 1.35 / 0.14 ms (2.23 / 0.70) |
-| 60 Hz, 8 | 2.16 / 0.18 ms | 1.12 / 0.16 ms (1.58 / 0.59) |
-| 30 Hz, 4 | 3.05 / 1.68 ms | 1.99 / 1.34 ms (3.48 / 2.44) |
-| 30 Hz, 8 | 2.92 / 1.24 ms | 1.89 / 1.19 ms (2.69 / 1.84) |
+| 60 Hz, 4 | 2.50 / 0.15 ms | 1.25 / 0.13 ms (2.51 / 1.18) |
+| 60 Hz, 8 | 2.27 / 0.17 ms | 1.17 / 0.15 ms (2.30 / 0.67) |
+| 30 Hz, 4 | 3.39 / 0.21 ms | 2.11 / 0.22 ms (4.05 / 2.39) |
+| 30 Hz, 8 | 2.74 / 0.25 ms | 1.71 / 0.24 ms (2.75 / 1.97) |
 
 Paced like a game, decoding takes about 3.5 times as long as in the back-to-back runs
 above: the cores clock down or sleep between frames, and the workers wake up cold. With
-decode-ahead a 60 Hz game pays about 0.15 ms per frame: reading the next chunk and its
-header. A 30 Hz game advances two video frames per call and only the first of them was
-decoded ahead (see [Open questions](#open-questions)).
+decode-ahead a 60 Hz game pays about 0.15 ms per frame, and a 30 Hz game, which advances
+two video frames per call, about 0.22 ms: reading the next chunks and their headers.
+When only one frame was decoded ahead, a 30 Hz game paid 1.2-1.7 ms, since the second
+frame decoded on the game thread. The max is the first `advance` after the start or a
+seek, which decode synchronously.
 
 ## Open questions
 
-- Decode-ahead of several frames: a frame's slices do not depend on the frame before it,
-  only its header does (inherited tables), so the headers of the next few frames could be
-  read in order and their slices decoded at once, each with its own copy of the tables and
-  output. Helps games that advance more than one video frame per call (30 Hz games on 60
-  fps video).
 - 4x4 transforms and an in-loop deblocking filter at lower bitrates.
 
 Tried in phase 1 and dropped, each under 1% on the bench input: rate-distortion optimized

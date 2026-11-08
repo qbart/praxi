@@ -52,8 +52,8 @@ for track in 0..player.tracks().len() {
   `index` changes only when a new frame was decoded, so engines can skip redundant uploads.
 - `take_coded_frames(track)` and `set_decode_threads(n)`: tracks in the `motion` format
   queue coded frames for a GPU decoder instead of block data
-  ([motion-codec.md](motion-codec.md#player-api)). Their frames start decoding on the
-  worker threads one `advance` before they are due
+  ([motion-codec.md](motion-codec.md#player-api)). The frames the next `advance` will
+  reach start decoding on the worker threads one `advance` before they are due
   ([motion-codec.md](motion-codec.md#decode-ahead)).
 - `cue_streams()` and `set_cue_stream_enabled(stream, bool)`: see [cues.md](cues.md).
 - `replace_cues(tracks)`: play these cues in place of the file's cue streams

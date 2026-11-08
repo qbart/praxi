@@ -49,9 +49,10 @@ Motion decode-ahead works on one frame
 ([motion-codec.md](docs/features/motion-codec.md#decode-ahead)), so a 30 Hz game playing
 60 fps video only gets half the benefit.
 
-- [ ] Read the headers of the next frames in order and decode their slices at once, each
-  frame with its own tables and output.
-- [ ] Measure at 30 Hz against 60 Hz; tests against normal decodes.
+- [x] Read the headers of the next frames in order and decode their slices at once, each
+  frame with its own tables and output (up to 4 frames).
+- [x] Measure at 30 Hz against 60 Hz; tests against normal decodes: a 30 Hz game pays
+  0.22 ms per `advance` instead of 1.2-1.7 ms, a 60 Hz game 0.15 ms as before.
 
 ## 5. Audio
 
