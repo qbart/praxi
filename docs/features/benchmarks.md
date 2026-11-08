@@ -13,8 +13,10 @@ praxi bench samples/big_buck_bunny_1080_10s.mp4 --frames 180 \
 ```
 
 `praxi bench <INPUT>` takes the video options of `praxi encode`: `--variant` (repeatable,
-default `bc7`), `--quality`, `--rdo`, `--keyint`, `--skip-threshold`, `--plane-min-saving`
-and `--frames`. Audio
+default `bc7`), `--quality`, `--rdo`, `--keyint`, `--skip-threshold`, `--plane-min-saving`,
+`--scale`, `--fps` and `--frames`, plus `--qp`, `--chroma` and `--slices` for `motion`.
+With `--scale` or `--fps` the quality is measured against the scaled and resampled source,
+which ffmpeg produces again with the same filters. Audio
 and cues are left out. Further options:
 
 | Option | Default | Meaning |

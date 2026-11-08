@@ -105,9 +105,6 @@ Not scheduled; smallest first.
 - **Editor close dialog**: test the unsaved-changes dialog under a window manager.
 - **Audio output crate**: the editor includes `crates/praxi-viewer/src/audio.rs` by path;
   move it into a shared crate.
-- **Encoder scaling and frame rate**: `praxi encode --scale WxH --fps N` (today the input
-  has to be resized with ffmpeg first). Size grows with pixels times frame rate, so this is
-  the main lever on file size.
 - **BC1**: half the size of BC7 for opaque video (reserved in
   [texture-variants.md](texture-variants.md#formats)). BC4/BC5 for one- and two-channel
   content, ASTC 5x5 between 4x4 and 6x6.
