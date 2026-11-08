@@ -192,16 +192,21 @@ The encoder writes 16 slices by default (`--slices`): at 1080p that is 4-5 macro
 per slice, at no measurable cost in size on the bench input, and enough slices for slow
 and fast cores to balance.
 
-### Keyframe decode-ahead
+### Decode-ahead
 
-A 1080p keyframe codes most blocks and takes about three times as long to entropy-decode as
-a delta frame (1.05 ms against 0.33 ms on 8 threads). The player hides that by starting a
-keyframe on the worker threads before it is due:
+Entropy decoding on the game thread costs more than back-to-back measurements suggest:
+paced like a game, the cores clock down or sleep between frames and a delta frame takes
+about 1.2 ms instead of 0.33 ms (see [Measurements](#measurements)). A keyframe codes most
+blocks and takes about three times as long. The player therefore decodes every frame of a
+`motion` track on the worker threads one `advance` before it is due, and the game thread
+only collects the result:
 
-- `Decoder::decode_ahead(tag, payload) -> bool` reads a keyframe's header, tables and slice
-  sizes on the calling thread, queues its slices for the workers and returns without
-  waiting; the calling thread does not take any of them. It returns `false` and starts
-  nothing when the decoder has one thread or the header is invalid (the regular decode
+- `Decoder::decode_ahead(tag, keyframe, payload) -> bool` reads the frame's header, tables
+  and slice sizes on the calling thread, queues its slices for the workers and returns
+  without waiting; the calling thread does not take any of them. A delta frame starts from
+  the tables of the latest decoded frame, which it may inherit, so it can only start once
+  the frame before it is decoded. It returns `false` and starts nothing with one thread,
+  for a delta frame before any keyframe, or when the header is invalid (the regular decode
   then reports the error). A second `decode_ahead` cancels the first.
 - The workers also put the output together: a thread that finishes a slice appends, under
   a lock, every finished slice that follows the output so far, so the frame is complete
@@ -209,26 +214,26 @@ keyframe on the worker threads before it is due:
   calling thread when it ran after the slices (measured with the cores idle before).
 - `Decoder::finish_ahead(tag, out) -> Option<Result>` collects it: the calling thread
   decodes the slices no worker has started, waits for the rest and swaps the output into
-  `out`. The result is identical to `decode(true, payload, out)`. `None` when no
+  `out`. The result is identical to `decode(keyframe, payload, out)`. `None` when no
   decode-ahead with `tag` is running.
 - The decode-ahead uses its own copy of what slices read (layout, tables, payload) and its
-  own slice outputs, swapped in by `finish_ahead`, so delta frames before the keyframe
-  decode normally while it runs (keyframes do not inherit tables). The calling thread of
-  such a delta decode only takes slices of its own frame from the queue.
-- `decode` of a keyframe and `set_threads` cancel a running decode-ahead: the calling
-  thread waits for its slices and discards them.
+  own slice outputs, swapped in by `finish_ahead`.
+- `decode` and `set_threads` cancel a running decode-ahead: the calling thread waits for
+  its slices and discards them.
 
-In the player, after `advance` has decoded every due chunk, each `motion` track looks up
-its next keyframe in the index (the first keyframe entry of its stream after its latest
-frame). If that keyframe is due within the `dt` of this `advance` from the clock, which
-means the next `advance` of the same length will decode it, the player reads its payload
-and calls `decode_ahead` with the chunk offset as tag. When the chunk becomes due, the
-player calls `finish_ahead` instead of reading and decoding the payload again. The frame
-before the keyframe pays for reading the payload and its header (about 0.1 ms); the
-keyframe's frame pays for slices not yet done, normally none.
+In the player, after `advance` has decoded every due chunk, the chunks after the clock are
+scanned in file order (headers only, starting at the next chunk, which the player has
+already read) up to decode time `clock + dt`, where `dt` is the clock step of this
+`advance`: the next `advance` of the same length will decode them. The first chunk of each
+`motion` track among them that has no decode-ahead running is read and passed to
+`decode_ahead` with its offset as tag. When the chunk becomes due, the player calls
+`finish_ahead` instead of reading and decoding the payload again; any further chunks of
+the track due in the same `advance` decode as before. The game thread pays for reading
+the next frame's chunk and its header; collecting the frame costs about 0.01 ms when the
+workers are done.
 
 There is no decode-ahead while seeking (`seek` decodes synchronously, as before), with one
-decoder thread, or across the loop point (the first keyframe of the next pass).
+decoder thread, or across the loop point (the first frame of the next pass).
 
 ### Coded frames
 
