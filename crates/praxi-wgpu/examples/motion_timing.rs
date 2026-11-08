@@ -49,6 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         player.seek(Duration::ZERO)?;
         renderer.prepare(&device, &queue, &mut player, 1.0);
         device.poll(wgpu::PollType::wait_indefinitely())?;
+        // The first frame is not measured.
+        renderer.gpu_times(&device, &queue);
         player.play()?;
         let mut last = player.video_frame(0).map(|f| f.index);
         let mut n = 0;
