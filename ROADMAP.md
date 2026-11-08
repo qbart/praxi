@@ -77,6 +77,22 @@ Motion decode-ahead works on one frame
   Write into file, cue preview through `Player::replace_cues`. Its own small editing
   model (no undo); the full editor stays `praxi-editor`.
 
+## 7. Consuming cues at runtime
+
+Today a game reads cues as `Event::Cue` / `Event::CueEnd` from `Player::poll_event`
+(or `PraxiEvent` messages in Bevy), matches the type string and reads the fields by hand
+([cues.md](docs/features/cues.md#player-behaviour)). Scope to be decided; candidates:
+
+- [ ] Typed fields: deserialize a cue's fields into a game struct (serde, behind a
+  feature), with errors naming the cue and field.
+- [ ] Dispatch by type: register a handler per cue type instead of matching strings.
+- [ ] Active cues: query the cues active at the playhead (for UI such as subtitles)
+  without tracking `Cue` / `CueEnd` pairs.
+- [ ] Lookahead: list the cues starting within the next N ms, so the game can preload
+  what they trigger (sounds, assets).
+- [ ] Bevy: typed cue messages per cue type in `praxi-bevy`.
+- [ ] An example game consuming cues (subtitles, camera shake), and tests.
+
 ## Not scheduled
 
 - **CI on Forgejo**: check the workflow since the editor joined it.
