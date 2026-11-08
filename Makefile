@@ -1,6 +1,6 @@
 SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
-BENCH_ARGS := --frames 180 --variant bc7 --variant astc6x6 --variant astc8x8
+BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
 .PHONY: build test samples bench bench-baseline examples
 

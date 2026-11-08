@@ -51,6 +51,11 @@ writes it opaque only. A BC1 stream never has the alpha flag, even when the sour
 alpha, and every block uses the four-color mode, so it decodes with alpha 1. The 1-bit
 alpha mode is not produced.
 
+On the bench input (`make bench`, 1080p60, first 3 s), BC1 is 24.0 MB/s at 36.2 dB against
+BC7's 55.6 MB/s at 41.0 dB, ASTC 6x6's 34.1 MB/s at 37.4 dB and ASTC 8x8's 18.4 MB/s at
+34.0 dB, with 1.0 ms mean decode time per frame (BC7 1.5 ms). `--quality medium` and
+`thorough` (2 and 3 least-squares passes) gain 0.2 dB, so `fast` is the default.
+
 Numeric ids are in [PRAXI.md](../spec/PRAXI.md#texture-formats). Color data is sRGB encoded;
 the stream's sRGB flag tells the engine to sample it with an sRGB texture format.
 

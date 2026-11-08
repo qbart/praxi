@@ -12,12 +12,12 @@ live preview in the viewer ([cue-preview.md](docs/features/cue-preview.md)) and 
 timeline editor ([cue-editor.md](docs/features/cue-editor.md)). Video and audio chunks are
 copied byte for byte, nothing is re-encoded. Missing:
 
-- [ ] **`praxi cues add` / `praxi cues remove`**: change the cues of an encoded file from
+- [x] **`praxi cues add` / `praxi cues remove`**: change the cues of an encoded file from
   the command line with the encoder's `--cue` syntax, without writing a sheet by hand.
-- [ ] **Editor "Write into file" on Windows**: the editor renames over the file its player
+- [x] **Editor "Write into file" on Windows**: the editor renames over the file its player
   has open, which Windows refuses. Release the file before the rename, reopen it after and
-  keep the position.
-- [ ] **Tests** for both, plus a cue round trip through `cues import` on a motion file.
+  keep the position. Not yet run on Windows.
+- [x] **Tests** for both, plus a cue round trip through `cues import` on a motion file.
 - [ ] Editor close dialog under a window manager (needs a desktop: manual check).
 
 ## 2. BC1
@@ -25,10 +25,11 @@ copied byte for byte, nothing is re-encoded. Missing:
 Half the size of BC7 for opaque video, reserved in
 [texture-variants.md](docs/features/texture-variants.md#formats).
 
-- [ ] Format code and stream parameters ([PRAXI.md](docs/spec/PRAXI.md)).
-- [ ] Encoder variant `bc1` (`--variant bc1`), temporal skip and byte planes as for BC7.
-- [ ] Player selection, `praxi-wgpu` upload (`Bc1RgbaUnormSrgb`), viewer, `praxi frame`.
-- [ ] `praxi bench` row and tests.
+- [x] Format code and stream parameters ([PRAXI.md](docs/spec/PRAXI.md)).
+- [x] Encoder variant `bc1` (`--variant bc1`), temporal skip and byte planes as for BC7.
+- [x] Player selection, `praxi-wgpu` upload (`Bc1RgbaUnormSrgb`), viewer, `praxi frame`.
+- [x] `praxi bench` row and tests: 24.0 MB/s at 36.2 dB against BC7's 55.6 MB/s at
+  41.0 dB.
 
 ## 3. Tests without CI
 
