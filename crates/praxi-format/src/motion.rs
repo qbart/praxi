@@ -1867,7 +1867,7 @@ mod tests {
         assert_eq!(ahead, frame);
         // Frames queue in order, up to MAX_AHEAD, and are collected in order.
         for tag in 0..MAX_AHEAD as u64 {
-            assert!(dec.decode_ahead(tag, tag > 0, &payload), "frame {tag}");
+            assert!(dec.decode_ahead(tag, tag == 0, &payload), "frame {tag}");
         }
         assert!(!dec.decode_ahead(9, false, &payload), "the queue is full");
         assert_eq!(dec.ahead(), MAX_AHEAD);
