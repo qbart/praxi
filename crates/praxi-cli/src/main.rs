@@ -92,7 +92,7 @@ struct VideoOptions {
     #[arg(long)]
     frames: Option<u64>,
     /// Quantizer of the motion variant (0-51; lower is larger and better).
-    #[arg(long, default_value_t = 22, value_parser = clap::value_parser!(u8).range(0..=51))]
+    #[arg(long, default_value_t = 16, value_parser = clap::value_parser!(u8).range(0..=51))]
     qp: u8,
     /// Chroma resolution of the motion variant.
     #[arg(long, value_enum, default_value_t = ChromaArg::C420)]

@@ -93,9 +93,9 @@ impl VariantConfig {
         VariantConfig { kind: VariantKind::Astc { block }, quality: Quality::Fast }
     }
 
-    /// The motion codec with `qp` 22, 4:2:0 chroma and 16 slices.
+    /// The motion codec with `qp` 16 (about BC7's PSNR), 4:2:0 chroma and 16 slices.
     pub fn motion() -> VariantConfig {
-        VariantConfig { kind: VariantKind::Motion { qp: 22, chroma: Chroma::C420, slices: 16 }, quality: Quality::Fast }
+        VariantConfig { kind: VariantKind::Motion { qp: 16, chroma: Chroma::C420, slices: 16 }, quality: Quality::Fast }
     }
 
     /// Sets the quantizer of a motion variant (0 to 51); ignored by others.
