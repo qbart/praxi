@@ -13,7 +13,9 @@ pub fn decode_frame(params: &VideoParams, data: &[u8]) -> Result<Vec<u8>> {
     let (w, h) = (params.width as usize, params.height as usize);
     match params.format {
         TextureFormat::Bc1 => Ok(decode_4x4(params, data, |block, px| {
-            gpu_texture::unpack_bc1(block.try_into().expect("8-byte block"), px, true)
+            // Every BC1 block is valid; the result only tells the three-color mode.
+            gpu_texture::unpack_bc1(block.try_into().expect("8-byte block"), px, true);
+            true
         })),
         TextureFormat::Bc7 => Ok(decode_4x4(params, data, |block, px| {
             gpu_texture::unpack_bc7(block.try_into().expect("16-byte block"), px)
