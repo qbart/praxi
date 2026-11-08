@@ -1,6 +1,6 @@
 //! `praxi bench`: size, quality and decode time per variant (`docs/features/benchmarks.md`).
 
-use crate::{AnyResult, VideoOptions, probe, pump_frames, spawn_video, value_name, video_config};
+use crate::{AnyResult, VideoOptions, pump_frames, source, spawn_video, value_name, video_config};
 use praxi::{Capabilities, Player};
 use praxi_encoder::Encoder;
 use praxi_format::{Reader, TextureFormat, motion};
@@ -103,7 +103,7 @@ impl Drop for Encoded {
 
 pub fn bench(args: BenchArgs) -> AnyResult<()> {
     let baseline = args.baseline.as_deref().map(read_results).transpose()?;
-    let p = probe(&args.input)?;
+    let p = source(&args.input, &args.video)?;
     let frame_bytes = p.width as usize * p.height as usize * 4;
     let encoded = Encoded {
         path: args
@@ -116,7 +116,7 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
     eprintln!("encoding {} ({}x{} @ {}/{} fps)", args.input.display(), p.width, p.height, p.fps_num, p.fps_den);
     let started = Instant::now();
     let mut encoder = Encoder::new(BufWriter::new(File::create(&encoded.path)?), video_config(&p, &args.video))?;
-    pump_frames(spawn_video(&args.input, args.video.frames)?, frame_bytes, |frame| {
+    pump_frames(spawn_video(&args.input, &p, args.video.frames)?, frame_bytes, |frame| {
         encoder.push_frame(frame)?;
         Ok(())
     })?;
@@ -171,7 +171,7 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
     let mut quality: Vec<(f64, f64)> = vec![(0.0, PSNR_CAP); formats.len()]; // (summed MSE, worst frame PSNR)
     let channels = if p.alpha { 4 } else { 3 };
     let mut i = 0;
-    let compared = pump_frames(spawn_video(&args.input, args.video.frames)?, frame_bytes, |source| {
+    let compared = pump_frames(spawn_video(&args.input, &p, args.video.frames)?, frame_bytes, |source| {
         let dt = frame_us(i) - frame_us(i.saturating_sub(1));
         let mses = std::thread::scope(|scope| {
             let jobs: Vec<_> = players

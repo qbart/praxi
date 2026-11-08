@@ -88,7 +88,13 @@ struct VideoOptions {
     /// Use byte planes only when they save at least this many percent (0-100).
     #[arg(long, default_value_t = praxi_format::DEFAULT_PLANE_MIN_SAVING)]
     plane_min_saving: f64,
-    /// Encode only the first N frames.
+    /// Resize to WxH pixels; one side may be -1 to keep the aspect ratio.
+    #[arg(long, value_parser = parse_scale)]
+    scale: Option<(i64, i64)>,
+    /// Resample to N or N/D frames per second.
+    #[arg(long, value_parser = parse_fps)]
+    fps: Option<(u32, u32)>,
+    /// Encode only the first N frames (after --fps).
     #[arg(long)]
     frames: Option<u64>,
     /// Quantizer of the motion variant (0-51; lower is larger and better).
@@ -243,6 +249,57 @@ struct Probe {
     fps_num: u32,
     fps_den: u32,
     alpha: bool,
+    /// ffmpeg filters producing these frames from the input (`--fps`, `--scale`).
+    filters: Option<String>,
+}
+
+/// `WxH`, each side a positive size or `-1` (from the other side and the aspect ratio).
+fn parse_scale(s: &str) -> Result<(i64, i64), String> {
+    let (w, h) = s.split_once('x').ok_or("expected WxH")?;
+    let side = |v: &str| match v.parse::<i64>() {
+        Ok(n) if n > 0 || n == -1 => Ok(n),
+        _ => Err(format!("invalid size {s:?}")),
+    };
+    match (side(w)?, side(h)?) {
+        (-1, -1) => Err("only one side of --scale can be -1".into()),
+        size => Ok(size),
+    }
+}
+
+/// `N` or `N/D` frames per second.
+fn parse_fps(s: &str) -> Result<(u32, u32), String> {
+    let (n, d) = s.split_once('/').unwrap_or((s, "1"));
+    match (n.parse(), d.parse()) {
+        (Ok(n), Ok(d)) if n > 0 && d > 0 => Ok((n, d)),
+        _ => Err(format!("invalid frame rate {s:?}")),
+    }
+}
+
+/// The size `--scale` gives a `from` sized source; a `-1` side keeps the aspect ratio.
+fn scaled_size(from: (u32, u32), scale: (i64, i64)) -> (u32, u32) {
+    let follow = |other: i64, a: u32, b: u32| ((other as f64 * b as f64 / a as f64).round() as u32).max(1);
+    match scale {
+        (-1, h) => (follow(h, from.1, from.0), h as u32),
+        (w, -1) => (w as u32, follow(w, from.0, from.1)),
+        (w, h) => (w as u32, h as u32),
+    }
+}
+
+/// The frames the video options turn the input into: its probe with `--scale` and `--fps`
+/// applied (`docs/features/encoder.md#cli`).
+fn source(input: &Path, o: &VideoOptions) -> AnyResult<Probe> {
+    let mut p = probe(input)?;
+    let mut filters = Vec::new();
+    if let Some((num, den)) = o.fps {
+        (p.fps_num, p.fps_den) = (num, den);
+        filters.push(format!("fps={num}/{den}"));
+    }
+    if let Some(scale) = o.scale {
+        (p.width, p.height) = scaled_size((p.width, p.height), scale);
+        filters.push(format!("scale={}:{}:flags=lanczos", p.width, p.height));
+    }
+    p.filters = (!filters.is_empty()).then(|| filters.join(","));
+    Ok(p)
 }
 
 fn probe(input: &Path) -> AnyResult<Probe> {
@@ -269,6 +326,7 @@ fn probe(input: &Path) -> AnyResult<Probe> {
         fps_num: num.parse()?,
         fps_den: den.parse()?,
         alpha: pix_fmt_has_alpha(pix_fmt),
+        filters: None,
     })
 }
 
@@ -396,10 +454,13 @@ fn video_config(p: &Probe, o: &VideoOptions) -> EncoderConfig {
     config
 }
 
-/// Starts an ffmpeg process decoding the video to RGBA frames on its stdout.
-fn spawn_video(input: &Path, frames: Option<u64>) -> AnyResult<Child> {
+/// Starts an ffmpeg process decoding the video to the RGBA frames of `source` on its stdout.
+fn spawn_video(input: &Path, source: &Probe, frames: Option<u64>) -> AnyResult<Child> {
     let mut ffmpeg = Command::new("ffmpeg");
     ffmpeg.args(["-v", "error", "-nostdin", "-i"]).arg(input);
+    if let Some(filters) = &source.filters {
+        ffmpeg.args(["-vf", filters]);
+    }
     if let Some(n) = frames {
         ffmpeg.args(["-frames:v", &n.to_string()]);
     }
@@ -429,7 +490,7 @@ fn pump_frames(mut ffmpeg: Child, frame_bytes: usize, mut push: impl FnMut(&[u8]
 }
 
 fn encode(args: EncodeArgs) -> AnyResult<()> {
-    let p = probe(&args.input)?;
+    let p = source(&args.input, &args.video)?;
     let mut config = video_config(&p, &args.video);
     for cue in &args.cues {
         config = config.cue_with(cue.clone());
@@ -478,7 +539,7 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
 
     let out = BufWriter::new(File::create(&args.output)?);
     let mut encoder = Encoder::new(out, config)?;
-    let ffmpeg = spawn_video(&args.input, args.video.frames)?;
+    let ffmpeg = spawn_video(&args.input, &p, args.video.frames)?;
     let started = Instant::now();
     let mut count = 0u64;
     pump_frames(ffmpeg, p.width as usize * p.height as usize * 4, |frame| {
@@ -669,4 +730,33 @@ fn describe_cue(cue: &Cue) -> String {
         out.push_str(&format!(" {key}={value}"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_scale_and_fps() {
+        assert_eq!(parse_scale("1280x720"), Ok((1280, 720)));
+        assert_eq!(parse_scale("1280x-1"), Ok((1280, -1)));
+        assert_eq!(parse_scale("-1x540"), Ok((-1, 540)));
+        for bad in ["-1x-1", "0x720", "1280", "1280x-2", "axb"] {
+            assert!(parse_scale(bad).is_err(), "{bad}");
+        }
+        assert_eq!(parse_fps("30"), Ok((30, 1)));
+        assert_eq!(parse_fps("30000/1001"), Ok((30000, 1001)));
+        for bad in ["0", "30/0", "x", "-30"] {
+            assert!(parse_fps(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn scaled_sizes_keep_the_aspect_ratio() {
+        assert_eq!(scaled_size((1920, 1080), (1280, -1)), (1280, 720));
+        assert_eq!(scaled_size((1920, 1080), (-1, 540)), (960, 540));
+        assert_eq!(scaled_size((1920, 1080), (1000, -1)), (1000, 563));
+        assert_eq!(scaled_size((1920, 1080), (1, -1)), (1, 1));
+        assert_eq!(scaled_size((1920, 1080), (640, 640)), (640, 640));
+    }
 }
