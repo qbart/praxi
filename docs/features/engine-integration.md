@@ -94,6 +94,7 @@ video.draw(&mut pass, praxi_wgpu::Rect::fit(width, height, target_w, target_h));
 | `Rect` | A pixel rectangle of the render target; `Rect::fit(w, h, target_w, target_h)` letterboxes. |
 | `VideoRenderer::new(device, target_format, player)` | Pipelines for `target_format` and one texture per video track of `player`. One renderer per player. |
 | `prepare(device, queue, player, opacity)` | Uploads the tracks whose frame changed and reconstructs the queued frames of `motion` tracks on the GPU; returns how many tracks changed. Sets the opacity (0 to 1) for the next draws. |
+| `set_gpu_timing(device, enabled)`, `gpu_times(device, queue)` | Profiling: GPU time of each motion pass from timestamp queries (needs `Features::TIMESTAMP_QUERY`; `gpu_times` waits for the GPU) ([motion-codec.md](motion-codec.md#gpu-timing)). |
 | `draw(pass, rect)` | Draws every track that has a frame into `rect`, in track order, each blended over what is already there (straight alpha times opacity). Sets the pass's viewport to `rect`. |
 | `draw_replace(pass, rect)` | Like `draw`, but track 0 replaces the target pixels, alpha included, for offscreen rendering such as screenshots. |
 

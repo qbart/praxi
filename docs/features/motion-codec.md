@@ -192,6 +192,40 @@ The encoder writes 16 slices by default (`--slices`): at 1080p that is 4-5 macro
 per slice, at no measurable cost in size on the bench input, and enough slices for slow
 and fast cores to balance.
 
+### Keyframe decode-ahead
+
+A 1080p keyframe codes most blocks and takes about three times as long to entropy-decode as
+a delta frame (1.05 ms against 0.33 ms on 8 threads). The player hides that by starting a
+keyframe on the worker threads before it is due:
+
+- `Decoder::decode_ahead(tag, payload) -> bool` reads a keyframe's header, tables and slice
+  sizes on the calling thread, queues its slices for the workers and returns without
+  waiting; the calling thread does not take any of them. It returns `false` and starts
+  nothing when the decoder has one thread or the header is invalid (the regular decode
+  then reports the error). A second `decode_ahead` cancels the first.
+- `Decoder::finish_ahead(tag, out) -> Option<Result>` collects it: the calling thread
+  decodes the slices no worker has started, waits for the rest and appends them to `out`
+  in order. The result is identical to `decode(true, payload, out)`. `None` when no
+  decode-ahead with `tag` is running.
+- The decode-ahead uses its own copy of what slices read (layout, tables, payload) and its
+  own slice outputs, swapped in by `finish_ahead`, so delta frames before the keyframe
+  decode normally while it runs (keyframes do not inherit tables). The calling thread of
+  such a delta decode only takes slices of its own frame from the queue.
+- `decode` of a keyframe and `set_threads` cancel a running decode-ahead: the calling
+  thread waits for its slices and discards them.
+
+In the player, after `advance` has decoded every due chunk, each `motion` track looks up
+its next keyframe in the index (the first keyframe entry of its stream after its latest
+frame). If that keyframe is due within the `dt` of this `advance` from the clock, which
+means the next `advance` of the same length will decode it, the player reads its payload
+and calls `decode_ahead` with the chunk offset as tag. When the chunk becomes due, the
+player calls `finish_ahead` instead of reading and decoding the payload again. The frame
+before the keyframe pays for reading the payload and its header; the keyframe's frame pays
+for slices not yet done (normally none) and appending, about 0.2 ms.
+
+There is no decode-ahead while seeking (`seek` decodes synchronously, as before), with one
+decoder thread, or across the loop point (the first keyframe of the next pass).
+
 ### Coded frames
 
 `praxi_format::motion::CodedFrame`, all `u32` words so it uploads as is:
@@ -310,14 +344,29 @@ when there is none.
 Upload sizes at BC7 quality on the bench input: a 1080p keyframe has 1.3 million nonzero
 levels, 5.6 MB of lists; delta frames about 1 MB.
 
+#### GPU timing
+
+For profiling, `VideoRenderer` measures the GPU time of the motion passes with timestamp
+queries:
+
+- `set_gpu_timing(device, enabled) -> bool` turns it on; it returns `false` (and stays off)
+  when the device was not created with `Features::TIMESTAMP_QUERY`. While on, each frame's
+  prediction, residual and color work run in separate compute passes with timestamp
+  writes at their start and end; off, they share one pass as described above.
+- `gpu_times(device, queue) -> Vec<MotionGpuTime>` returns the times of the frames
+  reconstructed since the last call, in order, and waits for the GPU to finish them (a
+  profiling call, not for every game frame). `MotionGpuTime { track, keyframe, predict,
+  residual, color: Option<Duration> }`, `color` only for the frame that was converted.
+- Up to 64 frames are timed between two calls; later frames run untimed.
+
 ## Encoder
 
 `praxi encode --variant motion` with:
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--qp <N>` | 22 (*pinned in phase 1*) | Constant quantizer, 0-51; lower is larger and better |
-| `--psnr <DB>` | | Instead of a constant `qp`, the largest `qp` per frame whose RGB PSNR reaches `DB`. `--psnr match` uses the PSNR of a BC7 encode of the same frame, for "smaller than BC7, never worse". |
+| `--qp <N>` | 16 | Constant quantizer, 0-51; lower is larger and better. 16 is about BC7's PSNR on the bench input (41.1 dB against 41.0 dB, 8.9 MB/s against 55.6 MB/s); 22 gives 37 dB at a third of that size. |
+| `--psnr <DB>` | | *Not implemented yet.* Instead of a constant `qp`, the largest `qp` per frame whose RGB PSNR reaches `DB`. `--psnr match` uses the PSNR of a BC7 encode of the same frame, for "smaller than BC7, never worse". |
 | `--chroma <C>` | `420` | `420` or `444` |
 | `--slices <N>` | 16 | Slices per frame |
 | `--keyint`, `--quality` | | As for block variants; `--quality` sets the motion search effort |
@@ -338,7 +387,8 @@ levels, 5.6 MB of lists; delta frames about 1 MB.
 - P frames depend on the previous reconstruction, so frames inside a keyframe interval are
   encoded one after another, macroblock rows in parallel; keyframe intervals are encoded in
   parallel with each other.
-- Library: `VariantConfig::motion()` with `qp`, `psnr`, `chroma` and `slices` setters.
+- Library: `VariantConfig::motion()` (`qp` 16, 4:2:0, 16 slices) with `qp`, `chroma` and
+  `slices` setters.
 
 ## Tools
 
@@ -351,8 +401,10 @@ levels, 5.6 MB of lists; delta frames about 1 MB.
   motion_timing -- FILE`): plays the motion track of `FILE` through the player and the GPU
   decoder, waiting for the GPU after every frame, and prints the time of `prepare` plus
   that wait for keyframes and delta frames (mean, median, p95, max over two passes after a
-  warm-up pass). `WGPU_ADAPTER_NAME` selects the adapter. It measures wall time, an upper
-  bound of the GPU time.
+  warm-up pass). `WGPU_ADAPTER_NAME` selects the adapter. Wall time is an upper bound of
+  the GPU time: it includes uploads, submission and the wait. When the adapter has
+  `TIMESTAMP_QUERY`, it also prints the GPU time of each pass (prediction, residual,
+  color) for keyframes and delta frames, from [GPU timing](#gpu-timing).
 
 ## Format changes
 
@@ -445,9 +497,6 @@ of copying into the output on keyframes.
 ## Open questions
 
 - 4x4 transforms and an in-loop deblocking filter at lower bitrates.
-- Default `qp` and the `qp` that matches BC7 PSNR on the bench input.
-- Keyframes over 1 ms of entropy decoding: the player could decode a keyframe a frame
-  ahead so that its extra time does not land in one game frame.
 
 Tried in phase 1 and dropped, each under 1% on the bench input: rate-distortion optimized
 quantization, bit estimates from the previous frame's Huffman tables, a lower keyframe
