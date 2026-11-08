@@ -54,6 +54,7 @@ The byte layout is in [PRAXI.md](../spec/PRAXI.md#cue-payload).
   [encoder.md](encoder.md).
 - Encoder library: any number of cue streams, typed field values.
 - Cue sheets: `praxi cues export` and `praxi cues import` rewrite the cue streams of an
-  existing file without re-encoding video; `praxi cues srt` converts subtitles to cues
+  existing file without re-encoding video, `praxi cues add` and `praxi cues remove` change
+  cues without a sheet, and `praxi cues srt` converts subtitles to cues
   ([cue-editing.md](cue-editing.md)). The viewer previews sheets live
   ([cue-preview.md](cue-preview.md)).

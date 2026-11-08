@@ -50,6 +50,18 @@ The format is specified in [CUESHEET.md](../spec/CUESHEET.md).
 | `praxi cues export FILE [-o SHEET]` | Writes the cues of every cue stream of `FILE` as a cue sheet, to `SHEET` or standard output. Streams and cues are in file order. |
 | `praxi cues import FILE SHEET... -o OUT` | Writes `OUT`: `FILE` with its cue streams replaced by the streams of the sheets, in sheet order then stream order. `OUT` may be `FILE`: the result goes to a temporary file next to it, renamed over it when complete. |
 | `praxi cues srt SRT [-o SHEET]` | Converts SubRip subtitles to a cue sheet with one stream. |
+| `praxi cues add FILE --cue CUE... [--stream NAME] [-o OUT]` | Adds cues to the stream `NAME` (default `cues`) without a sheet. `CUE` is the encoder's syntax, `TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]` ([encoder.md](encoder.md)), field values are strings. If several streams have that name the first gets the cues; if none has it, a new stream is added after the others. |
+| `praxi cues remove FILE [--stream NAME] [--type TYPE] [--from T] [--to T] [-o OUT]` | Removes the cues matching every filter given: in a stream named `NAME`, of type `TYPE`, starting at `T` seconds or later (`--from`), starting before `T` (`--to`). At least one filter is required. Streams left without cues are removed. |
+
+`cues add` and `cues remove` write `OUT`, by default `FILE` itself, through the same
+temporary file as `cues import`, and print how many cues they added or removed. They
+follow the [import rules](#import-rules), so a file edited with them is the same as one
+imported from an edited sheet:
+
+```sh
+praxi cues add intro.praxi --cue 2.5=explosion:power=0.8 --cue "4+2.5=light.flash:color=red"
+praxi cues remove intro.praxi --type explosion --from 2 --to 3
+```
 
 `cues srt` options:
 
