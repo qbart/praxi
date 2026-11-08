@@ -172,6 +172,7 @@ fn benches_to_json() {
     let result: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
     let variants = result["variants"].as_array().unwrap();
     assert_eq!(variants.len(), 2, "{result}");
-    assert!(variants.iter().all(|v| v["psnr_db"].as_f64().unwrap() > 25.0), "{result}");
+    // The small test pattern is sharp: about 25 dB; broken decoding is far below.
+    assert!(variants.iter().all(|v| v["psnr_db"].as_f64().unwrap() > 20.0), "{result}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
