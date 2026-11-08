@@ -2,13 +2,22 @@ SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
-.PHONY: build test samples bench bench-baseline examples
+.PHONY: build test test-strict check samples bench bench-baseline examples
 
 build:
 	cargo build --release
 
 test:
 	cargo test --workspace
+
+# Tests that would skip without ffmpeg or a GPU fail instead (docs/features/testing.md).
+test-strict:
+	PRAXI_TEST_STRICT=1 cargo test --workspace
+
+check:
+	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy -p praxi-viewer -p praxi-editor --no-default-features --all-targets -- -D warnings
+	$(MAKE) test
 
 samples: $(BENCH_INPUT)
 
