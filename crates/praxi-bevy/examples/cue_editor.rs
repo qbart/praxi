@@ -338,9 +338,10 @@ fn timeline(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
             let r = egui::Rect::from_min_max(egui::pos2(x0, lane.top() + 12.0), egui::pos2(x1, lane.bottom() - 2.0));
             let selected = editor.selected == Selection::Cue(s, c);
             let stroke = if selected { egui::Stroke::new(2.0, visuals.strong_text_color()) } else { egui::Stroke::NONE };
-            let fill = if cue.cue.duration > 0 { lane_color.gamma_multiply(0.55) } else { lane_color };
-            painter.rect(r, 2.0, fill, stroke, egui::StrokeKind::Inside);
-            painter.text(r.left_top() + egui::vec2(2.0, 0.0), egui::Align2::LEFT_TOP, &cue.cue.kind, egui::FontId::proportional(10.0), visuals.strong_text_color());
+            painter.rect(r, 2.0, lane_color, stroke, egui::StrokeKind::Inside);
+            // Dark labels on bars; ticks are too thin, so their labels sit on the lane.
+            let text = if cue.cue.duration > 0 { egui::Color32::from_gray(24) } else { visuals.strong_text_color() };
+            painter.text(r.left_top() + egui::vec2(2.0, 0.0), egui::Align2::LEFT_TOP, &cue.cue.kind, egui::FontId::proportional(10.0), text);
             cue_rects.push((r, s, c));
         }
     }

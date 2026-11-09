@@ -77,8 +77,9 @@ the viewer.
   | 8 | Turquoise | `#35B897` |
   | 9 | Cyan | `#4CBFD0` |
 
-  Diamonds are filled with the colour, bars with the colour at 55% opacity; the selected
-  cue gets an outline in the text colour. A selected lane is tinted with its colour.
+  Bars and diamonds are filled with the colour at full opacity, and bar labels are dark
+  grey (`#181818`) to stay readable on it; the selected cue gets an outline in the text
+  colour. A selected lane is tinted with its colour.
 
 ### Timeline input
 

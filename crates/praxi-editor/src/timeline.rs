@@ -80,6 +80,9 @@ const LANE_COLORS: [Color32; 9] = [
     Color32::from_rgb(0x4C, 0xBF, 0xD0),
 ];
 
+/// Labels on bars, dark against the light lane colours.
+const BAR_TEXT: Color32 = Color32::from_gray(24);
+
 /// A lane colour per stream.
 fn stream_color(i: usize) -> Color32 {
     LANE_COLORS[i % LANE_COLORS.len()]
@@ -248,13 +251,13 @@ impl Timeline {
                 let cy = lane.center().y;
                 let (body, grip) = if duration > 0 {
                     let r = Rect::from_min_max(Pos2::new(x0, lane.top() + 3.0), Pos2::new(x1.max(x0 + GRIP_W), lane.bottom() - 3.0));
-                    painter.rect(r, 3.0, color.gamma_multiply(0.55), stroke, egui::StrokeKind::Inside);
+                    painter.rect(r, 3.0, color, stroke, egui::StrokeKind::Inside);
                     painter.with_clip_rect(r.intersect(area).shrink(2.0)).text(
                         Pos2::new(r.left().max(area.left()) + 4.0, cy),
                         Align2::LEFT_CENTER,
                         label(c),
                         FontId::proportional(12.0),
-                        text_color,
+                        BAR_TEXT,
                     );
                     (r, Some(Rect::from_min_max(Pos2::new(r.right() - GRIP_W, r.top()), r.max)))
                 } else {
