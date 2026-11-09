@@ -58,11 +58,15 @@ struct EncodeArgs {
     /// Audio variant in an ffmpeg channel layout, e.g. stereo or 5.1 (repeatable; default: source layout).
     #[arg(long = "audio-layout")]
     audio_layouts: Vec<String>,
-    /// Resample audio to this rate in Hz.
+    /// Resample audio to this rate in Hz (default: the source rate; for opus 48000 unless
+    /// the source rate is an Opus rate).
     #[arg(long)]
     audio_rate: Option<u32>,
     #[arg(long, value_enum, default_value_t = SampleFormatArg::S16)]
     audio_format: SampleFormatArg,
+    /// Opus bitrate of each audio variant in kbps (default: 64 per channel).
+    #[arg(long)]
+    audio_bitrate: Option<u32>,
     /// Audio track name.
     #[arg(long, default_value = "main")]
     audio_name: String,
@@ -121,6 +125,7 @@ enum SampleFormatArg {
     S16,
     F32,
     Adpcm,
+    Opus,
 }
 
 #[derive(clap::Args)]
@@ -404,7 +409,7 @@ fn layout_mask(name: &str) -> Option<(u32, u16)> {
 }
 
 /// Starts an ffmpeg process decoding the first audio stream to `f32le` on its stdout.
-fn spawn_audio(args: &EncodeArgs, layout: Option<&str>, seconds: Option<f64>) -> AnyResult<Child> {
+fn spawn_audio(args: &EncodeArgs, layout: Option<&str>, seconds: Option<f64>, resample: Option<u32>) -> AnyResult<Child> {
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-v", "error", "-nostdin", "-i"]).arg(&args.input).args(["-map", "0:a:0", "-vn"]);
     if let Some(s) = seconds {
@@ -413,7 +418,7 @@ fn spawn_audio(args: &EncodeArgs, layout: Option<&str>, seconds: Option<f64>) ->
     if let Some(l) = layout {
         cmd.args(["-af", &format!("aformat=channel_layouts={l}")]);
     }
-    if let Some(r) = args.audio_rate {
+    if let Some(r) = resample {
         cmd.args(["-ar", &r.to_string()]);
     }
     let child = cmd
@@ -506,8 +511,18 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
             SampleFormatArg::S16 => SampleFormat::S16,
             SampleFormatArg::F32 => SampleFormat::F32,
             SampleFormatArg::Adpcm => SampleFormat::Adpcm,
+            SampleFormatArg::Opus => SampleFormat::Opus,
         };
-        let rate = args.audio_rate.unwrap_or(a.sample_rate);
+        let opus_rate = |r: u32| [8000, 12000, 16000, 24000, 48000].contains(&r);
+        let rate = match args.audio_rate {
+            Some(r) => r,
+            None if format == SampleFormat::Opus && !opus_rate(a.sample_rate) => 48000,
+            None => a.sample_rate,
+        };
+        if format == SampleFormat::Opus && !opus_rate(rate) {
+            return Err(format!("--audio-rate {rate}: opus takes 8000, 12000, 16000, 24000 or 48000").into());
+        }
+        let resample = (rate != a.sample_rate).then_some(rate);
         let variants: Vec<(Option<&str>, u32, u16)> = if args.audio_layouts.is_empty() {
             let mask = layout_mask(&a.layout).filter(|(_, n)| *n == a.channels).map_or(0, |(m, _)| m);
             vec![(None, mask, a.channels)]
@@ -520,12 +535,15 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
             v
         };
         for (layout, mask, channels) in variants {
-            let mut child = spawn_audio(&args, layout, seconds)?;
+            let mut child = spawn_audio(&args, layout, seconds, resample)?;
             let stdout = child.stdout.take().ok_or("no ffmpeg stdout")?;
             children.push(child);
-            let track = AudioTrackConfig::from_reader(args.audio_name.clone(), rate, channels, stdout)
+            let mut track = AudioTrackConfig::from_reader(args.audio_name.clone(), rate, channels, stdout)
                 .channel_mask(mask)
                 .format(format);
+            if let Some(kbps) = args.audio_bitrate {
+                track = track.bitrate(kbps.saturating_mul(1000));
+            }
             config = config.audio(track);
             eprintln!("audio: {rate} Hz, {channels} channels {}", layout.unwrap_or(&a.layout));
         }

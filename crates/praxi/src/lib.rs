@@ -8,7 +8,7 @@ mod audio;
 
 use audio::us_to_frames;
 use praxi_format::motion::{CodedFrame, Decoder, MAX_AHEAD};
-use praxi_format::{CHUNK_HEADER_SIZE, ChunkHeader, Cue, IndexEntry, Reader, StreamInfo, StreamParams, TimeBase};
+use praxi_format::{AudioDecoder, CHUNK_HEADER_SIZE, ChunkHeader, Cue, IndexEntry, Reader, StreamInfo, StreamParams, TimeBase};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -189,6 +189,7 @@ struct AudioTrack {
     base_frame: u64,
     /// Chunks before this offset are ignored (set by seeking).
     resume_offset: u64,
+    decoder: AudioDecoder,
 }
 
 impl AudioTrack {
@@ -461,12 +462,14 @@ impl<R: Read + Seek> Player<R> {
             let stream = select_audio_variant(&streams, members, caps.max_audio_channels);
             let params = streams[stream as usize].audio_params().expect("selected stream is audio").clone();
             routes[stream as usize] = Route::Audio(audio.len());
+            let decoder = AudioDecoder::new(&params).map_err(|e| Error::Corrupt(format!("audio stream {stream}: {e}")))?;
             audio.push(AudioTrack {
                 output: AudioOutput::new(&params, audio_tolerance_us),
                 info: AudioTrackInfo { stream, group, params },
                 enabled: true,
                 base_frame: 0,
                 resume_offset: 0,
+                decoder,
             });
         }
         let mut cue_streams = Vec::new();
@@ -538,6 +541,7 @@ impl<R: Read + Seek> Player<R> {
             a.enabled = enabled;
             let at = a.base_frame + a.frames(clock_us);
             a.output.lock().reset(at);
+            a.decoder.reset();
         }
         self.sync_audio();
     }
@@ -725,7 +729,12 @@ impl<R: Read + Seek> Player<R> {
         for a in &mut self.audio {
             let s = &self.reader.streams()[a.info.stream as usize];
             let entries = self.index.iter().filter(|e| e.stream == a.info.stream);
-            let before = entries.clone().rev().find(|e| s.time_base.to_micros(e.pts) <= target);
+            // Opus decoders converge over a pre-roll before the target; its frames are dropped.
+            let from = match a.info.params.format {
+                SampleFormat::Opus => target.saturating_sub(format::opus::PREROLL_US),
+                _ => target,
+            };
+            let before = entries.clone().rev().find(|e| s.time_base.to_micros(e.pts) <= from);
             a.resume_offset = match before.or_else(|| entries.clone().next()) {
                 Some(entry) => entry.offset,
                 None => u64::MAX,
@@ -733,6 +742,7 @@ impl<R: Read + Seek> Player<R> {
             start = start.min(a.resume_offset);
             let at = a.base_frame + a.frames(target);
             a.output.lock().reset(at);
+            a.decoder.reset();
         }
         if start == u64::MAX {
             start = self.reader.data_start();
@@ -994,8 +1004,8 @@ impl<R: Read + Seek> Player<R> {
     /// Reads the audio chunk `chunk` of track `ai` and queues it at output frame `at`.
     fn queue_audio(&mut self, ai: usize, chunk: &ChunkHeader, at: u64) -> Result<()> {
         self.reader.read_payload(chunk, &mut self.payload)?;
-        let a = &self.audio[ai];
-        if let Err(e) = a.info.params.decode_payload(&self.payload, &mut self.samples) {
+        let a = &mut self.audio[ai];
+        if let Err(e) = a.decoder.decode(chunk.pts, &self.payload, &mut self.samples) {
             return corrupt(format!("audio chunk at {}: {e}", chunk.offset));
         }
         a.output.lock().push(at, &self.samples);

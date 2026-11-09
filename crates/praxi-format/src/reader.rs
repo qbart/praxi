@@ -246,6 +246,9 @@ fn decode_stream(i: usize, b: &[u8]) -> Result<StreamInfo> {
             if a.channel_mask != 0 && a.channel_mask.count_ones() != a.channels as u32 {
                 return corrupt(format!("stream {i}: channel mask does not match {} channels", a.channels));
             }
+            if let Err(e) = a.check_format() {
+                return corrupt(format!("stream {i}: {e}"));
+            }
             StreamParams::Audio(a)
         }
         3 => StreamParams::Cues(CueParams {

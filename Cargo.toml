@@ -13,6 +13,8 @@ praxi-encoder = { path = "crates/praxi-encoder" }
 praxi-wgpu = { path = "crates/praxi-wgpu" }
 praxi-audio = { path = "crates/praxi-audio" }
 lz4_flex = "0.14"
+# Opus in pure Rust; the encoder adds the "analysis" feature.
+opus1 = { version = "0.3.0", default-features = false, features = ["std", "heap"] }
 ktx-rs = { version = "4.4.3", default-features = false }
 clap = { version = "4.6", features = ["derive"] }
 wgpu = "30"

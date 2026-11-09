@@ -1,6 +1,6 @@
 //! Peaks of an audio stream for the timeline.
 
-use praxi::format::Reader;
+use praxi::format::{AudioDecoder, Reader};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -22,13 +22,14 @@ impl Waveform {
         let info = reader.streams()[stream as usize].clone();
         let params = info.audio_params().ok_or("not an audio stream")?.clone();
         let channels = params.channels as usize;
+        let mut decoder = AudioDecoder::new(&params)?;
         let (mut payload, mut samples) = (Vec::new(), Vec::new());
         let mut peaks: Vec<(f32, f32)> = Vec::new();
         let index = reader.read_index().map_err(|e| e.to_string())?;
         for entry in index.iter().filter(|e| e.stream == stream) {
             let chunk = reader.chunk_at(entry.offset).map_err(|e| e.to_string())?;
             reader.read_payload(&chunk, &mut payload).map_err(|e| e.to_string())?;
-            params.decode_payload(&payload, &mut samples)?;
+            decoder.decode(chunk.pts, &payload, &mut samples)?;
             let start_us = info.time_base.to_micros(chunk.pts);
             for (i, frame) in samples.chunks_exact(channels).enumerate() {
                 let t = start_us + i as u64 * 1_000_000 / params.sample_rate as u64;

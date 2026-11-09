@@ -47,8 +47,11 @@ library and no ffmpeg are involved. The byte layout is in
   with the source frame for frame and has its exact length.
 - **Decoder state**: each chunk continues the decoder state of the one before it. The
   player keeps one decoder per track and resets it where playback jumps: after a seek it
-  starts at least 80 ms before the target (pre-roll) and drops what it decodes before
-  the target, so the first samples heard are already correct. Turning a track on mid-way
+  starts at least 200 ms before the target (pre-roll) and drops what it decodes before
+  the target. A fresh decoder's difference from one that ran from the start falls by
+  about 3 dB per 10 ms on a steady tone (19 dB after 86 ms, 39 dB after 156 ms), so the
+  RFC's minimum of 80 ms is not enough for the first samples to be right; after 200 ms
+  they are within 50 dB or more. Turning a track on mid-way
   starts a fresh decoder at the next chunk, whose first tens of milliseconds may sound
   slightly off while it converges. Looping starts a second decoder for the next pass, so
   the end of one pass and the start of the next both decode correctly.

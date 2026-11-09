@@ -10,5 +10,6 @@ cue-sheet = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 lz4_flex.workspace = true
+opus1.workspace = true
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

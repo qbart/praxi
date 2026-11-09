@@ -509,3 +509,103 @@ fn cues_of_motion_files_are_replaced_without_touching_video() {
     assert_eq!(cues, [("first", Duration::ZERO), ("new", Duration::from_millis(250))]);
     assert!(events.iter().any(|e| matches!(e, Event::CueEnd { .. })), "the cue with a duration ends");
 }
+
+/// 48 kHz stereo: 440 Hz left, 660 Hz right.
+fn stereo_48k(seconds: f64) -> Vec<f32> {
+    let frames = (48000.0 * seconds) as usize;
+    (0..frames)
+        .flat_map(|i| {
+            let t = i as f32 / 48000.0;
+            [0.5 * (std::f32::consts::TAU * 440.0 * t).sin(), 0.3 * (std::f32::consts::TAU * 660.0 * t).sin()]
+        })
+        .collect()
+}
+
+fn snr(got: &[f32], want: &[f32]) -> f32 {
+    assert_eq!(got.len(), want.len());
+    let signal: f32 = want.iter().map(|s| s * s).sum();
+    let noise: f32 = got.iter().zip(want).map(|(a, b)| (a - b) * (a - b)).sum();
+    10.0 * (signal / noise.max(1e-20)).log10()
+}
+
+/// Plays track 0 of `file` from `from`, reading everything decoded at each 50 ms step,
+/// for `steps` steps or to the end.
+fn play_48k(file: Vec<u8>, from: Duration, looping: bool, steps: usize) -> Vec<f32> {
+    let mut p = Player::open(Cursor::new(file), &Capabilities::new([TextureFormat::Bc7])).unwrap();
+    let out = p.audio_output(0).unwrap();
+    p.set_looping(looping);
+    p.seek(from).unwrap();
+    p.play().unwrap();
+    let mut heard = Vec::new();
+    let mut buf = vec![0.0; 96000];
+    for _ in 0..steps {
+        if p.is_finished() {
+            break;
+        }
+        let n = out.read(&mut buf);
+        heard.extend_from_slice(&buf[..n]);
+        p.advance(Duration::from_millis(50)).unwrap();
+    }
+    heard
+}
+
+fn opus_file(seconds: f64) -> Vec<u8> {
+    let track = AudioTrackConfig::from_samples("music", 48000, 2, stereo_48k(seconds)).channel_mask(0x3).format(SampleFormat::Opus);
+    encode(config().audio(track)).0
+}
+
+#[test]
+fn encodes_opus_audio() {
+    let tracks = config()
+        .audio(AudioTrackConfig::from_samples("music", 48000, 2, stereo_48k(1.0)).channel_mask(0x3).format(SampleFormat::Opus))
+        .audio(AudioTrackConfig::from_samples("voice", 16000, 1, vec![0.25; 16000 / 3]).format(SampleFormat::Opus).bitrate(24000));
+    let (file, stats) = encode(tracks);
+    assert_eq!(stats.duration_us, 1_000_000);
+    let audio: Vec<_> = stats.audio.iter().map(|a| (a.channels, a.frames)).collect();
+    assert_eq!(audio, [(2, 48000), (1, 5333)]);
+    // 128 kbps for 1 s, with the last chunk holding the encoder's delay.
+    assert_eq!(stats.audio[0].chunks, 11);
+    assert!((14_000..20_000).contains(&stats.audio[0].bytes), "{} bytes", stats.audio[0].bytes);
+
+    let r = Reader::new(Cursor::new(file.clone())).unwrap();
+    assert_eq!(r.streams()[2].audio_params().unwrap().format, SampleFormat::Opus);
+    let heard = play_48k(file.clone(), Duration::ZERO, false, 100);
+    let source = stereo_48k(1.0);
+    assert_eq!(heard.len(), source.len(), "exact length: the encoder delay is dropped");
+    // Lined up with the source frame for frame; the first packet starts from silence.
+    let s = snr(&heard[960 * 2..], &source[960 * 2..]);
+    assert!(s > 20.0, "SNR {s} dB");
+    let (_, heard) = play_audio(file, Capabilities::new([TextureFormat::Bc7]));
+    assert_eq!(heard[1].len(), 5333);
+
+    let bad = AudioTrackConfig::from_samples("a", 44100, 2, vec![0.0; 100]).format(SampleFormat::Opus);
+    assert!(Encoder::new(Cursor::new(Vec::new()), config().audio(bad)).is_err(), "44.1 kHz is not an Opus rate");
+}
+
+#[test]
+fn opus_seeks_with_preroll() {
+    let file = opus_file(1.0);
+    let straight = play_48k(file.clone(), Duration::ZERO, false, 100);
+    for at_ms in [0, 130, 550, 900] {
+        let heard = play_48k(file.clone(), Duration::from_millis(at_ms), false, 100);
+        let from = at_ms as usize * 48 * 2;
+        assert_eq!(heard.len(), straight.len() - from, "seek to {at_ms} ms");
+        // The pre-roll makes the first samples after the seek match a decode from the start.
+        let s = snr(&heard[..9600], &straight[from..from + 9600]);
+        assert!(s > 50.0, "seek to {at_ms} ms: SNR {s} dB against a straight decode");
+    }
+}
+
+#[test]
+fn opus_loops_seamlessly() {
+    let file = opus_file(1.0);
+    let once = play_48k(file.clone(), Duration::ZERO, false, 100);
+    let heard = play_48k(file, Duration::ZERO, true, 40);
+    let pass = once.len();
+    assert!(heard.len() > pass + 9600);
+    // Both sides of the loop point decode as in a single pass.
+    let s = snr(&heard[pass - 9600..pass], &once[pass - 9600..]);
+    assert!(s > 60.0, "end of the first pass: SNR {s} dB");
+    let s = snr(&heard[pass..pass + 9600], &once[..9600]);
+    assert!(s > 60.0, "start of the second pass: SNR {s} dB");
+}

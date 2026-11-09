@@ -7,6 +7,7 @@ edition.workspace = true
 [dependencies]
 praxi-format.workspace = true
 ktx-rs.workspace = true
+opus1 = { workspace = true, features = ["analysis"] }
 
 [dev-dependencies]
 praxi.workspace = true

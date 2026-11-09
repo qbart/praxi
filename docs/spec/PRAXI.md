@@ -488,9 +488,10 @@ output, may slightly exceed `[-1, 1]`.
 **Decoder state**: the decoder starts fresh (newly created) for the stream's first chunk,
 and each later chunk continues the state left by the chunk before it. A reader that starts
 elsewhere, after a seek or when a track is turned on mid-way, starts a fresh decoder at an
-earlier chunk and discards what it decodes before the target time: at least 80 ms of
-pre-roll (RFC 7845, section 4.6) makes the output converge to that of a decoder that ran
-from the start. See [Seeking](#seeking).
+earlier chunk and discards what it decodes before the target time. RFC 7845 (section 4.6)
+asks for at least 80 ms of this pre-roll; the output then converges to that of a decoder
+that ran from the start, its difference falling by about 3 dB per 10 ms on steady tones.
+praxi readers use 200 ms. See [Seeking](#seeking).
 
 **Layout**: the multistream layout follows from `channels` and `channel_mask`, so it is not
 stored. These speaker pairs form stereo (coupled) streams when both speakers are in the
@@ -583,7 +584,7 @@ entry on, and ignore earlier chunks of streams whose entry comes later. Audio fr
 `t` are dropped. Chunks are decoded up to decode time `t`, so audio is buffered up to
 `t + preload`.
 
-An `opus` stream takes the last entry with time at or before `t - 80 ms` instead (or its
+An `opus` stream takes the last entry with time at or before `t - 200 ms` instead (or its
 first entry), starts a fresh decoder there and drops the frames before `t`
 ([Opus payload](#opus-payload)).
 

@@ -3789,6 +3789,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "opus1"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8371789de09e00d6805166461224f024848c1fd155c6df28da8c19eebcc3650d"
+
+[[package]]
 name = "orbclient"
 version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4055,6 +4061,7 @@ name = "praxi-encoder"
 version = "0.1.0"
 dependencies = [
  "ktx-rs",
+ "opus1",
  "praxi",
  "praxi-format",
 ]
@@ -4064,6 +4071,7 @@ name = "praxi-format"
 version = "0.1.0"
 dependencies = [
  "lz4_flex",
+ "opus1",
  "serde",
  "serde_json",
 ]

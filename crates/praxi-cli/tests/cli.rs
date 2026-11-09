@@ -118,6 +118,17 @@ fn encodes_inspects_and_edits_cues() {
     assert_eq!(s.video, [(TextureFormat::Bc1, 64, 48, 6)]);
     assert!((s.audio[0] - 0.4).abs() < 0.05, "audio lasts {} s", s.audio[0]);
 
+    // Opus: stereo and a mono variant at a lower bitrate, exact length.
+    let opus = dir.join("opus.praxi");
+    praxi(&[
+        "encode", input_s, "-o", opus.to_str().unwrap(), "--variant", "bc1", "--audio-format", "opus", "--audio-layout",
+        "stereo", "--audio-layout", "mono", "--audio-bitrate", "32",
+    ]);
+    let s = summary(&opus);
+    assert_eq!(s.audio, [1.0, 1.0], "opus keeps the exact length");
+    let info = praxi(&["info", opus.to_str().unwrap()]);
+    assert!(info.contains("opus"), "{info}");
+
     let info = praxi(&["info", file_s]);
     assert!(info.contains("BC1 32x24"), "{info}");
     assert!(info.contains("motion 32x24"), "{info}");

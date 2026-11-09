@@ -57,6 +57,9 @@ impl<W: Write + Seek> Writer<W> {
                 if a.channel_mask != 0 && a.channel_mask.count_ones() != a.channels as u32 {
                     return Err(Error::Invalid(format!("stream {i}: channel mask does not match {} channels", a.channels)));
                 }
+                if let Err(e) = a.check_format() {
+                    return Err(Error::Invalid(format!("stream {i}: {e}")));
+                }
                 if a.name.len() > AUDIO_NAME_SIZE || a.name.contains('\0') {
                     return Err(Error::Invalid(format!("stream {i}: audio stream name too long or has a zero byte")));
                 }

@@ -3,6 +3,7 @@
 
 mod decode;
 mod motion;
+mod opus;
 
 pub use decode::decode_frame;
 pub use motion::MotionStats;
@@ -207,6 +208,8 @@ pub struct AudioTrackConfig {
     /// WAVE speaker bits, `0` for unspecified.
     pub channel_mask: u32,
     pub format: SampleFormat,
+    /// Opus bitrate of the whole track in bits per second; `None` is 64000 per channel.
+    pub bitrate: Option<u32>,
     /// `None` shares the group of earlier tracks with the same name, or takes a new one.
     pub group: Option<u16>,
     source: Box<dyn Read + Send>,
@@ -232,6 +235,7 @@ impl AudioTrackConfig {
             channels,
             channel_mask: 0,
             format: SampleFormat::S16,
+            bitrate: None,
             group: None,
             source: Box::new(reader),
         }
@@ -251,6 +255,12 @@ impl AudioTrackConfig {
         self.group = Some(group);
         self
     }
+
+    /// The Opus bitrate of the whole track, in bits per second; other formats ignore it.
+    pub fn bitrate(mut self, bits_per_second: u32) -> AudioTrackConfig {
+        self.bitrate = Some(bits_per_second);
+        self
+    }
 }
 
 impl fmt::Debug for AudioTrackConfig {
@@ -261,6 +271,7 @@ impl fmt::Debug for AudioTrackConfig {
             .field("channels", &self.channels)
             .field("channel_mask", &self.channel_mask)
             .field("format", &self.format)
+            .field("bitrate", &self.bitrate)
             .field("group", &self.group)
             .finish_non_exhaustive()
     }
@@ -424,6 +435,7 @@ struct AudioTrack {
     /// Rounded samples, for ADPCM.
     pcm: Vec<i16>,
     adpcm: adpcm::Encoder,
+    opus: Option<opus::Encoder>,
     payload: Vec<u8>,
     stats: AudioStats,
 }
@@ -562,7 +574,7 @@ impl<W: Write + Seek> Encoder<W> {
             if a.channel_mask != 0 && a.channel_mask.count_ones() != a.channels as u32 {
                 return Err(Error::Config(format!("audio track {:?}: channel mask does not match {} channels", a.name, a.channels)));
             }
-            let chunk_frames = (c.audio_chunk.as_micros() * a.sample_rate as u128 / 1_000_000) as usize;
+            let mut chunk_frames = (c.audio_chunk.as_micros() * a.sample_rate as u128 / 1_000_000) as usize;
             if chunk_frames == 0 {
                 return Err(Error::Config("audio chunk is shorter than one sample frame".into()));
             }
@@ -586,6 +598,16 @@ impl<W: Write + Seek> Encoder<W> {
                 preload_us: preload_us as u32,
                 name: a.name.clone(),
             };
+            let opus = match a.format {
+                SampleFormat::Opus => {
+                    let bitrate = a.bitrate.unwrap_or(opus::DEFAULT_BITRATE_PER_CHANNEL * a.channels as u32);
+                    let e = opus::Encoder::new(&params, bitrate).map_err(|e| Error::Config(format!("audio track {:?}: {e}", a.name)))?;
+                    // Chunks hold whole packets.
+                    chunk_frames = chunk_frames.div_ceil(e.packet_frames()) * e.packet_frames();
+                    Some(e)
+                }
+                _ => None,
+            };
             audio.push(AudioTrack {
                 stream: streams.len() as u16,
                 channels: a.channels as usize,
@@ -597,6 +619,7 @@ impl<W: Write + Seek> Encoder<W> {
                 input: Vec::new(),
                 pcm: Vec::new(),
                 adpcm: adpcm::Encoder::new(a.channels as usize),
+                opus,
                 payload: Vec::new(),
                 stats: AudioStats { name: a.name, channels: a.channels, ..Default::default() },
             });
@@ -726,6 +749,20 @@ impl<W: Write + Seek> Encoder<W> {
         if frames < a.chunk_frames {
             a.done = true;
         }
+        if let Some(enc) = &mut a.opus {
+            let samples: Vec<f32> = a.input[..frames * frame_in].as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
+            let chunk = enc.chunk(&samples, a.done, &mut a.payload).map_err(|e| Error::Encode(format!("audio track {:?}: {e}", a.stats.name)))?;
+            // At the end, the frame after the source's last, which ends the track.
+            a.next_pts = if a.done { enc.source_frames() } else { enc.next_pts() };
+            if let Some((pts, kept)) = chunk {
+                let before = self.writer.bytes_written();
+                self.writer.write_audio(a.stream, pts, &a.payload)?;
+                a.stats.bytes += self.writer.bytes_written() - before;
+                a.stats.frames += kept;
+                a.stats.chunks += 1;
+            }
+            return Ok(());
+        }
         if frames == 0 {
             return Ok(());
         }
@@ -744,6 +781,7 @@ impl<W: Write + Seek> Encoder<W> {
                 a.pcm.extend(input.as_chunks::<4>().0.iter().map(to_s16));
                 a.adpcm.encode(&a.pcm, &mut a.payload);
             }
+            SampleFormat::Opus => unreachable!("encoded above"),
         }
         let before = self.writer.bytes_written();
         self.writer.write_audio(a.stream, a.next_pts, &a.payload)?;

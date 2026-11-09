@@ -6,6 +6,7 @@ mod cue;
 pub mod cue_sheet;
 mod huffman;
 pub mod motion;
+pub mod opus;
 mod planes;
 mod reader;
 mod remux;
@@ -22,7 +23,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 9;
+pub const VERSION_MINOR: u16 = 10;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;
@@ -266,6 +267,7 @@ pub enum SampleFormat {
     S16,
     F32,
     Adpcm,
+    Opus,
 }
 
 impl SampleFormat {
@@ -274,6 +276,7 @@ impl SampleFormat {
             SampleFormat::S16 => 1,
             SampleFormat::F32 => 2,
             SampleFormat::Adpcm => 3,
+            SampleFormat::Opus => 4,
         }
     }
 
@@ -282,16 +285,17 @@ impl SampleFormat {
             1 => Some(SampleFormat::S16),
             2 => Some(SampleFormat::F32),
             3 => Some(SampleFormat::Adpcm),
+            4 => Some(SampleFormat::Opus),
             _ => None,
         }
     }
 
-    /// Bytes per sample of the PCM formats, `None` for ADPCM.
+    /// Bytes per sample of the PCM formats, `None` for ADPCM and Opus.
     pub fn pcm_bytes(self) -> Option<usize> {
         match self {
             SampleFormat::S16 => Some(2),
             SampleFormat::F32 => Some(4),
-            SampleFormat::Adpcm => None,
+            SampleFormat::Adpcm | SampleFormat::Opus => None,
         }
     }
 
@@ -300,6 +304,7 @@ impl SampleFormat {
             SampleFormat::S16 => "s16",
             SampleFormat::F32 => "f32",
             SampleFormat::Adpcm => "adpcm",
+            SampleFormat::Opus => "opus",
         }
     }
 }
@@ -330,15 +335,35 @@ impl AudioParams {
     pub fn payload_frames(&self, payload: &[u8]) -> Option<u64> {
         let channels = self.channels as usize;
         let Some(sample_bytes) = self.format.pcm_bytes() else {
-            return adpcm::frames(payload, channels);
+            return match self.format {
+                SampleFormat::Opus => opus::frames(payload),
+                _ => adpcm::frames(payload, channels),
+            };
         };
         let frame_bytes = channels * sample_bytes;
         (!payload.is_empty() && payload.len().is_multiple_of(frame_bytes)).then(|| (payload.len() / frame_bytes) as u64)
     }
 
+    /// Format-specific limits: Opus needs an Opus rate and at most 255 channels.
+    pub fn check_format(&self) -> std::result::Result<(), String> {
+        if self.format == SampleFormat::Opus {
+            if opus::sample_rate(self.sample_rate).is_none() {
+                return Err(format!("{} Hz is not an Opus rate (8000, 12000, 16000, 24000 or 48000)", self.sample_rate));
+            }
+            if self.channels > 255 {
+                return Err(format!("opus takes at most 255 channels, not {}", self.channels));
+            }
+        }
+        Ok(())
+    }
+
     /// Decodes a decompressed chunk payload into `out`: interleaved samples in `[-1, 1]`
-    /// (nominally, for `f32`).
+    /// (nominally, for `f32`). Opus chunks depend on the chunks before them and fail here;
+    /// decode them with an [`AudioDecoder`].
     pub fn decode_payload(&self, payload: &[u8], out: &mut Vec<f32>) -> std::result::Result<(), String> {
+        if self.format == SampleFormat::Opus {
+            return Err("opus chunks need an AudioDecoder".into());
+        }
         if self.payload_frames(payload).is_none() {
             return Err(format!("{} bytes is not a valid {} payload of {} channels", payload.len(), self.format, self.channels));
         }
@@ -347,8 +372,57 @@ impl AudioParams {
             SampleFormat::S16 => out.extend(payload.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b) as f32 / 32768.0)),
             SampleFormat::F32 => out.extend(payload.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b))),
             SampleFormat::Adpcm => adpcm::decode(payload, self.channels as usize, out)?,
+            SampleFormat::Opus => unreachable!("handled above"),
         }
         Ok(())
+    }
+}
+
+/// Decodes the chunks of one audio stream. PCM and ADPCM chunks decode on their own; Opus
+/// chunks continue the decoder state of the chunk before them, so each Opus decoder state
+/// remembers where it can continue. Two states are kept, so that a looping player can
+/// decode the end of one pass and the start of the next in any order.
+pub struct AudioDecoder {
+    params: AudioParams,
+    /// Most recently used last.
+    opus: Vec<opus::Decoder>,
+}
+
+impl AudioDecoder {
+    pub fn new(params: &AudioParams) -> std::result::Result<AudioDecoder, String> {
+        params.check_format()?;
+        Ok(AudioDecoder { params: params.clone(), opus: Vec::new() })
+    }
+
+    /// Forgets the decoder state, so that the next chunk decodes with a fresh one. Call it
+    /// when playback jumps (seeks).
+    pub fn reset(&mut self) {
+        self.opus.iter_mut().for_each(opus::Decoder::reset);
+    }
+
+    /// Decodes the chunk at `pts` into `out`: interleaved samples in `[-1, 1]` (nominally,
+    /// for `f32` and Opus).
+    pub fn decode(&mut self, pts: u64, payload: &[u8], out: &mut Vec<f32>) -> std::result::Result<(), String> {
+        if self.params.format != SampleFormat::Opus {
+            return self.params.decode_payload(payload, out);
+        }
+        let i = match self.opus.iter().position(|d| d.next_pts() == Some(pts)) {
+            Some(i) => i,
+            None if self.opus.len() < 2 => {
+                self.opus.push(opus::Decoder::new(&self.params)?);
+                self.opus.len() - 1
+            }
+            None => {
+                // The least recently used state, unless the other one is fresh.
+                let i = self.opus.iter().position(|d| d.next_pts().is_none()).unwrap_or(0);
+                self.opus[i].reset();
+                i
+            }
+        };
+        let mut d = self.opus.remove(i);
+        let result = d.decode(pts, payload, out);
+        self.opus.push(d);
+        result
     }
 }
 
