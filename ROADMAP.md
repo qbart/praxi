@@ -46,7 +46,20 @@ Today a game reads cues as `Event::Cue` / `Event::CueEnd` from `Player::poll_eve
 - [ ] Lookahead: list the cues starting within the next N ms, so the game can preload
   what they trigger (sounds, assets).
 - [ ] Bevy: typed cue messages per cue type in `praxi-bevy`.
-- [ ] An example game consuming cues (subtitles, camera shake), and tests.
+- [ ] Positions at runtime: helpers to map a cue's position (`x`, `y` in `0..=1`,
+  [cues.md](docs/features/cues.md#screen-position)) to the rectangle the video is drawn in,
+  for `praxi-wgpu` and `praxi-bevy`.
+- [ ] An example game consuming cues: subtitles, camera shake, and markers drawn at cue
+  positions during playback; tests.
+
+## 4. Cue authoring follow-ups
+
+- [ ] **Positions in the Bevy cue editor**: the Position row, Pick, markers on the video and
+  dragging, as in `praxi-editor` ([cue-editor.md](docs/features/cue-editor.md#screen-positions)).
+- [ ] **Typed values on the command line**: `--cue` and `praxi cues add` store every value
+  as a string, so `x=0.5;y=0.3` is not a position. Read numbers and `true` / `false` as
+  typed values (with a way to force a string, for example quotes), keeping cue sheets as
+  they are.
 
 ## Not scheduled
 
