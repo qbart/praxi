@@ -61,7 +61,8 @@ python3 tools/wm_close.py $(xdotool search --pid $! | tail -1)   # the close but
 There is no window manager, so `tools/wm_close.py` sends `WM_DELETE_WINDOW` as a window
 manager's close button does. Checked this way: the editor's close dialog (no dialog
 without changes; Cancel keeps the window, Discard closes without saving, Save writes the
-sheet and closes), the editor's "Write into file", and the Bevy cue editor
+sheet and closes), the editor's "Write into file", cue positions (annotations on the video,
+Pick, dragging a marker, selecting by marker, saved `x` / `y`), and the Bevy cue editor
 ([bevy.md](bevy.md#tests)). Coordinates depend on the layout, so these are not scripted
 tests.
 
