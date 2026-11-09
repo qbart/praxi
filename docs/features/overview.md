@@ -22,7 +22,7 @@ upload: no YUV conversion and no per-pixel CPU work. Frames stay compressed in V
 - **Multi-stream playback.** Several players, and several tracks in one file, can play at
   the same time.
 - **Engine agnostic.** The player hands out raw block data; uploading it is the engine's job.
-- **Multi-channel audio.** Any number of PCM or ADPCM audio tracks in any channel layout, with
+- **Multi-channel audio.** Any number of PCM, ADPCM or Opus audio tracks in any channel layout, with
   layout variants, handed to the engine's mixer from any thread and kept in sync with the
   video (see [audio.md](audio.md)).
 
@@ -105,7 +105,8 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
    ([motion-codec.md](motion-codec.md#decode-ahead)).
 9. **M8** Audio output and Bevy: `praxi-audio` with rate and channel conversion for the
    viewer and the editor ([audio-output.md](audio-output.md)); an Opus evaluation
-   ([audio.md](audio.md#opus-evaluation)); `praxi-bevy` with a `bevy_egui` cue editor
+   ([audio.md](audio.md#opus-evaluation)), then Opus audio in format 0.10
+   ([audio.md](audio.md#opus)); `praxi-bevy` with a `bevy_egui` cue editor
    example ([bevy.md](bevy.md)).
 
 ## Next

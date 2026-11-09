@@ -22,15 +22,14 @@ The code is done and tested; these were never run where they matter.
   runs much faster than real time and showed nothing; listen on a desktop, or record a
   PipeWire virtual sink and check the tones' frequencies.
 
-## 2. Opus integration (decision needed)
+## 2. Opus
 
-The evaluation is done ([audio.md](docs/features/audio.md#opus-evaluation)): 128 kbps
-stereo is 3.4 times smaller than `adpcm`, decoded in 1.2 ms per second of audio by the
-pure-Rust `opus1`, bit-close to libopus.
-
-- [ ] Decide whether to add it, and on `opus1` or `opus-pure`.
-- [ ] `--audio-format opus`: format code in [PRAXI.md](docs/spec/PRAXI.md), encoder,
-  player decode with pre-roll after seeks, tests.
+- [x] `opus1` chosen: pure Rust, with an encoder, so praxi encodes Opus itself.
+- [x] `--audio-format opus` ([audio.md](docs/features/audio.md#opus)): format 0.10 with
+  sample format `4` ([PRAXI.md](docs/spec/PRAXI.md#opus-payload)), encoder, player decode
+  with 200 ms pre-roll after seeks and seamless loops, tests. Stereo is 3.3 times smaller
+  than `adpcm`.
+- [ ] Listen to it on a real device, with the sound check above.
 
 ## 3. Consuming cues at runtime
 

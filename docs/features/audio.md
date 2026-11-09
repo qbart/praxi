@@ -13,7 +13,7 @@ Each audio stream has one sample format:
 | `s16` (default) | 16 | 0.19 MB/s | 0.58 MB/s | conversion to float |
 | `f32` | 32 | 0.38 MB/s | 1.15 MB/s | copy |
 | `adpcm` | 4.5 | 0.054 MB/s | 0.16 MB/s | one prediction per sample |
-| `opus` | about 1.3 at 64 kbps per channel | 0.016 MB/s | 0.048 MB/s | Opus decoder, about 1.2 ms per second of stereo |
+| `opus` | about 1.3 at 64 kbps per channel | 0.016 MB/s | 0.048 MB/s | Opus decoder, 1.5 ms per second of stereo |
 
 PCM (`s16`, `f32`) chunks are LZ4 compressed when that makes them smaller (silence, quiet
 passages). PCM is the default because it is exact and costs nothing to decode, and its size
@@ -55,9 +55,20 @@ library and no ffmpeg are involved. The byte layout is in
   starts a fresh decoder at the next chunk, whose first tens of milliseconds may sound
   slightly off while it converges. Looping starts a second decoder for the next pass, so
   the end of one pass and the start of the next both decode correctly.
-- **Cost**: about 1.2 ms per second of 48 kHz stereo audio at 128 kbps (0.02 ms per 60 Hz
-  game frame), 4-5 ms per second of 5.1; one 100 ms chunk is decoded at a time on the
-  player's thread. Seeking decodes up to one extra chunk.
+- **Cost**: one 100 ms chunk is decoded at a time on the player's thread; seeking decodes
+  two or three extra chunks of pre-roll. Measured below.
+
+Big Buck Bunny's 5.1 soundtrack (10 s, 48 kHz, AAC source), encoded with `praxi encode
+--audio-format F --audio-layout stereo --audio-layout 5.1` and played through `Player` on
+one core of the Ryzen AI 9 HX 370 (time spent in `advance` for the whole clip, 60 Hz steps):
+
+| Variant | `s16` | `adpcm` | `opus` | `opus` decode | `opus` against `s16` |
+|---|---|---|---|---|---|
+| Stereo | 1923 KB | 544 KB | 165 KB (132 kbps) | 1.5 ms per second of audio | 34.7 dB SNR |
+| 5.1 | 5765 KB | 1606 KB | 490 KB (392 kbps) | 4.3 ms per second of audio | 32.3 dB SNR |
+
+The decoded Opus tracks have exactly the source's 480256 frames. SNR says little about a
+perceptual codec; it confirms that the output lines up with the source.
 - **Quality**: lossy. Use `s16` for audio that must stay exact, and keep
   `adpcm` for short effects where its lower decode cost matters more than size.
 
