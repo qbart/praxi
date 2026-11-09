@@ -4,80 +4,35 @@ Work in order, top to bottom. Each item gets a spec in `docs/features/` before c
 (AGENTS.md); file format changes go to `docs/spec/`. Done items move to the milestones in
 [docs/features/overview.md](docs/features/overview.md#milestones).
 
-## 1. Cues after encoding
+Done so far (M7, M8): cue editing after encoding, BC1, manual test targets, decode-ahead
+of several frames, `praxi-audio`, the Opus evaluation and the Bevy cue editor.
 
-Cues can already be edited after the video is encoded, for every texture format, motion
-included: `praxi cues export` / `import` ([cue-editing.md](docs/features/cue-editing.md)),
-live preview in the viewer ([cue-preview.md](docs/features/cue-preview.md)) and the
-timeline editor ([cue-editor.md](docs/features/cue-editor.md)). Video and audio chunks are
-copied byte for byte, nothing is re-encoded. Missing:
+## 1. Checks on real machines
 
-- [x] **`praxi cues add` / `praxi cues remove`**: change the cues of an encoded file from
-  the command line with the encoder's `--cue` syntax, without writing a sheet by hand.
-- [x] **Editor "Write into file" on Windows**: the editor renames over the file its player
-  has open, which Windows refuses. Release the file before the rename, reopen it after and
-  keep the position. Checked on Linux under Xvfb (the file gets the cues, playback goes
-  on); every crate type-checks for Windows (`make check-windows`) and the rename retries
-  while antivirus holds the new file; not yet run on Windows.
-- [x] **Tests** for both, plus a cue round trip through `cues import` on a motion file.
-- [x] Editor close dialog: checked under Xvfb with the close message a window manager
-  sends ([testing.md](docs/features/testing.md#window-checks-under-xvfb)).
+The code is done and tested; these were never run where they matter.
 
-## 2. BC1
+- [ ] **Editor "Write into file" on Windows**: releases the file, renames over it and
+  reopens it at the same position, retrying while antivirus holds the new file
+  ([cue-editor.md](docs/features/cue-editor.md#saving)). Checked on Linux under Xvfb and
+  type-checked for Windows (`make check-windows`); run the editor and the Bevy cue editor
+  on Windows and write cues into a playing file.
+- [ ] **Sound on a real device**: the viewer and the editor through `praxi-audio`, with a
+  track the device plays natively and one that is resampled and mapped
+  ([audio-output.md](docs/features/audio-output.md)). An ALSA file capture on a null sink
+  runs much faster than real time and showed nothing; listen on a desktop, or record a
+  PipeWire virtual sink and check the tones' frequencies.
 
-Half the size of BC7 for opaque video
-([texture-variants.md](docs/features/texture-variants.md#formats)).
+## 2. Opus integration (decision needed)
 
-- [x] Format code and stream parameters ([PRAXI.md](docs/spec/PRAXI.md)).
-- [x] Encoder variant `bc1` (`--variant bc1`), temporal skip and byte planes as for BC7.
-- [x] Player selection, `praxi-wgpu` upload (`Bc1RgbaUnormSrgb`), viewer, `praxi frame`.
-- [x] `praxi bench` row and tests: 24.0 MB/s at 36.2 dB against BC7's 55.6 MB/s at
-  41.0 dB.
+The evaluation is done ([audio.md](docs/features/audio.md#opus-evaluation)): 128 kbps
+stereo is 3.4 times smaller than `adpcm`, decoded in 1.2 ms per second of audio by the
+pure-Rust `opus1`, bit-close to libopus.
 
-## 3. Tests without CI
+- [ ] Decide whether to add it, and on `opus1` or `opus-pure`.
+- [ ] `--audio-format opus`: format code in [PRAXI.md](docs/spec/PRAXI.md), encoder,
+  player decode with pre-roll after seeks, tests.
 
-CI on Forgejo is skipped for now; every check must run by hand instead.
-
-- [x] `make test` runs every test of the workspace, GPU tests included (they skip with a
-  message when no adapter is available); `make check` adds clippy; `make test-strict`
-  fails instead of skipping.
-- [x] Tests for the paths that only examples cover today: the CLI end to end through
-  ffmpeg (audio with `--fps` included), block formats drawn on the GPU.
-- [x] [testing.md](docs/features/testing.md): what each target runs, what needs ffmpeg, a
-  GPU or the sample video, and the manual checks.
-
-## 4. Decode-ahead of several frames
-
-Motion decode-ahead works on one frame
-([motion-codec.md](docs/features/motion-codec.md#decode-ahead)), so a 30 Hz game playing
-60 fps video only gets half the benefit.
-
-- [x] Read the headers of the next frames in order and decode their slices at once, each
-  frame with its own tables and output (up to 4 frames).
-- [x] Measure at 30 Hz against 60 Hz; tests against normal decodes: a 30 Hz game pays
-  0.22 ms per `advance` instead of 1.2-1.7 ms, a 60 Hz game 0.15 ms as before.
-
-## 5. Audio
-
-- [x] **`praxi-audio` crate**: the editor includes `crates/praxi-viewer/src/audio.rs` by
-  path. Move the output into a shared crate, and resample to the device rate so the viewer
-  and the editor play tracks the device does not support natively (today they skip them)
-  ([audio-output.md](docs/features/audio-output.md)). Not yet heard on a real device.
-- [x] **Opus evaluation** ([audio.md](docs/features/audio.md#opus-evaluation)): 128 kbps
-  stereo is 3.4 times smaller than `adpcm`, decoded in 1.2 ms per second of audio by the
-  pure-Rust `opus1`, bit-close to libopus.
-- [ ] **Opus integration** (decision needed): `--audio-format opus`, depending on `opus1`
-  or `opus-pure`, with pre-roll after seeks.
-
-## 6. Bevy + egui cue editor
-
-- [x] `praxi-bevy`: a Bevy plugin on top of `praxi-wgpu` (video as a Bevy image, events
-  as Bevy messages); Bevy 0.20 is on `wgpu` 30 like praxi ([bevy.md](docs/features/bevy.md)).
-- [x] A simple cue editor in Bevy with `bevy_egui`: video, timeline, inspector, Save and
-  Write into file, cue preview through `Player::replace_cues`. Its own small editing
-  model (no undo); the full editor stays `praxi-editor`.
-
-## 7. Consuming cues at runtime
+## 3. Consuming cues at runtime
 
 Today a game reads cues as `Event::Cue` / `Event::CueEnd` from `Player::poll_event`
 (or `PraxiEvent` messages in Bevy), matches the type string and reads the fields by hand
@@ -95,7 +50,7 @@ Today a game reads cues as `Event::Cue` / `Event::CueEnd` from `Player::poll_eve
 
 ## Not scheduled
 
-- **CI on Forgejo**: check the workflow since the editor joined it.
+- **CI on Forgejo**: check the workflow since the editor joined it; run `make check`.
 - **Real hardware**: GPU decode time of the motion codec on discrete and integrated GPUs
   (`motion_timing`), macOS, a phone (ASTC).
 - **More block formats**: BC4/BC5 for one- and two-channel content, ASTC 5x5.

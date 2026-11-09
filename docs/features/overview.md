@@ -96,6 +96,17 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
 7. **M6** Motion codec: transform coding with motion compensation, about 1/6 of BC7's size
    at equal PSNR, entropy decoded on CPU slices in parallel and reconstructed on the GPU,
    playable in the viewer, editor and `cutscene` ([motion-codec.md](motion-codec.md)).
+8. **M7** Formats, tests and decoding: `praxi cues add` / `remove` and "Write into file"
+   that releases the player's file ([cue-editing.md](cue-editing.md),
+   [cue-editor.md](cue-editor.md)); BC1 at about half of BC7's size
+   ([texture-variants.md](texture-variants.md)); `make test`, `check`, `test-strict` and
+   `check-windows` with CLI end-to-end and GPU block-format tests, without CI
+   ([testing.md](testing.md)); motion decode-ahead of up to 4 frames
+   ([motion-codec.md](motion-codec.md#decode-ahead)).
+9. **M8** Audio output and Bevy: `praxi-audio` with rate and channel conversion for the
+   viewer and the editor ([audio-output.md](audio-output.md)); an Opus evaluation
+   ([audio.md](audio.md#opus-evaluation)); `praxi-bevy` with a `bevy_egui` cue editor
+   example ([bevy.md](bevy.md)).
 
 ## Next
 
