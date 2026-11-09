@@ -13,12 +13,50 @@ Each audio stream has one sample format:
 | `s16` (default) | 16 | 0.19 MB/s | 0.58 MB/s | conversion to float |
 | `f32` | 32 | 0.38 MB/s | 1.15 MB/s | copy |
 | `adpcm` | 4.5 | 0.054 MB/s | 0.16 MB/s | one prediction per sample |
+| `opus` | about 1.3 at 64 kbps per channel | 0.016 MB/s | 0.048 MB/s | Opus decoder, about 1.2 ms per second of stereo |
 
 PCM (`s16`, `f32`) chunks are LZ4 compressed when that makes them smaller (silence, quiet
 passages). PCM is the default because it is exact and costs nothing to decode, and its size
 hardly matters next to video: stereo `s16` is about 1% of the smallest 1080p60 variant
 (ASTC 8x8, 18 MB/s). `adpcm` is for files where audio does weigh: many voice languages,
-7.1 variants, small or low-rate video, audio-only files.
+7.1 variants, small or low-rate video, audio-only files. `opus` is for when it weighs a lot
+(long music, many languages, motion-coded video where audio is a large share): about 4
+times smaller than `adpcm` at a bitrate near transparency, but lossy in a perceptual way,
+with a real decode cost and a decoder that carries state between chunks.
+
+### Opus
+
+`opus` stores Opus (RFC 6716), encoded and decoded in pure Rust by the
+[`opus1`](https://crates.io/crates/opus1) crate (0.3, BSD-3-Clause, a port of libopus
+1.6). `praxi-format` depends on it for decoding, `praxi-encoder` for encoding; no C
+library and no ffmpeg are involved. The byte layout is in
+[PRAXI.md](../spec/PRAXI.md#opus-payload).
+
+- **Rates**: Opus codes at 8, 12, 16, 24 or 48 kHz. Other rates are refused by the encoder
+  library; the CLI resamples to 48 kHz unless the source already has one of these rates.
+- **Channels**: any count up to 255, coded as one multistream: speaker pairs (front, back,
+  side, ...) as stereo streams, the other channels as mono streams. The layout follows from
+  the channel mask, so channels stay in praxi's order and nothing is reordered. The
+  low-frequency channel is coded as a narrowband mono stream.
+- **Packets**: 20 ms, `Application::Audio`, variable bitrate, complexity 10. The default
+  bitrate is 64 kbps per channel (128 kbps stereo, 384 kbps for 5.1); `bitrate` changes it.
+  Chunks hold whole packets: the chunk length is rounded to a multiple of 20 ms (100 ms by
+  default, 5 packets).
+- **Delay**: the encoder's lookahead (6.5 ms at 48 kHz) is dropped from the first chunk
+  (its `skip`), and the input is padded with silence at the end, so decoded audio lines up
+  with the source frame for frame and has its exact length.
+- **Decoder state**: each chunk continues the decoder state of the one before it. The
+  player keeps one decoder per track and resets it where playback jumps: after a seek it
+  starts at least 80 ms before the target (pre-roll) and drops what it decodes before
+  the target, so the first samples heard are already correct. Turning a track on mid-way
+  starts a fresh decoder at the next chunk, whose first tens of milliseconds may sound
+  slightly off while it converges. Looping starts a second decoder for the next pass, so
+  the end of one pass and the start of the next both decode correctly.
+- **Cost**: about 1.2 ms per second of 48 kHz stereo audio at 128 kbps (0.02 ms per 60 Hz
+  game frame), 4-5 ms per second of 5.1; one 100 ms chunk is decoded at a time on the
+  player's thread. Seeking decodes up to one extra chunk.
+- **Quality**: lossy. Use `s16` for audio that must stay exact, and keep
+  `adpcm` for short effects where its lower decode cost matters more than size.
 
 ### ADPCM
 
@@ -59,8 +97,8 @@ the noise floor matters.
 
 ### Opus evaluation
 
-Opus is a perceptual codec: much smaller than ADPCM, at a higher decode cost. It was
-evaluated, not integrated. Big Buck Bunny's 5.1 soundtrack (10 s, 48 kHz, AAC source) was
+Opus is a perceptual codec: much smaller than ADPCM, at a higher decode cost. This
+evaluation led to the `opus` format above, decoded with `opus1`. Big Buck Bunny's 5.1 soundtrack (10 s, 48 kHz, AAC source) was
 encoded with ffmpeg's libopus, then decoded with pure-Rust decoders on one core of the
 Ryzen AI 9 HX 370 and compared with libopus's own decode of the same packets. ADPCM is
 praxi's `adpcm` of the same audio.
@@ -89,11 +127,9 @@ praxi's `adpcm` of the same audio.
 - **Quality**: no perceptual metric was run here. SNR against the source says little about
   a perceptual codec. Published listening tests generally put stereo Opus at 128 kbps or
   more near transparent for most listeners.
-- **What integrating it would take**: a sample format id and Opus parameters in the stream
-  table ([PRAXI.md](../spec/PRAXI.md)); encoding through ffmpeg's libopus, which the CLI
-  already runs (or the crates' pure-Rust encoders); decoding from the packets before the
-  target after a seek, since Opus needs about 80 ms of pre-roll (RFC 7845); Opus's 48 kHz
-  family of rates; and depending on a young crate maintained by one person.
+- **Integration**: `opus1` was chosen for speed and for having an encoder, so praxi does
+  not need ffmpeg's libopus. It is a young crate maintained by a small team; its output
+  matched libopus's in this evaluation.
 
 ## Model
 
@@ -111,7 +147,7 @@ praxi's `adpcm` of the same audio.
     Channels are interleaved in increasing bit order, which is also ffmpeg's order. A mask
     of `0` means the layout is unspecified (for example ambisonics) and channels are used
     in stored order.
-  - **sample format**: `s16`, `f32` or `adpcm`.
+  - **sample format**: `s16`, `f32`, `adpcm` or `opus`.
   - **preload**: how far ahead of its time an audio chunk is stored in the file (default
     250 ms). See [Interleaving](#interleaving).
 - Audio time stamps count sample frames: the time base is `1 / sample_rate`, and a chunk's
@@ -250,7 +286,10 @@ let config = EncoderConfig::new(1920, 1080, 60, 1)
   them, so long tracks never sit in memory.
 - `.format(SampleFormat::F32)` stores floats; the default `S16` rounds and clamps to
   `[-1, 1]`; `Adpcm` rounds and clamps the same way, then encodes
-  ([ADPCM](#adpcm)).
+  ([ADPCM](#adpcm)); `Opus` encodes with `opus1` ([Opus](#opus)) and needs one of the
+  Opus rates.
+- `.bitrate(bits_per_second)`: the Opus bitrate of the whole track (default 64000 per
+  channel); ignored by the other formats.
 - `.channel_mask(mask)`: speaker bits, `0` (default) for unspecified. The mask must have
   `channels` bits set when non-zero.
 - `.group(g)`: tracks with the same name are put in the same group automatically, so they
@@ -272,8 +311,9 @@ praxi encode input.mp4 -o intro.praxi --no-audio
 |---|---|---|
 | `--no-audio` | | Leave audio out. |
 | `--audio-layout <L>` (repeatable) | source layout | Adds a variant downmixed (or upmixed) by ffmpeg to an ffmpeg layout name: `mono`, `stereo`, `2.1`, `3.0`, `quad`, `5.0`, `5.1`, `6.1`, `7.1`, ... |
-| `--audio-rate <HZ>` | source rate | Resample to this rate. |
-| `--audio-format <F>` | `s16` | `s16`, `f32` or `adpcm`. |
+| `--audio-rate <HZ>` | source rate (`opus`: 48000 unless the source rate is an Opus rate) | Resample to this rate. |
+| `--audio-format <F>` | `s16` | `s16`, `f32`, `adpcm` or `opus`. |
+| `--audio-bitrate <KBPS>` | 64 per channel | Opus bitrate of each variant. |
 | `--audio-name <NAME>` | `main` | Track name. |
 
 The CLI takes the first audio stream of the input (`ffprobe -select_streams a:0`). Each

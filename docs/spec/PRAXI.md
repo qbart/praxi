@@ -1,6 +1,6 @@
 # PRAXI file format
 
-Version 0.9. File extension `.praxi`.
+Version 0.10. File extension `.praxi`.
 
 ## Conventions
 
@@ -29,7 +29,7 @@ Version 0.9. File extension `.praxi`.
 |---|---|---|---|
 | 0 | 8 | `magic` | `89 50 52 58 0D 0A 1A 0A` (`\x89PRX\r\n\x1a\n`) |
 | 8 | 2 | `version_major` | `0`. Readers reject other values. |
-| 10 | 2 | `version_minor` | `8`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
+| 10 | 2 | `version_minor` | `10`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
 | 12 | 4 | `flags` | Reserved, `0`. |
 | 16 | 2 | `stream_count` | Number of entries in the stream table, at least 1. |
 | 18 | 2 | | Reserved. |
@@ -96,9 +96,9 @@ For format `0x0201` ([Motion payload](#motion-payload)):
 
 | Offset | Size | Field | Description |
 |---|---|---|---|
-| 16 | 4 | `sample_rate` | Sample frames per second, at least 1. The time base must be `1 / sample_rate` (`timebase_num = 1`, `timebase_den = sample_rate`), so a pts counts sample frames. |
-| 20 | 2 | `channels` | Channels per frame, at least 1. |
-| 22 | 2 | `sample_format` | `1` signed 16-bit integer (`s16`), `2` 32-bit float (`f32`), `3` ADPCM (`adpcm`, see [ADPCM payload](#adpcm-payload)). Readers reject other values. |
+| 16 | 4 | `sample_rate` | Sample frames per second, at least 1; for `opus` one of `8000`, `12000`, `16000`, `24000`, `48000`. The time base must be `1 / sample_rate` (`timebase_num = 1`, `timebase_den = sample_rate`), so a pts counts sample frames. |
+| 20 | 2 | `channels` | Channels per frame, at least 1; for `opus` at most 255. |
+| 22 | 2 | `sample_format` | `1` signed 16-bit integer (`s16`), `2` 32-bit float (`f32`), `3` ADPCM (`adpcm`, see [ADPCM payload](#adpcm-payload)), `4` Opus (`opus`, see [Opus payload](#opus-payload)). Readers reject other values. |
 | 24 | 4 | `channel_mask` | Speakers fed by the channels, WAVE speaker bits (below). Either `0` (unspecified, channels in stored order) or exactly `channels` bits set; channels are interleaved in increasing bit order. |
 | 28 | 4 | `preload_us` | How far ahead of their time chunks are stored, in microseconds. See [Ordering](#ordering). |
 | 32 | 32 | `name` | Track name, UTF-8, zero padded. Holds no zero bytes; readers stop at the first zero byte. |
@@ -403,7 +403,7 @@ columns `i - 1` (weight 1) and `i` (3), for odd `x = 2i + 1` columns `i` (3) and
 
 ## Audio payload
 
-Every audio chunk has the keyframe flag set and decodes on its own. It covers frames `pts`
+Every audio chunk has the keyframe flag set and, except for `opus`, decodes on its own. It covers frames `pts`
 to `pts + frames - 1`. Frames not covered by any chunk are silence.
 
 For `s16` and `f32`, the decompressed payload is `frames * channels` samples, interleaved
@@ -459,6 +459,64 @@ The decoded sample `s` maps to `s / 32768`. The predictor table (`c1`, `c2`, in 
 | 5 | 3817 | -1825 | 13 | 2006 | -99 |
 | 6 | 3637 | -1686 | 14 | 1545 | 333 |
 | 7 | 3434 | -1473 | 15 | 497 | -1376 |
+
+### Opus payload
+
+`opus` stores Opus packets (RFC 6716). Unlike the other formats, a chunk does not decode on
+its own: an Opus decoder carries state from packet to packet, so a stream's chunks are
+decoded in order by one decoder. The decompressed payload is:
+
+| Size | Field | Description |
+|---|---|---|
+| 4 | `frames` | Sample frames the chunk contributes, at least 1. |
+| 2 | `skip` | Decoded frames at the start of the chunk that are dropped before those `frames`. |
+| 2 | `packet_count` | Number of packets, at least 1. |
+| ... | `packets` | `packet_count` packets, each a `u16` length (at least 1) and that many bytes. |
+
+The packets end exactly at the end of the payload.
+
+**Packets** are multistream packets as `opus_multistream_encode` writes them (RFC 6716
+Appendix B: every stream but the last is self-delimited), for the layout below, at
+`sample_rate`. A packet may hold any Opus frame duration; writers use 20 ms.
+
+**Decoding a chunk**: decode its packets in order with the stream's decoder and concatenate
+the output, `D` frames. Drop the first `skip` frames, keep the next `frames`, which are the
+chunk's frames `pts` to `pts + frames - 1`, and drop the rest. Readers reject chunks with
+`skip + frames > D`. Output is interleaved in the stream's channel order and, as Opus
+output, may slightly exceed `[-1, 1]`.
+
+**Decoder state**: the decoder starts fresh (newly created) for the stream's first chunk,
+and each later chunk continues the state left by the chunk before it. A reader that starts
+elsewhere, after a seek or when a track is turned on mid-way, starts a fresh decoder at an
+earlier chunk and discards what it decodes before the target time: at least 80 ms of
+pre-roll (RFC 7845, section 4.6) makes the output converge to that of a decoder that ran
+from the start. See [Seeking](#seeking).
+
+**Layout**: the multistream layout follows from `channels` and `channel_mask`, so it is not
+stored. These speaker pairs form stereo (coupled) streams when both speakers are in the
+mask, in this order: front left and right (`0x1`, `0x2`), back left and right (`0x10`,
+`0x20`), front left and right of center (`0x40`, `0x80`), side left and right (`0x200`,
+`0x400`), top front left and right (`0x1000`, `0x4000`), top back left and right (`0x8000`,
+`0x20000`). With a mask of `0`, two channels form one coupled stream and any other count
+has none. Every other channel is a mono stream, in channel order. So with `C` coupled
+streams and `M` mono streams there are `C + M` streams; coupled stream `s` codes the
+channels of its pair (the lower speaker bit as left) as coded channels `2s` and `2s + 1`,
+and mono stream `m` codes its channel as coded channel `2C + m`, which is the mapping of
+`opus_multistream_decoder_create` with `streams = C + M` and `coupled_streams = C`.
+
+| Layout | Mask | Streams | Coupled |
+|---|---|---|---|
+| mono | `0x4` | 1 | 0 |
+| stereo | `0x3` | 1 | 1 |
+| 5.1 | `0x60f` | 4 | 2 (front, side) |
+| 7.1 | `0x63f` | 5 | 3 (front, back, side) |
+
+**Writers** encode the stream's samples from the first frame with one encoder, in packets
+of `n` frames, and pad the input with silence after the last frame so that the decoded
+output covers it. An encoder delays its output by its lookahead `L` frames (pre-skip), so
+decoded frame `i` of the stream is frame `i - L` of the input. The first chunk therefore
+has `skip = L` and `pts = 0`; a chunk whose first packet starts at decoded frame `d > L`
+has `skip = 0` and `pts = d - L`; `frames` stops at the last frame of the input.
 
 ## Cue payload
 
@@ -525,6 +583,10 @@ entry on, and ignore earlier chunks of streams whose entry comes later. Audio fr
 `t` are dropped. Chunks are decoded up to decode time `t`, so audio is buffered up to
 `t + preload`.
 
+An `opus` stream takes the last entry with time at or before `t - 80 ms` instead (or its
+first entry), starts a fresh decoder there and drops the frames before `t`
+([Opus payload](#opus-payload)).
+
 Cues active at `t` are found through the index: for each cue stream, read the cues whose
 time lies in `[t - max_duration, t]` and keep those ending after `t`.
 
@@ -543,3 +605,4 @@ time lies in `[t - max_duration, t]` and keep those ending after `t`.
 - 0.8: video format `0x0201`, the motion codec, with its stream parameters and payload.
 - 0.9: motion payload: macroblock kind `3` (split, a vector per 8x8 quadrant), vector
   prediction per 8x8 block, 8- and 4-tap interpolation filters instead of bilinear.
+- 0.10: audio sample format `4`, Opus, with its payload and seeking pre-roll.
