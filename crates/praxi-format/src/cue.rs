@@ -268,8 +268,8 @@ mod tests {
         cue.set_position(None);
         assert_eq!(cue.fields, [("label".into(), Value::from("a"))]);
         cue.set_position(Some((0.5, 0.5)));
-        cue.set_position(Some((0.3, 0.5)));
-        assert_eq!(cue.get("x"), Some(&Value::Float(0.3)));
         assert_eq!(cue.fields[1..], [("x".into(), Value::Float(0.5)), ("y".into(), Value::Float(0.5))]);
+        cue.set_position(Some((0.3, 0.5)));
+        assert_eq!(cue.get("x"), Some(&Value::Float(0.3)), "the f32's shortest decimal");
     }
 }
