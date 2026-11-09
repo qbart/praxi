@@ -62,6 +62,23 @@ the viewer.
   channels, scaled to the loudest peak), and one lane per cue stream with its name. Cues with a duration are bars,
   instantaneous cues are diamonds; each shows its type and its first string field (a
   subtitle's text, for example). The playhead is a vertical line.
+- **Lane colours**: the cues of a lane take its colour, cycling by lane index through
+  this palette (lane 10 is Cornflower again):
+
+  | Lane | Tint | Colour |
+  |---|---|---|
+  | 1 | Cornflower | `#6BA6FF` |
+  | 2 | Periwinkle | `#9E9BFC` |
+  | 3 | Orchid | `#DB90CE` |
+  | 4 | Coral | `#F18585` |
+  | 5 | Peach | `#FFA16A` |
+  | 6 | Gold | `#E9C255` |
+  | 7 | Leaf | `#77BF5D` |
+  | 8 | Turquoise | `#35B897` |
+  | 9 | Cyan | `#4CBFD0` |
+
+  Diamonds are filled with the colour, bars with the colour at 55% opacity; the selected
+  cue gets an outline in the text colour. A selected lane is tinted with its colour.
 
 ### Timeline input
 

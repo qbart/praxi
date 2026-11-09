@@ -66,9 +66,23 @@ impl Default for Timeline {
     }
 }
 
+/// Lane colours, cycled by stream index: Cornflower, Periwinkle, Orchid, Coral, Peach,
+/// Gold, Leaf, Turquoise, Cyan.
+const LANE_COLORS: [Color32; 9] = [
+    Color32::from_rgb(0x6B, 0xA6, 0xFF),
+    Color32::from_rgb(0x9E, 0x9B, 0xFC),
+    Color32::from_rgb(0xDB, 0x90, 0xCE),
+    Color32::from_rgb(0xF1, 0x85, 0x85),
+    Color32::from_rgb(0xFF, 0xA1, 0x6A),
+    Color32::from_rgb(0xE9, 0xC2, 0x55),
+    Color32::from_rgb(0x77, 0xBF, 0x5D),
+    Color32::from_rgb(0x35, 0xB8, 0x97),
+    Color32::from_rgb(0x4C, 0xBF, 0xD0),
+];
+
 /// A lane colour per stream.
 fn stream_color(i: usize) -> Color32 {
-    egui::ecolor::Hsva::new((0.58 + i as f32 * 0.17) % 1.0, 0.55, 0.75, 1.0).into()
+    LANE_COLORS[i % LANE_COLORS.len()]
 }
 
 /// `m:ss.mmm`.

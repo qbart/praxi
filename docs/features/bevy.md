@@ -59,8 +59,10 @@ A simple cue editor: the full editor is `praxi-editor` ([cue-editor.md](cue-edit
   `replace_cues_in_file` and `reopen`), and the last status message.
 - **Video** in the middle, letterboxed.
 - **Timeline** at the bottom: a ruler and one lane per cue stream. Cues with a duration
-  are bars, instantaneous cues are ticks. Click the ruler to seek, click a cue to select
-  it, click an empty lane to select the stream. The playhead is a red line.
+  are bars, instantaneous cues are ticks, in their lane's colour from the same palette as
+  the full editor ([cue-editor.md](cue-editor.md#window)). Click the ruler to seek, click
+  a cue to select it, click an empty lane to select the stream. The playhead is a red
+  line.
 - **Inspector** on the right: the selected cue's start, duration, type and string fields
   (add, edit, remove), Delete, and "Set start to playhead". With a stream selected: its
   name, "Add cue at playhead", "Add stream". Below: the last 20 player events.

@@ -27,6 +27,19 @@ struct Args {
 const MAX_EVENTS: usize = 20;
 const RULER_H: f32 = 20.0;
 const LANE_H: f32 = 26.0;
+/// Lane colours, cycled by stream index, as in `praxi-editor`: Cornflower, Periwinkle,
+/// Orchid, Coral, Peach, Gold, Leaf, Turquoise, Cyan.
+const LANE_COLORS: [egui::Color32; 9] = [
+    egui::Color32::from_rgb(0x6B, 0xA6, 0xFF),
+    egui::Color32::from_rgb(0x9E, 0x9B, 0xFC),
+    egui::Color32::from_rgb(0xDB, 0x90, 0xCE),
+    egui::Color32::from_rgb(0xF1, 0x85, 0x85),
+    egui::Color32::from_rgb(0xFF, 0xA1, 0x6A),
+    egui::Color32::from_rgb(0xE9, 0xC2, 0x55),
+    egui::Color32::from_rgb(0x77, 0xBF, 0x5D),
+    egui::Color32::from_rgb(0x35, 0xB8, 0x97),
+    egui::Color32::from_rgb(0x4C, 0xBF, 0xD0),
+];
 
 fn main() -> AppExit {
     let args = Args::parse();
@@ -314,8 +327,9 @@ fn timeline(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
     let mut cue_rects = Vec::new();
     for (s, track) in editor.tracks.iter().enumerate() {
         let lane = lane_rect(s);
+        let lane_color = LANE_COLORS[s % LANE_COLORS.len()];
         if editor.selected == Selection::Stream(s) {
-            painter.rect_filled(lane, 0.0, visuals.faint_bg_color);
+            painter.rect_filled(lane, 0.0, lane_color.gamma_multiply(0.12));
         }
         painter.text(lane.left_top() + egui::vec2(4.0, 2.0), egui::Align2::LEFT_TOP, &track.name, egui::FontId::proportional(11.0), visuals.weak_text_color());
         for (c, cue) in track.cues.iter().enumerate() {
@@ -323,8 +337,9 @@ fn timeline(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
             let x1 = x_of(cue.time_us + cue.cue.duration).max(x0 + 3.0);
             let r = egui::Rect::from_min_max(egui::pos2(x0, lane.top() + 12.0), egui::pos2(x1, lane.bottom() - 2.0));
             let selected = editor.selected == Selection::Cue(s, c);
-            let color = if selected { visuals.selection.bg_fill } else { visuals.widgets.inactive.bg_fill };
-            painter.rect_filled(r, 2.0, color);
+            let stroke = if selected { egui::Stroke::new(2.0, visuals.strong_text_color()) } else { egui::Stroke::NONE };
+            let fill = if cue.cue.duration > 0 { lane_color.gamma_multiply(0.55) } else { lane_color };
+            painter.rect(r, 2.0, fill, stroke, egui::StrokeKind::Inside);
             painter.text(r.left_top() + egui::vec2(2.0, 0.0), egui::Align2::LEFT_TOP, &cue.cue.kind, egui::FontId::proportional(10.0), visuals.strong_text_color());
             cue_rects.push((r, s, c));
         }
