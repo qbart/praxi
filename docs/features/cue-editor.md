@@ -97,6 +97,30 @@ the viewer.
 With Snap to frames on, dragged times snap to video frame starts of track 0; holding Alt
 while dragging turns snapping off.
 
+### Screen positions
+
+A cue's optional position on the video ([cues.md](cues.md#screen-position)) is edited on
+the video itself.
+
+- **Inspector**: a Position row under Type. "On screen" turns the position on (at the
+  centre, `0.5, 0.5`) or off (removes `x` and `y`). When on, `x` and `y` are drag values
+  in `0..=1` (three decimals), and **Pick** arms the picker. `x` and `y` also stay in the
+  field list below as float fields.
+- **Picker**: while armed, the pointer over the video is a crosshair; a click sets the
+  selected cue's position to the clicked point and disarms it. Pick again, Escape or
+  selecting another cue disarms it without a change. Picking a cue without a position
+  gives it one.
+- **Annotations**: the video shows a marker for every positioned cue that is active at the
+  playhead (from its start to its end; instantaneous cues for 0.5 s after their start),
+  and for the selected cue at any time. A marker is a dot in its lane's colour with a dark
+  outline and a label (type and first string field) on a dark box beside it. The selected
+  cue's dot is larger with a ring in the text colour.
+- **Dragging** the selected cue's dot moves it; the position is applied on release as one
+  undo step. Clicking another cue's dot selects that cue.
+- Positions are video coordinates: `0,0` is the top left of the drawn video, not of the
+  panel around it, so the letterbox bars are outside `0..=1` and clicks there clamp to the
+  edge.
+
 ### Keys
 
 Keys act when no text field has focus.

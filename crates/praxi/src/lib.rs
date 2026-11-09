@@ -133,6 +133,12 @@ impl CueEvent {
             _ => None,
         }
     }
+
+    /// The cue's position on the video, `(x, y)` in `0..=1` from the top left, if it has one
+    /// (`docs/features/cues.md#screen-position`).
+    pub fn position(&self) -> Option<(f32, f32)> {
+        praxi_format::cue_position(&self.fields)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

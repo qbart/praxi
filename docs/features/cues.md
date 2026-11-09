@@ -26,6 +26,30 @@ Cues in one stream may overlap and may share a start time.
 
 The byte layout is in [PRAXI.md](../spec/PRAXI.md#cue-payload).
 
+## Screen position
+
+A cue can be placed on the screen, for annotations: a marker, a speech bubble, the target
+of a camera move. The position is not a separate part of the format but two fields with
+reserved names:
+
+| Field | Value | Meaning |
+|---|---|---|
+| `x` | float (or integer) in `0..=1` | Horizontal position: `0` left edge, `1` right edge of video track 0 |
+| `y` | float (or integer) in `0..=1` | Vertical position: `0` top edge, `1` bottom edge |
+
+- The position is in video coordinates, independent of the video's pixel size and of how
+  the game scales it. It is a point; what is drawn there (and its anchor) is up to the game.
+- A cue has a position only when both fields are present and in range; otherwise it has
+  none, and `x` / `y` are ordinary fields. Integers count so that hand-written sheets can
+  say `0` and `1`.
+- `Cue::position()` and `CueEvent::position()` return `Option<(f32, f32)>`;
+  `Cue::set_position(Some((x, y)))` writes both fields as floats (clamped to `0..=1`)
+  and `set_position(None)` removes them. The fields keep their order; new fields go last.
+- The encoder CLI's `--cue` and `praxi cues add` write string fields, which do not count as
+  a position. Use the editor or a cue sheet (`"x": 0.25, "y": 0.6`).
+- The cue editor shows positioned cues on the video and picks positions with the mouse
+  ([cue-editor.md](cue-editor.md#screen-positions)).
+
 ## Player behaviour
 
 - `cue_streams()` lists the cue streams (stream number and name). All are enabled when the

@@ -494,6 +494,12 @@ Field:
 
 Readers reject unknown value types, invalid UTF-8 and duplicate keys.
 
+Field keys are free, except that float or integer fields `x` and `y` in `0..=1` together
+give the cue a position on the video (`0,0` top left, `1,1` bottom right). This is a
+convention of the tools and the player API, not a separate encoding: writers store them
+as ordinary fields and readers that do not know it read them as such
+([cues.md](../features/cues.md#screen-position)).
+
 The cue ends at time `(pts + duration) * num / den`. The header `duration_us` should be at
 least the latest cue end and the end of the last audio chunk.
 

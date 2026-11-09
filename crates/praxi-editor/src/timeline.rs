@@ -83,8 +83,8 @@ const LANE_COLORS: [Color32; 9] = [
 /// Labels on bars, dark against the light lane colours.
 const BAR_TEXT: Color32 = Color32::from_gray(24);
 
-/// A lane colour per stream.
-fn stream_color(i: usize) -> Color32 {
+/// A lane colour per stream, also used for its cues' markers on the video.
+pub fn stream_color(i: usize) -> Color32 {
     LANE_COLORS[i % LANE_COLORS.len()]
 }
 
@@ -95,7 +95,7 @@ pub fn clock(us: u64) -> String {
 }
 
 /// The text a cue shows: its type and its first string field.
-fn label(c: &EditCue) -> String {
+pub fn label(c: &EditCue) -> String {
     let text = c.cue.fields.iter().find_map(|(_, v)| match v {
         praxi::Value::String(s) if !s.is_empty() => Some(s.replace('\n', " ")),
         _ => None,

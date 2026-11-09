@@ -11,7 +11,7 @@ mod reader;
 mod remux;
 mod writer;
 
-pub use cue::{Cue, Value};
+pub use cue::{Cue, POSITION_X, POSITION_Y, Value, position as cue_position};
 pub use planes::{from_planes, to_planes};
 pub use reader::Reader;
 pub use remux::{CueTrack, TimedCue, read_cues, replace_cues, replace_cues_in_file};

@@ -53,6 +53,23 @@ impl From<Vec<u8>> for Value {
     }
 }
 
+/// Field keys of a cue's position on the video.
+pub const POSITION_X: &str = "x";
+pub const POSITION_Y: &str = "y";
+
+/// The position given by the `x` and `y` fields: both numbers in `0..=1`.
+pub fn position(fields: &[(String, Value)]) -> Option<(f32, f32)> {
+    let coord = |key: &str| {
+        let v = match fields.iter().find(|(k, _)| k == key)?.1 {
+            Value::Float(f) => f,
+            Value::Int(i) => i as f64,
+            _ => return None,
+        };
+        (0.0..=1.0).contains(&v).then_some(v as f32)
+    };
+    Some((coord(POSITION_X)?, coord(POSITION_Y)?))
+}
+
 /// One cue: a typed event with a duration (in its stream's time base) and fields.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cue {
@@ -74,6 +91,29 @@ impl Cue {
         match self.get(key)? {
             Value::String(s) => Some(s),
             _ => None,
+        }
+    }
+
+    /// The cue's position on the video, `(x, y)` in `0..=1` from the top left, if it has one
+    /// (`docs/features/cues.md#screen-position`).
+    pub fn position(&self) -> Option<(f32, f32)> {
+        position(&self.fields)
+    }
+
+    /// Sets the `x` and `y` fields as floats clamped to `0..=1`, or removes them.
+    pub fn set_position(&mut self, position: Option<(f32, f32)>) {
+        match position {
+            Some((x, y)) => {
+                for (key, v) in [(POSITION_X, x), (POSITION_Y, y)] {
+                    // The f32's shortest decimal, so that 0.3 is 0.3 in cue sheets.
+                    let value = Value::Float(v.clamp(0.0, 1.0).to_string().parse().expect("float"));
+                    match self.fields.iter_mut().find(|(k, _)| k == key) {
+                        Some((_, old)) => *old = value,
+                        None => self.fields.push((key.to_string(), value)),
+                    }
+                }
+            }
+            None => self.fields.retain(|(k, _)| k != POSITION_X && k != POSITION_Y),
         }
     }
 
@@ -200,5 +240,36 @@ fn utf8(b: &[u8]) -> Result<String> {
     match std::str::from_utf8(b) {
         Ok(s) => Ok(s.to_string()),
         Err(e) => corrupt(format!("invalid UTF-8 in cue: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn positions_come_from_x_and_y() {
+        let mut cue = Cue::new("marker");
+        assert_eq!(cue.position(), None);
+        cue.fields.push(("label".into(), "a".into()));
+        cue.fields.push(("x".into(), Value::Int(1)));
+        assert_eq!(cue.position(), None, "y missing");
+        cue.fields.push(("y".into(), Value::Float(0.25)));
+        assert_eq!(cue.position(), Some((1.0, 0.25)));
+        cue.fields[2].1 = Value::Float(1.5);
+        assert_eq!(cue.position(), None, "out of range");
+        cue.fields[2].1 = "0.5".into();
+        assert_eq!(cue.position(), None, "strings are not positions");
+
+        cue.set_position(Some((0.75, -2.0)));
+        assert_eq!(cue.position(), Some((0.75, 0.0)));
+        assert_eq!(cue.fields[1], ("x".into(), Value::Float(0.75)), "kept in place");
+        assert_eq!(cue.fields[0].0, "label");
+        cue.set_position(None);
+        assert_eq!(cue.fields, [("label".into(), Value::from("a"))]);
+        cue.set_position(Some((0.5, 0.5)));
+        cue.set_position(Some((0.3, 0.5)));
+        assert_eq!(cue.get("x"), Some(&Value::Float(0.3)));
+        assert_eq!(cue.fields[1..], [("x".into(), Value::Float(0.5)), ("y".into(), Value::Float(0.5))]);
     }
 }

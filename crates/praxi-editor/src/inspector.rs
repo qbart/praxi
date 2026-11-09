@@ -6,7 +6,7 @@
 use crate::doc::EditCue;
 use eframe::egui;
 use praxi::Value;
-use praxi::format::{CUE_NAME_SIZE, Cue};
+use praxi::format::{CUE_NAME_SIZE, Cue, POSITION_X, POSITION_Y, cue_position};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueType {
@@ -89,6 +89,11 @@ fn parse_value(ty: ValueType, s: &str) -> Option<Value> {
     })
 }
 
+/// A position coordinate to three decimals, as the inspector shows it.
+pub fn round3(v: f32) -> f32 {
+    (v * 1000.0).round() / 1000.0
+}
+
 /// Whether a cue type or field key is valid in a cue sheet.
 fn valid_text16(s: &str) -> bool {
     !s.is_empty() && s.len() <= u16::MAX as usize
@@ -141,8 +146,33 @@ impl CueDraft {
         Some((self.stream, EditCue { uid: self.uid, time_us, cue: Cue { duration, kind: self.kind.clone(), fields } }))
     }
 
+    /// The position the draft's `x` and `y` fields give, as `Cue::position` reads it.
+    pub fn position(&self) -> Option<(f32, f32)> {
+        let fields: Vec<(String, Value)> = self.fields.iter().filter_map(|f| Some((f.key.clone(), parse_value(f.ty, &f.value)?))).collect();
+        cue_position(&fields)
+    }
+
+    /// Sets or removes the `x` and `y` fields, as `Cue::set_position` does.
+    pub fn set_position(&mut self, position: Option<(f32, f32)>) {
+        let mut cue = Cue::new("-");
+        cue.set_position(position);
+        match position {
+            Some(_) => {
+                for (key, value) in cue.fields {
+                    let (ty, value) = value_text(&value);
+                    match self.fields.iter_mut().find(|f| f.key == key) {
+                        Some(f) => (f.ty, f.value) = (ty, value),
+                        None => self.fields.push(FieldDraft { key, ty, value }),
+                    }
+                }
+            }
+            None => self.fields.retain(|f| f.key != POSITION_X && f.key != POSITION_Y),
+        }
+    }
+
     /// Shows the draft; returns true when an edit finished (a field left, a choice made).
-    pub fn ui(&mut self, ui: &mut egui::Ui, streams: &[String]) -> bool {
+    /// `picking` is the video position picker's state, toggled by the Pick button.
+    pub fn ui(&mut self, ui: &mut egui::Ui, streams: &[String], picking: &mut bool) -> bool {
         let mut done = false;
         let red = ui.visuals().error_fg_color;
         egui::Grid::new("cue").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
@@ -176,6 +206,29 @@ impl CueDraft {
             ui.end_row();
             let kind_ok = valid_text16(&self.kind);
             text(ui, "Type", &mut self.kind, kind_ok);
+
+            ui.label("Position");
+            ui.horizontal(|ui| {
+                let position = self.position();
+                let mut on = position.is_some();
+                if ui.checkbox(&mut on, "On screen").on_hover_text("x and y fields in 0..1, from the top left of the video").changed() {
+                    self.set_position(on.then_some((0.5, 0.5)));
+                    done = true;
+                }
+                if let Some((mut x, mut y)) = position {
+                    let drag = |v| egui::DragValue::new(v).range(0.0..=1.0).speed(0.002).fixed_decimals(3);
+                    let dx = ui.add(drag(&mut x).prefix("x "));
+                    let dy = ui.add(drag(&mut y).prefix("y "));
+                    if dx.changed() || dy.changed() {
+                        self.set_position(Some((round3(x), round3(y))));
+                    }
+                    done |= dx.drag_stopped() || dy.drag_stopped() || dx.lost_focus() || dy.lost_focus();
+                }
+                if ui.selectable_label(*picking, "Pick").on_hover_text("Click the video to place the cue (Escape cancels)").clicked() {
+                    *picking = !*picking;
+                }
+            });
+            ui.end_row();
         });
 
         ui.add_space(8.0);
@@ -299,5 +352,24 @@ mod tests {
         d.fields[1].ty = ValueType::Float;
         assert_eq!(d.parse().unwrap().1.cue.fields[1].1, Value::Float(-2.0), "ints read as floats");
         assert!(valid_stream_name(&"n".repeat(32)) && !valid_stream_name(&"n".repeat(33)) && !valid_stream_name("a\0"));
+    }
+
+    #[test]
+    fn drafts_edit_positions_like_cues() {
+        let mut d = CueDraft::new(0, &cue());
+        assert_eq!(d.position(), None);
+        d.set_position(Some((0.3, 1.0)));
+        assert_eq!(d.position(), Some((0.3, 1.0)));
+        let (_, parsed) = d.parse().unwrap();
+        let mut expected = cue();
+        expected.cue.set_position(Some((0.3, 1.0)));
+        assert_eq!(parsed, expected);
+        d.fields[5].value = "1.5".into();
+        assert_eq!(d.position(), None, "out of range");
+        d.set_position(Some((0.25, 0.5)));
+        assert_eq!((d.fields.len(), d.position()), (7, Some((0.25, 0.5))), "replaced in place");
+        d.set_position(None);
+        assert_eq!(d.parse(), Some((0, cue())));
+        assert_eq!(round3(0.12345), 0.123);
     }
 }

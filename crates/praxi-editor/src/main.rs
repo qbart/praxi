@@ -33,6 +33,8 @@ type FilePlayer = Player<BufReader<SharedFile>>;
 
 /// Player events kept in the log.
 const MAX_EVENTS: usize = 200;
+/// How long an instantaneous cue's marker stays on the video.
+const INSTANT_MARKER_US: u64 = 500_000;
 
 #[derive(Parser)]
 #[command(name = "praxi-editor", version, about = "Edits the cues of a praxi file")]
@@ -158,6 +160,10 @@ struct Editor {
     selected_cue: Option<u64>,
     selected_stream: Option<u64>,
     cue_draft: Option<CueDraft>,
+    /// The cue the position picker is armed for; disarmed when another cue is selected.
+    picking: Option<u64>,
+    /// A marker being dragged on the video: the cue and its position so far.
+    marker_drag: Option<(u64, (f32, f32))>,
     /// The selected stream's uid and name being typed.
     name_draft: Option<(u64, String)>,
     timeline: Timeline,
@@ -215,6 +221,8 @@ impl Editor {
             selected_cue: None,
             selected_stream,
             cue_draft: None,
+            picking: None,
+            marker_drag: None,
             name_draft: None,
             timeline: Timeline::default(),
             snap: true,
@@ -313,6 +321,14 @@ impl Editor {
         copy.time_us = self.player.position().as_micros() as u64;
         self.selected_cue = Some(copy.uid);
         self.edit(|streams| streams[s].cues.push(copy));
+    }
+
+    /// Sets or removes the selected cue's position on the video.
+    fn set_position(&mut self, position: Option<(f32, f32)>) {
+        let Some((s, c)) = self.selected_cue.and_then(|uid| self.doc.find(uid)) else { return };
+        let mut cue = self.doc.streams()[s].cues[c].clone();
+        cue.cue.set_position(position);
+        self.set_cue(s, cue);
     }
 
     /// Sets the selected cue's start (`start = true`) or end to the playhead.
@@ -470,7 +486,7 @@ impl Editor {
             self.duplicate_selected();
         }
         let (pressed, shift) = ctx.input(|i| {
-            let keys = [Key::Space, Key::ArrowLeft, Key::ArrowRight, Key::Home, Key::End, Key::C, Key::I, Key::O, Key::Delete];
+            let keys = [Key::Space, Key::ArrowLeft, Key::ArrowRight, Key::Home, Key::End, Key::C, Key::I, Key::O, Key::Delete, Key::Escape];
             (keys.into_iter().filter(|k| i.key_pressed(*k) && !i.modifiers.command).collect::<Vec<_>>(), i.modifiers.shift)
         });
         for key in pressed {
@@ -490,6 +506,7 @@ impl Editor {
                 Key::I => self.set_edge(true),
                 Key::O => self.set_edge(false),
                 Key::Delete => self.delete_selected(),
+                Key::Escape => self.picking = None,
                 _ => {}
             }
         }
@@ -584,7 +601,9 @@ impl Editor {
                 }
                 ui.heading("Cue");
                 let draft = self.cue_draft.as_mut().expect("draft");
-                let done = draft.ui(ui, &names);
+                let mut picking = self.picking == Some(cue.uid);
+                let done = draft.ui(ui, &names, &mut picking);
+                self.picking = picking.then_some(cue.uid);
                 if done && let Some((stream, new)) = draft.parse() {
                     self.set_cue(stream, new);
                 }
@@ -676,6 +695,84 @@ impl Editor {
         if self.player.video_frame(0).is_some() {
             let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
             painter.image(self.video.texture, rect, uv, egui::Color32::WHITE);
+        }
+        self.annotations(ui, &painter, rect, avail);
+    }
+
+    /// Markers of positioned cues on the video, the position picker and marker dragging
+    /// (`docs/features/cue-editor.md#screen-positions`).
+    fn annotations(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, video: egui::Rect, panel: egui::Rect) {
+        let to_screen = |(x, y): (f32, f32)| video.min + egui::vec2(x * video.width(), y * video.height());
+        let to_video = |p: egui::Pos2| {
+            let coord = |v: f32, start: f32, size: f32| inspector::round3(((v - start) / size.max(1.0)).clamp(0.0, 1.0));
+            (coord(p.x, video.left(), video.width()), coord(p.y, video.top(), video.height()))
+        };
+        let picking = self.picking.is_some() && self.picking == self.selected_cue;
+        if picking {
+            let pick = ui.interact(panel, ui.scope_id().with("pick"), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::Crosshair);
+            if pick.clicked()
+                && let Some(p) = pick.interact_pointer_pos()
+            {
+                self.set_position(Some(to_video(p)));
+                self.picking = None;
+            }
+        }
+
+        // Positioned cues active at the playhead, and the selected one; selected drawn last.
+        let at = self.player.position().as_micros() as u64;
+        let mut markers = Vec::new();
+        for (si, stream) in self.doc.streams().iter().enumerate() {
+            for c in &stream.cues {
+                let selected = self.selected_cue == Some(c.uid);
+                let end = if c.cue.duration > 0 { c.end_us() } else { c.time_us.saturating_add(INSTANT_MARKER_US) };
+                if !selected && !(c.time_us <= at && at < end) {
+                    continue;
+                }
+                let position = match self.marker_drag {
+                    Some((uid, p)) if uid == c.uid => Some(p),
+                    _ => c.cue.position(),
+                };
+                if let Some(position) = position {
+                    markers.push((c.uid, stream.uid, si, selected, position, timeline::label(c)));
+                }
+            }
+        }
+        markers.sort_by_key(|m| m.3);
+
+        let outline = egui::Stroke::new(1.5, egui::Color32::from_gray(24));
+        let ring = egui::Stroke::new(2.0, ui.visuals().strong_text_color());
+        for (uid, stream_uid, si, selected, position, label) in markers {
+            let p = to_screen(position);
+            let r = if selected { 8.0 } else { 6.0 };
+            painter.circle(p, r, timeline::stream_color(si), outline);
+            if selected {
+                painter.circle_stroke(p, r + 3.0, ring);
+            }
+            let galley = painter.layout_no_wrap(label, egui::FontId::proportional(13.0), egui::Color32::from_gray(235));
+            let text_at = p + egui::vec2(r + 8.0, -galley.size().y / 2.0);
+            painter.rect_filled(egui::Rect::from_min_size(text_at, galley.size()).expand(4.0), 4.0, egui::Color32::from_black_alpha(190));
+            painter.galley(text_at, galley, egui::Color32::WHITE);
+            if picking {
+                continue;
+            }
+            let sense = if selected { egui::Sense::click_and_drag() } else { egui::Sense::click() };
+            let hit = ui.interact(egui::Rect::from_center_size(p, egui::Vec2::splat(r * 2.0 + 8.0)), ui.scope_id().with(("marker", uid)), sense);
+            if selected {
+                let hit = hit.on_hover_cursor(egui::CursorIcon::Grab);
+                if hit.dragged()
+                    && let Some(p) = hit.interact_pointer_pos()
+                {
+                    self.marker_drag = Some((uid, to_video(p)));
+                }
+                if hit.drag_stopped()
+                    && let Some((_, p)) = self.marker_drag.take()
+                {
+                    self.set_position(Some(p));
+                }
+            } else if hit.clicked() {
+                self.selected_cue = Some(uid);
+                self.selected_stream = Some(stream_uid);
+            }
         }
     }
 
