@@ -60,9 +60,9 @@ pub fn layout(channels: usize, mask: u32) -> Layout {
     }
     let mut mono = 0;
     let mut lfe_stream = None;
-    for c in 0..channels {
-        if mapping[c] == u8::MAX {
-            mapping[c] = (2 * coupled + mono) as u8;
+    for (c, coded) in mapping.iter_mut().enumerate() {
+        if *coded == u8::MAX {
+            *coded = (2 * coupled + mono) as u8;
             if mask & LFE != 0 && c == channel_of(LFE) {
                 lfe_stream = Some(coupled + mono);
             }

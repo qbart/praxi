@@ -24,7 +24,7 @@ fn samples(from: u64, to: u64, channels: u16, format: SampleFormat) -> Vec<u8> {
             match format {
                 SampleFormat::S16 => out.extend_from_slice(&((i as i16 * 10) * sign).to_le_bytes()),
                 SampleFormat::F32 => out.extend_from_slice(&((i as f32 / 1000.0) * sign as f32).to_le_bytes()),
-                SampleFormat::Adpcm => unreachable!("see plays_adpcm"),
+                SampleFormat::Adpcm | SampleFormat::Opus => unreachable!("see plays_adpcm and the encoder's opus tests"),
             }
         }
     }
