@@ -212,7 +212,10 @@ fn react(mut cues: MessageReader<PraxiCue<GameCue>>, mut events: MessageReader<P
             Event::CueEnd { id, .. } => {
                 game.shakes.remove(id);
             }
-            Event::Seeked { .. } | Event::Looped => game.flashes.clear(),
+            Event::Seeked { .. } | Event::Looped => {
+                game.flashes.clear();
+                game.played.clear();
+            }
             _ => {}
         }
     }
@@ -281,28 +284,33 @@ fn overlays(
     for (id, label, position, bubble) in &wanted {
         let point = position_on_sprite(*position, size, Vec2::ZERO, at);
         let at_label = if *bubble {
-            gizmos.rect_2d(Isometry2d::from_translation(point.truncate() + Vec2::new(0.0, 4.0)), Vec2::new(label.len() as f32 * 13.0 + 24.0, 44.0), Color::WHITE);
-            point + Vec3::new(0.0, 4.0, 1.0)
+            point + Vec3::Z
         } else {
             gizmos.circle_2d(Isometry2d::from_translation(point.truncate()), 18.0, MARKER_COLOR);
             gizmos.circle_2d(Isometry2d::from_translation(point.truncate()), 4.0, MARKER_COLOR);
             point + Vec3::new(28.0, 0.0, 1.0)
         };
+        // Spaces pad the bubble's background.
+        let label = if *bubble { format!(" {label} ") } else { label.clone() };
         shown.push(*id);
         match existing.iter_mut().find(|(_, o, _, _)| o.0 == *id) {
             Some((_, _, mut transform, mut text)) => {
                 transform.translation = at_label;
-                if text.0 != *label {
-                    text.0 = label.clone();
+                if text.0 != label {
+                    text.0 = label;
                 }
             }
             None => {
-                let anchor = if *bubble { Anchor::CENTER } else { Anchor::CENTER_LEFT };
+                let (anchor, color, background) = match bubble {
+                    true => (Anchor::CENTER, Color::WHITE, BUBBLE_COLOR),
+                    false => (Anchor::CENTER_LEFT, MARKER_COLOR, Color::NONE),
+                };
                 commands.spawn((
                     Overlay(*id),
-                    Text2d::new(label.clone()),
-                    TextFont { font_size: FontSize::Px(22.0), ..default() },
-                    TextColor(if *bubble { Color::WHITE } else { MARKER_COLOR }),
+                    Text2d::new(label),
+                    TextFont { font_size: FontSize::Px(26.0), ..default() },
+                    TextColor(color),
+                    TextBackgroundColor(background),
                     anchor,
                     Transform::from_translation(at_label),
                 ));
