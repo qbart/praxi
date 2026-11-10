@@ -11,10 +11,12 @@ use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderQueue};
 use bevy::render::texture::GpuImage;
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use file::SharedFile;
-use praxi::{Capabilities, Player};
+use praxi::{Capabilities, Event, Player};
 use praxi_wgpu::{Rect, VideoRenderer};
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::io::BufReader;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -33,7 +35,8 @@ pub struct PraxiPlugin;
 impl Plugin for PraxiPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<PraxiEvent>()
-            .add_systems(Update, advance)
+            .configure_sets(Update, (PraxiSystems::Advance, PraxiSystems::Cues).chain())
+            .add_systems(Update, advance.in_set(PraxiSystems::Advance))
             .add_systems(PostUpdate, draw);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
@@ -44,11 +47,87 @@ impl Plugin for PraxiPlugin {
     }
 }
 
+/// The `Update` systems of the plugins, in order.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PraxiSystems {
+    /// Advances the players and sends [`PraxiEvent`]s.
+    Advance,
+    /// Sends [`PraxiCue`]s.
+    Cues,
+}
+
 /// A player event of the video on `entity`.
 #[derive(Message, Debug, Clone)]
 pub struct PraxiEvent {
     pub entity: Entity,
     pub event: praxi::Event,
+}
+
+/// Sends every cue that parses into `T` (usually the game's cue enum) as a [`PraxiCue<T>`];
+/// needs [`PraxiPlugin`] (`docs/features/cue-runtime.md#bevy-typed-cue-messages`).
+pub struct PraxiCuePlugin<T>(PhantomData<fn() -> T>);
+
+impl<T> Default for PraxiCuePlugin<T> {
+    fn default() -> Self {
+        PraxiCuePlugin(PhantomData)
+    }
+}
+
+impl<T: DeserializeOwned + Send + Sync + 'static> Plugin for PraxiCuePlugin<T> {
+    fn build(&self, app: &mut App) {
+        app.add_message::<PraxiCue<T>>().add_systems(Update, parse_cues::<T>.in_set(PraxiSystems::Cues));
+    }
+}
+
+/// A cue of the video on `entity`, parsed into `T`.
+#[derive(Message, Debug, Clone)]
+pub struct PraxiCue<T> {
+    pub entity: Entity,
+    /// Matches the `id` of its `CueEnd` in [`PraxiEvent`].
+    pub id: u64,
+    pub stream: u16,
+    pub time: Duration,
+    /// Zero for instantaneous cues.
+    pub duration: Duration,
+    pub position: Option<(f32, f32)>,
+    pub cue: T,
+}
+
+/// Parses the cues among this frame's [`PraxiEvent`]s; unknown cue types are skipped,
+/// malformed cues reported.
+fn parse_cues<T: DeserializeOwned + Send + Sync + 'static>(
+    mut events: MessageReader<PraxiEvent>,
+    videos: Query<&PraxiVideo>,
+    mut cues: MessageWriter<PraxiCue<T>>,
+) {
+    for PraxiEvent { entity, event } in events.read() {
+        let Event::Cue(c) = event else { continue };
+        match c.parse::<T>() {
+            Ok(cue) => {
+                let (id, stream, time, duration, position) = (c.id, c.stream, c.time, c.duration, c.position());
+                cues.write(PraxiCue { entity: *entity, id, stream, time, duration, position, cue });
+            }
+            Err(e) if e.is_unknown_type() => {}
+            Err(e) => {
+                let file = videos.get(*entity).map(|v| v.path.display().to_string()).unwrap_or_else(|_| entity.to_string());
+                eprintln!("praxi: {file}: {e}");
+            }
+        }
+    }
+}
+
+/// The point at a cue position (`x`, `y` in `0..=1` from the top left of the video) in
+/// `rect`, y down: a UI node's rectangle or the window in logical pixels.
+pub fn position_in_rect((x, y): (f32, f32), rect: bevy::math::Rect) -> Vec2 {
+    rect.min + Vec2::new(x, y) * rect.size()
+}
+
+/// The world point at a cue position on a sprite showing the video: `size` is the sprite's
+/// size, `anchor` the value of its `Anchor` (`Vec2::ZERO` for the centre). World y is up,
+/// so `y = 0` is the sprite's top edge.
+pub fn position_on_sprite((x, y): (f32, f32), size: Vec2, anchor: Vec2, transform: &GlobalTransform) -> Vec3 {
+    let local = (Vec2::new(x - 0.5, 0.5 - y) - anchor) * size;
+    transform.transform_point(local.extend(0.0))
 }
 
 /// A praxi file playing into an [`Image`].
@@ -250,10 +329,11 @@ mod tests {
             ImagePlugin::default(),
             bevy::mesh::MeshPlugin,
             PraxiPlugin,
+            PraxiCuePlugin::<TestCue>::default(),
         ))
         .init_resource::<ClearColor>()
         .init_resource::<Seen>()
-        .add_systems(Update, collect.after(advance));
+        .add_systems(Update, collect.after(PraxiSystems::Cues));
         while app.plugins_state() == PluginsState::Adding {
             bevy::tasks::tick_global_task_pools_on_main_thread();
         }
@@ -264,12 +344,35 @@ mod tests {
         Some(app)
     }
 
-    /// Every [`PraxiEvent`] so far.
-    #[derive(Resource, Default)]
-    struct Seen(Vec<PraxiEvent>);
+    #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+    enum TestCue {
+        #[serde(rename = "boom")]
+        Boom,
+    }
 
-    fn collect(mut events: MessageReader<PraxiEvent>, mut seen: ResMut<Seen>) {
+    /// Every [`PraxiEvent`] and [`PraxiCue`] so far.
+    #[derive(Resource, Default)]
+    struct Seen(Vec<PraxiEvent>, Vec<PraxiCue<TestCue>>);
+
+    fn collect(mut events: MessageReader<PraxiEvent>, mut cues: MessageReader<PraxiCue<TestCue>>, mut seen: ResMut<Seen>) {
         seen.0.extend(events.read().cloned());
+        seen.1.extend(cues.read().cloned());
+    }
+
+    #[test]
+    fn positions_map_to_rects_and_sprites() {
+        let rect = bevy::math::Rect::new(100.0, 50.0, 500.0, 250.0);
+        assert_eq!(position_in_rect((0.0, 0.0), rect), Vec2::new(100.0, 50.0));
+        assert_eq!(position_in_rect((0.25, 1.0), rect), Vec2::new(200.0, 250.0));
+
+        let size = Vec2::new(400.0, 200.0);
+        let at = GlobalTransform::from_translation(Vec3::new(10.0, 20.0, 5.0));
+        assert_eq!(position_on_sprite((0.5, 0.5), size, Vec2::ZERO, &at), Vec3::new(10.0, 20.0, 5.0));
+        assert_eq!(position_on_sprite((0.0, 0.0), size, Vec2::ZERO, &at), Vec3::new(-190.0, 120.0, 5.0), "top left, y up");
+        let top_left_anchor = Vec2::new(-0.5, 0.5);
+        assert_eq!(position_on_sprite((0.0, 0.0), size, top_left_anchor, &at), Vec3::new(10.0, 20.0, 5.0));
+        let scaled = GlobalTransform::from(Transform::from_scale(Vec3::splat(2.0)));
+        assert_eq!(position_on_sprite((1.0, 1.0), size, Vec2::ZERO, &scaled), Vec3::new(400.0, -200.0, 0.0));
     }
 
     fn clip(path: &Path, variant: VariantConfig) {
@@ -315,9 +418,12 @@ mod tests {
             assert!(video.version >= 2, "{name}: {} frames drawn", video.version);
             let copies = app.sub_app(RenderApp).world().resource::<Copies>();
             assert!(copies.copied.get(&image).is_some_and(|&v| v + 1 >= video.version), "{name}: copied {:?}", copies.copied);
-            let seen = &app.world().resource::<Seen>().0;
+            let seen = app.world().resource::<Seen>();
             let cue = |m: &PraxiEvent| m.entity == entity && matches!(&m.event, praxi::Event::Cue(c) if c.kind == "boom");
-            assert!(seen.iter().any(cue), "{name}: the cue arrives as a message: {seen:?}");
+            assert!(seen.0.iter().any(cue), "{name}: the cue arrives as a message: {:?}", seen.0);
+            let typed: Vec<_> = seen.1.iter().filter(|c| c.entity == entity).collect();
+            assert_eq!(typed.len(), 1, "{name}: one typed cue: {:?}", seen.1);
+            assert_eq!((typed[0].cue.clone(), typed[0].time), (TestCue::Boom, Duration::from_millis(250)));
             app.world_mut().despawn(entity);
         }
         std::fs::remove_dir_all(&dir).unwrap();

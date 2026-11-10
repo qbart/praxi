@@ -8,6 +8,7 @@ edition.workspace = true
 praxi = { workspace = true, features = ["cue-sheet"] }
 praxi-wgpu.workspace = true
 wgpu.workspace = true
+serde.workspace = true
 bevy = { version = "0.20.1", default-features = false, features = ["std", "multi_threaded", "bevy_asset", "bevy_image", "bevy_render"] }
 
 [dev-dependencies]

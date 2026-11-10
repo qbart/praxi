@@ -4029,6 +4029,7 @@ dependencies = [
  "praxi",
  "praxi-encoder",
  "praxi-wgpu",
+ "serde",
  "wgpu",
 ]
 
