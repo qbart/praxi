@@ -268,17 +268,10 @@ fn color(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 /// The WGSL source of one pass, constants filled in.
 fn source(pass: &str) -> String {
-    let list =
-        |v: &mut dyn Iterator<Item = i32>| v.map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
+    let list = |v: &mut dyn Iterator<Item = i32>| v.map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
     let pass = pass
-        .replace(
-            "FILTER_8_VALUES",
-            &list(&mut FILTER_8.iter().flatten().copied()),
-        )
-        .replace(
-            "FILTER_4_VALUES",
-            &list(&mut FILTER_4.iter().flatten().copied()),
-        )
+        .replace("FILTER_8_VALUES", &list(&mut FILTER_8.iter().flatten().copied()))
+        .replace("FILTER_4_VALUES", &list(&mut FILTER_4.iter().flatten().copied()))
         .replace("DCT_VALUES", &list(&mut DCT.iter().flatten().copied()))
         .replace("PREDICT_GROUP", &PREDICT_GROUP.to_string())
         .replace("MB_WORDS", &MB_WORDS.to_string())
@@ -308,20 +301,13 @@ fn raise(base: wgpu::Limits) -> wgpu::Limits {
 /// `docs/features/motion-codec.md#gpu-decoder-praxi-wgpu`.
 pub fn supported(adapter: &wgpu::Adapter) -> bool {
     let limits = adapter.limits();
-    adapter
-        .get_downlevel_capabilities()
-        .flags
-        .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+    adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
         && raise(wgpu::Limits::downlevel_webgl2_defaults()).check_limits(&limits)
 }
 
 /// `base` raised to the limits the motion decoder needs, when the adapter supports it.
 pub fn required_limits(adapter: &wgpu::Adapter, base: wgpu::Limits) -> wgpu::Limits {
-    if supported(adapter) {
-        raise(base)
-    } else {
-        base
-    }
+    if supported(adapter) { raise(base) } else { base }
 }
 
 /// Binding types of the passes, in binding order after the uniform.
@@ -359,9 +345,7 @@ impl Pipelines {
             for (i, slot) in slots.iter().enumerate() {
                 let ty = match slot {
                     Slot::Read | Slot::ReadWrite => wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage {
-                            read_only: matches!(slot, Slot::Read),
-                        },
+                        ty: wgpu::BufferBindingType::Storage { read_only: matches!(slot, Slot::Read) },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -449,28 +433,15 @@ struct Timing {
 impl Timing {
     fn new(device: &wgpu::Device) -> Timing {
         let size = (TIMED_FRAMES * FRAME_QUERIES * 8) as u64;
-        let buffer = |label, usage| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size,
-                usage,
-                mapped_at_creation: false,
-            })
-        };
+        let buffer = |label, usage| device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size, usage, mapped_at_creation: false });
         Timing {
             queries: device.create_query_set(&wgpu::QuerySetDescriptor {
                 label: Some("motion timing"),
                 ty: wgpu::QueryType::Timestamp,
                 count: (TIMED_FRAMES * FRAME_QUERIES) as u32,
             }),
-            resolve: buffer(
-                "motion timing resolve",
-                wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-            ),
-            readback: buffer(
-                "motion timing readback",
-                wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            ),
+            resolve: buffer("motion timing resolve", wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC),
+            readback: buffer("motion timing readback", wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST),
             frames: Vec::new(),
         }
     }
@@ -493,21 +464,14 @@ fn storage_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::COPY_SRC,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     })
 }
 
 impl Decoder {
     /// `texture` is the track's `Rgba8Unorm` texture, created with `STORAGE_BINDING`.
-    pub(crate) fn new(
-        device: &wgpu::Device,
-        pipelines: &Pipelines,
-        layout: Layout,
-        texture: &wgpu::Texture,
-    ) -> Decoder {
+    pub(crate) fn new(device: &wgpu::Device, pipelines: &Pipelines, layout: Layout, texture: &wgpu::Texture) -> Decoder {
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("motion params"),
             size: PARAMS_SIZE as u64,
@@ -515,19 +479,9 @@ impl Decoder {
             mapped_at_creation: false,
         });
         let mut params_bytes = [0u8; PARAMS_SIZE];
-        let mut put =
-            |at: usize, v: u32| params_bytes[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        let mut put = |at: usize, v: u32| params_bytes[at..at + 4].copy_from_slice(&v.to_le_bytes());
         for (i, p) in layout.planes.iter().enumerate() {
-            for (k, v) in [
-                p.width,
-                p.height,
-                (p.offset / 4) as u32,
-                p.first_block,
-                p.shift,
-            ]
-            .into_iter()
-            .enumerate()
-            {
+            for (k, v) in [p.width, p.height, (p.offset / 4) as u32, p.first_block, p.shift].into_iter().enumerate() {
                 put(32 * i + 4 * k, v);
             }
         }
@@ -537,30 +491,12 @@ impl Decoder {
         put(140, layout.height);
         put(148, (layout.size / 4) as u32);
         let planes = [0, 1].map(|_| storage_buffer(device, "motion planes", layout.size as u64));
-        let mbs = storage_buffer(
-            device,
-            "motion macroblocks",
-            words_size(layout.mb_count() * MB_WORDS),
-        );
+        let mbs = storage_buffer(device, "motion macroblocks", words_size(layout.mb_count() * MB_WORDS));
         let blocks = storage_buffer(device, "motion blocks", words_size(0));
         let coeffs = storage_buffer(device, "motion coefficients", words_size(0));
         let view = texture.create_view(&Default::default());
-        let groups = bind_groups(
-            device, pipelines, &params, &planes, &mbs, &blocks, &coeffs, &view,
-        );
-        Decoder {
-            layout,
-            params,
-            params_bytes,
-            planes,
-            current: 0,
-            mbs,
-            blocks,
-            coeffs,
-            view,
-            groups,
-            timing: None,
-        }
+        let groups = bind_groups(device, pipelines, &params, &planes, &mbs, &blocks, &coeffs, &view);
+        Decoder { layout, params, params_bytes, planes, current: 0, mbs, blocks, coeffs, view, groups, timing: None }
     }
 
     /// Starts or stops timing the passes; the device must have `TIMESTAMP_QUERY`.
@@ -571,48 +507,30 @@ impl Decoder {
     }
 
     /// The GPU times of the frames timed since the last call, waiting for the GPU.
-    pub(crate) fn read_times(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-    ) -> Vec<FrameTime> {
-        let Some(timing) = &mut self.timing else {
-            return Vec::new();
-        };
+    pub(crate) fn read_times(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<FrameTime> {
+        let Some(timing) = &mut self.timing else { return Vec::new() };
         let frames = std::mem::take(&mut timing.frames);
         if frames.is_empty() {
             return Vec::new();
         }
         let count = frames.len() * FRAME_QUERIES;
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("motion timing"),
-        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("motion timing") });
         encoder.resolve_query_set(&timing.queries, 0..count as u32, &timing.resolve, 0);
         encoder.copy_buffer_to_buffer(&timing.resolve, 0, &timing.readback, 0, (count * 8) as u64);
         queue.submit([encoder.finish()]);
         let slice = timing.readback.slice(..(count * 8) as u64);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("GPU wait");
-        let ticks: Vec<u64> =
-            bytemuck::cast_slice(&slice.get_mapped_range().expect("mapped timestamps")).to_vec();
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU wait");
+        let ticks: Vec<u64> = bytemuck::cast_slice(&slice.get_mapped_range().expect("mapped timestamps")).to_vec();
         timing.readback.unmap();
         let period = queue.get_timestamp_period() as f64;
-        let span = |i: usize| {
-            Duration::from_nanos((ticks[i + 1].saturating_sub(ticks[i]) as f64 * period) as u64)
-        };
+        let span = |i: usize| Duration::from_nanos((ticks[i + 1].saturating_sub(ticks[i]) as f64 * period) as u64);
         frames
             .iter()
             .enumerate()
             .map(|(f, &(keyframe, shown))| {
                 let at = f * FRAME_QUERIES;
-                FrameTime {
-                    keyframe,
-                    predict: span(at),
-                    residual: span(at + 2),
-                    color: shown.then(|| span(at + 4)),
-                }
+                FrameTime { keyframe, predict: span(at), residual: span(at + 2), color: shown.then(|| span(at + 4)) }
             })
             .collect()
     }
@@ -633,16 +551,9 @@ impl Decoder {
         show: bool,
     ) {
         let mut grew = false;
-        for (buffer, words) in [
-            (&mut self.blocks, frame.blocks.len()),
-            (&mut self.coeffs, frame.coeffs.len()),
-        ] {
+        for (buffer, words) in [(&mut self.blocks, frame.blocks.len()), (&mut self.coeffs, frame.coeffs.len())] {
             if buffer.size() < words_size(words) {
-                *buffer = storage_buffer(
-                    device,
-                    "motion coded frame",
-                    words_size(words.next_power_of_two()),
-                );
+                *buffer = storage_buffer(device, "motion coded frame", words_size(words.next_power_of_two()));
                 grew = true;
             }
         }
@@ -665,29 +576,19 @@ impl Decoder {
             bytes[160 + 4 * i..164 + 4 * i].copy_from_slice(&s.to_le_bytes());
         }
         queue.write_buffer(&self.params, 0, &bytes);
-        for (buffer, data) in [
-            (&self.mbs, &frame.mbs),
-            (&self.blocks, &frame.blocks),
-            (&self.coeffs, &frame.coeffs),
-        ] {
+        for (buffer, data) in [(&self.mbs, &frame.mbs), (&self.blocks, &frame.blocks), (&self.coeffs, &frame.coeffs)] {
             if !data.is_empty() {
                 queue.write_buffer(buffer, 0, bytemuck::cast_slice(data));
             }
         }
         let next = 1 - self.current;
         let groups = &self.groups[next];
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("motion"),
-        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("motion") });
         // Timed frames run each stage in its own pass, with timestamps at its start and end.
-        let timed = self
-            .timing
-            .as_mut()
-            .filter(|t| t.frames.len() < TIMED_FRAMES)
-            .map(|t| {
-                t.frames.push((frame.keyframe, show));
-                (&t.queries, ((t.frames.len() - 1) * FRAME_QUERIES) as u32)
-            });
+        let timed = self.timing.as_mut().filter(|t| t.frames.len() < TIMED_FRAMES).map(|t| {
+            t.frames.push((frame.keyframe, show));
+            (&t.queries, ((t.frames.len() - 1) * FRAME_QUERIES) as u32)
+        });
         let writes = |stage: u32| {
             timed.map(|(query_set, base)| wgpu::ComputePassTimestampWrites {
                 query_set,
@@ -695,20 +596,14 @@ impl Decoder {
                 end_of_pass_write_index: Some(base + 2 * stage + 1),
             })
         };
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("motion"),
-            timestamp_writes: writes(0),
-        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("motion"), timestamp_writes: writes(0) });
         pass.set_pipeline(&pipelines.predict.0);
         pass.set_bind_group(0, &groups.predict, &[]);
         let (x, y) = split((self.layout.size / 4) as u32, PREDICT_GROUP);
         pass.dispatch_workgroups(x, y, 1);
         if timed.is_some() {
             drop(pass);
-            pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("motion residual"),
-                timestamp_writes: writes(1),
-            });
+            pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("motion residual"), timestamp_writes: writes(1) });
         }
         if block_count > 0 {
             pass.set_pipeline(&pipelines.residual.0);
@@ -719,18 +614,11 @@ impl Decoder {
         if show {
             if timed.is_some() {
                 drop(pass);
-                pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("motion color"),
-                    timestamp_writes: writes(2),
-                });
+                pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("motion color"), timestamp_writes: writes(2) });
             }
             pass.set_pipeline(&pipelines.color.0);
             pass.set_bind_group(0, &groups.color, &[]);
-            pass.dispatch_workgroups(
-                self.layout.width.div_ceil(8),
-                self.layout.height.div_ceil(8),
-                1,
-            );
+            pass.dispatch_workgroups(self.layout.width.div_ceil(8), self.layout.height.div_ceil(8), 1);
         }
         drop(pass);
         queue.submit([encoder.finish()]);
@@ -751,21 +639,11 @@ fn bind_groups(
     view: &wgpu::TextureView,
 ) -> [BindGroups; 2] {
     let group = |label, layout: &wgpu::BindGroupLayout, resources: &[wgpu::BindingResource<'_>]| {
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: params.as_entire_binding(),
-        }];
+        let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() }];
         for (i, r) in resources.iter().enumerate() {
-            entries.push(wgpu::BindGroupEntry {
-                binding: i as u32 + 1,
-                resource: r.clone(),
-            });
+            entries.push(wgpu::BindGroupEntry { binding: i as u32 + 1, resource: r.clone() });
         }
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(label),
-            layout,
-            entries: &entries,
-        })
+        device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(label), layout, entries: &entries })
     };
     [0, 1].map(|i| {
         let (reference, current) = (&planes[1 - i], &planes[i]);
@@ -773,29 +651,14 @@ fn bind_groups(
             predict: group(
                 "predict",
                 &pipelines.predict.1,
-                &[
-                    reference.as_entire_binding(),
-                    current.as_entire_binding(),
-                    mbs.as_entire_binding(),
-                ],
+                &[reference.as_entire_binding(), current.as_entire_binding(), mbs.as_entire_binding()],
             ),
             residual: group(
                 "residual",
                 &pipelines.residual.1,
-                &[
-                    current.as_entire_binding(),
-                    blocks.as_entire_binding(),
-                    coeffs.as_entire_binding(),
-                ],
+                &[current.as_entire_binding(), blocks.as_entire_binding(), coeffs.as_entire_binding()],
             ),
-            color: group(
-                "color",
-                &pipelines.color.1,
-                &[
-                    current.as_entire_binding(),
-                    wgpu::BindingResource::TextureView(view),
-                ],
-            ),
+            color: group("color", &pipelines.color.1, &[current.as_entire_binding(), wgpu::BindingResource::TextureView(view)]),
         }
     })
 }

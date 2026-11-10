@@ -78,10 +78,7 @@ impl AudioOutput {
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<'_, Queue> {
-        self.shared
-            .queue
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.shared.queue.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -133,10 +130,7 @@ impl fmt::Debug for AudioOutput {
 impl Queue {
     pub(crate) fn set_tolerance(&mut self, tolerance_us: u64) {
         self.tolerance = us_to_frames(tolerance_us, self.sample_rate);
-        self.keep = us_to_frames(
-            self.preload_us + tolerance_us + QUEUE_SLACK_US,
-            self.sample_rate,
-        );
+        self.keep = us_to_frames(self.preload_us + tolerance_us + QUEUE_SLACK_US, self.sample_rate);
     }
 
     /// Output frame after the last frame read (the master position of `Clock::Audio`).
@@ -158,8 +152,7 @@ impl Queue {
 
     /// Drops `frames` frames from the front, moving the read position even past the end.
     fn skip(&mut self, frames: u64) {
-        let n = (frames.min(usize::MAX as u64 / self.channels as u64) as usize * self.channels)
-            .min(self.samples.len());
+        let n = (frames.min(usize::MAX as u64 / self.channels as u64) as usize * self.channels).min(self.samples.len());
         self.samples.drain(..n);
         self.start += frames;
     }
@@ -181,8 +174,7 @@ impl Queue {
             if gap > self.keep {
                 self.reset(at);
             } else {
-                self.samples
-                    .extend(std::iter::repeat_n(0.0, gap as usize * ch));
+                self.samples.extend(std::iter::repeat_n(0.0, gap as usize * ch));
             }
         }
         self.samples.extend(&samples[skip as usize * ch..]);

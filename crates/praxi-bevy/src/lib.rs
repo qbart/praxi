@@ -75,25 +75,12 @@ struct Gpu {
 impl PraxiVideo {
     /// Opens `path` with the texture formats `adapter` supports, paused at the first frame,
     /// and adds its image to `images`.
-    pub fn open(
-        path: &Path,
-        adapter: &RenderAdapter,
-        images: &mut Assets<Image>,
-    ) -> Result<PraxiVideo, String> {
+    pub fn open(path: &Path, adapter: &RenderAdapter, images: &mut Assets<Image>) -> Result<PraxiVideo, String> {
         let caps = praxi_wgpu::capabilities(adapter, None)?;
         let (player, file) = open_player(path, &caps)?;
         let video = player.tracks()[0].params;
-        let size = wgpu::Extent3d {
-            width: video.width,
-            height: video.height,
-            depth_or_array_layers: 1,
-        };
-        let image = Image::new_uninit(
-            size,
-            wgpu::TextureDimension::D2,
-            FORMAT,
-            RenderAssetUsages::RENDER_WORLD,
-        );
+        let size = wgpu::Extent3d { width: video.width, height: video.height, depth_or_array_layers: 1 };
+        let image = Image::new_uninit(size, wgpu::TextureDimension::D2, FORMAT, RenderAssetUsages::RENDER_WORLD);
         Ok(PraxiVideo {
             image: images.add(image),
             player: SyncCell::new(player),
@@ -139,8 +126,7 @@ impl PraxiVideo {
 
 fn open_player(path: &Path, caps: &Capabilities) -> Result<(FilePlayer, SharedFile), String> {
     let file = SharedFile::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut player = Player::open(BufReader::new(file.clone()), caps)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut player = Player::open(BufReader::new(file.clone()), caps).map_err(|e| format!("{}: {e}", path.display()))?;
     if player.tracks().is_empty() {
         return Err("the file has no video track this GPU can show".into());
     }
@@ -148,11 +134,7 @@ fn open_player(path: &Path, caps: &Capabilities) -> Result<(FilePlayer, SharedFi
     Ok((player, file))
 }
 
-fn advance(
-    time: Res<Time>,
-    mut videos: Query<(Entity, &mut PraxiVideo)>,
-    mut events: MessageWriter<PraxiEvent>,
-) {
+fn advance(time: Res<Time>, mut videos: Query<(Entity, &mut PraxiVideo)>, mut events: MessageWriter<PraxiEvent>) {
     for (entity, mut video) in &mut videos {
         let player = video.player.get();
         if let Err(e) = player.advance(time.delta()) {
@@ -165,14 +147,8 @@ fn advance(
     }
 }
 
-fn draw(
-    device: Option<Res<RenderDevice>>,
-    queue: Option<Res<RenderQueue>>,
-    mut videos: Query<&mut PraxiVideo>,
-) {
-    let (Some(device), Some(queue)) = (device, queue) else {
-        return;
-    };
+fn draw(device: Option<Res<RenderDevice>>, queue: Option<Res<RenderQueue>>, mut videos: Query<&mut PraxiVideo>) {
+    let (Some(device), Some(queue)) = (device, queue) else { return };
     let (device, queue) = (device.wgpu_device(), &**queue);
     for mut video in &mut videos {
         let video = &mut *video;
@@ -181,11 +157,7 @@ fn draw(
             let params = player.tracks()[0].params;
             let target = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("praxi video"),
-                size: wgpu::Extent3d {
-                    width: params.width,
-                    height: params.height,
-                    depth_or_array_layers: 1,
-                },
+                size: wgpu::Extent3d { width: params.width, height: params.height, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -194,11 +166,7 @@ fn draw(
                 view_formats: &[],
             });
             let view = target.create_view(&Default::default());
-            Gpu {
-                renderer: VideoRenderer::new(device, FORMAT, player),
-                target,
-                view,
-            }
+            Gpu { renderer: VideoRenderer::new(device, FORMAT, player), target, view }
         });
         if gpu.renderer.prepare(device, queue, player, 1.0) == 0 {
             continue;
@@ -212,22 +180,11 @@ fn draw(
                     view: &gpu.view,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
                 })],
                 ..Default::default()
             });
-            gpu.renderer.draw_replace(
-                &mut pass,
-                Rect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: size.width as f32,
-                    h: size.height as f32,
-                },
-            );
+            gpu.renderer.draw_replace(&mut pass, Rect { x: 0.0, y: 0.0, w: size.width as f32, h: size.height as f32 });
         }
         queue.submit([encoder.finish()]);
         video.version += 1;
@@ -245,38 +202,21 @@ fn extract(videos: Extract<Query<&PraxiVideo>>, mut copies: ResMut<Copies>) {
     copies.pending.clear();
     for video in &videos {
         if let Some(gpu) = &video.gpu {
-            copies
-                .pending
-                .push((video.image.id(), gpu.target.clone(), video.version));
+            copies.pending.push((video.image.id(), gpu.target.clone(), video.version));
         }
     }
 }
 
-fn copy(
-    mut copies: ResMut<Copies>,
-    images: Res<RenderAssets<GpuImage>>,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
-) {
+fn copy(mut copies: ResMut<Copies>, images: Res<RenderAssets<GpuImage>>, device: Res<RenderDevice>, queue: Res<RenderQueue>) {
     let copies = &mut *copies;
     let mut encoder = None;
     for (id, texture, version) in &copies.pending {
-        let Some(image) = images.get(*id) else {
-            continue;
-        };
+        let Some(image) = images.get(*id) else { continue };
         if copies.copied.get(id) == Some(version) {
             continue;
         }
-        let encoder = encoder.get_or_insert_with(|| {
-            device
-                .wgpu_device()
-                .create_command_encoder(&Default::default())
-        });
-        encoder.copy_texture_to_texture(
-            texture.as_image_copy(),
-            image.texture.as_image_copy(),
-            texture.size(),
-        );
+        let encoder = encoder.get_or_insert_with(|| device.wgpu_device().create_command_encoder(&Default::default()));
+        encoder.copy_texture_to_texture(texture.as_image_copy(), image.texture.as_image_copy(), texture.size());
         copies.copied.insert(*id, *version);
     }
     if let Some(encoder) = encoder {
@@ -294,10 +234,7 @@ mod tests {
     /// Skips a test that cannot run here, or fails it when `PRAXI_TEST_STRICT` is set
     /// (`docs/features/testing.md`).
     fn skip(why: &str) {
-        assert!(
-            std::env::var_os("PRAXI_TEST_STRICT").is_none(),
-            "PRAXI_TEST_STRICT: {why}"
-        );
+        assert!(std::env::var_os("PRAXI_TEST_STRICT").is_none(), "PRAXI_TEST_STRICT: {why}");
         eprintln!("skipped: {why}");
     }
 
@@ -307,15 +244,9 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
-            bevy::window::WindowPlugin {
-                primary_window: None,
-                ..Default::default()
-            },
+            bevy::window::WindowPlugin { primary_window: None, ..Default::default() },
             AssetPlugin::default(),
-            bevy::render::RenderPlugin {
-                synchronous_pipeline_compilation: true,
-                ..Default::default()
-            },
+            bevy::render::RenderPlugin { synchronous_pipeline_compilation: true, ..Default::default() },
             ImagePlugin::default(),
             bevy::mesh::MeshPlugin,
             PraxiPlugin,
@@ -329,9 +260,7 @@ mod tests {
         app.finish();
         app.cleanup();
         app.world().get_resource::<RenderAdapter>()?;
-        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-            50,
-        )));
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(50)));
         Some(app)
     }
 
@@ -344,15 +273,10 @@ mod tests {
     }
 
     fn clip(path: &Path, variant: VariantConfig) {
-        let config = EncoderConfig::new(40, 24, 10, 1)
-            .variant(variant)
-            .keyint(4)
-            .cue(0.25, "boom");
+        let config = EncoderConfig::new(40, 24, 10, 1).variant(variant).keyint(4).cue(0.25, "boom");
         let mut enc = Encoder::new(std::fs::File::create(path).unwrap(), config).unwrap();
         for t in 0..8u32 {
-            let frame: Vec<u8> = (0..40 * 24)
-                .flat_map(|i| [(i % 40 * 6 + t * 9) as u8, (i / 40 * 10) as u8, 90, 255])
-                .collect();
+            let frame: Vec<u8> = (0..40 * 24).flat_map(|i| [(i % 40 * 6 + t * 9) as u8, (i / 40 * 10) as u8, 90, 255]).collect();
             enc.push_frame(&frame).unwrap();
         }
         enc.finish().unwrap();
@@ -379,11 +303,8 @@ mod tests {
                 continue;
             }
             let world = app.world_mut();
-            let mut video = world
-                .resource_scope(|_, mut images: Mut<Assets<Image>>| {
-                    PraxiVideo::open(&path, &adapter, &mut images)
-                })
-                .unwrap();
+            let mut video =
+                world.resource_scope(|_, mut images: Mut<Assets<Image>>| PraxiVideo::open(&path, &adapter, &mut images)).unwrap();
             video.player().play().unwrap();
             let image = video.image.id();
             let entity = world.spawn(video).id();
@@ -393,22 +314,10 @@ mod tests {
             let video = app.world().get::<PraxiVideo>(entity).unwrap();
             assert!(video.version >= 2, "{name}: {} frames drawn", video.version);
             let copies = app.sub_app(RenderApp).world().resource::<Copies>();
-            assert!(
-                copies
-                    .copied
-                    .get(&image)
-                    .is_some_and(|&v| v + 1 >= video.version),
-                "{name}: copied {:?}",
-                copies.copied
-            );
+            assert!(copies.copied.get(&image).is_some_and(|&v| v + 1 >= video.version), "{name}: copied {:?}", copies.copied);
             let seen = &app.world().resource::<Seen>().0;
-            let cue = |m: &PraxiEvent| {
-                m.entity == entity && matches!(&m.event, praxi::Event::Cue(c) if c.kind == "boom")
-            };
-            assert!(
-                seen.iter().any(cue),
-                "{name}: the cue arrives as a message: {seen:?}"
-            );
+            let cue = |m: &PraxiEvent| m.entity == entity && matches!(&m.event, praxi::Event::Cue(c) if c.kind == "boom");
+            assert!(seen.iter().any(cue), "{name}: the cue arrives as a message: {seen:?}");
             app.world_mut().despawn(entity);
         }
         std::fs::remove_dir_all(&dir).unwrap();

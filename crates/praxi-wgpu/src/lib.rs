@@ -10,19 +10,10 @@ use std::time::Duration;
 pub use motion::{required_limits, supported as supports_motion};
 
 /// BC formats in order of preference, then ASTC.
-const BC: [TextureFormat; 5] = [
-    TextureFormat::Bc7,
-    TextureFormat::Bc3,
-    TextureFormat::Bc1,
-    TextureFormat::Bc5,
-    TextureFormat::Bc4,
-];
-const ASTC: [TextureFormat; 4] = [
-    TextureFormat::Astc4x4,
-    TextureFormat::Astc5x5,
-    TextureFormat::Astc6x6,
-    TextureFormat::Astc8x8,
-];
+const BC: [TextureFormat; 5] =
+    [TextureFormat::Bc7, TextureFormat::Bc3, TextureFormat::Bc1, TextureFormat::Bc5, TextureFormat::Bc4];
+const ASTC: [TextureFormat; 4] =
+    [TextureFormat::Astc4x4, TextureFormat::Astc5x5, TextureFormat::Astc6x6, TextureFormat::Astc8x8];
 
 const SHADER: &str = r#"
 struct Params {
@@ -81,10 +72,7 @@ pub fn supported_formats(features: wgpu::Features) -> Vec<TextureFormat> {
 
 /// The player capabilities for an adapter, restricted to `only` when given: the texture
 /// formats it samples, then `motion` when it can run the motion decoder.
-pub fn capabilities(
-    adapter: &wgpu::Adapter,
-    only: Option<TextureFormat>,
-) -> Result<Capabilities, String> {
+pub fn capabilities(adapter: &wgpu::Adapter, only: Option<TextureFormat>) -> Result<Capabilities, String> {
     let mut supported = supported_formats(adapter.features());
     if supports_motion(adapter) {
         supported.push(TextureFormat::Motion);
@@ -95,28 +83,21 @@ pub fn capabilities(
         }
         Some(f) if !supported.contains(&f) => Err(format!("the GPU cannot sample {f}")),
         Some(f) => Ok(Capabilities::new([f])),
-        None if supported.is_empty() => {
-            Err("the GPU supports neither BC nor ASTC textures nor compute shaders".into())
-        }
+        None if supported.is_empty() => Err("the GPU supports neither BC nor ASTC textures nor compute shaders".into()),
         None => Ok(Capabilities::new(supported)),
     }
 }
 
 /// The compression features to request from `adapter`.
 pub fn required_features(adapter: &wgpu::Adapter) -> wgpu::Features {
-    adapter.features()
-        & (wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TEXTURE_COMPRESSION_ASTC)
+    adapter.features() & (wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TEXTURE_COMPRESSION_ASTC)
 }
 
 pub fn wgpu_format(format: TextureFormat, srgb: bool) -> wgpu::TextureFormat {
     use wgpu::TextureFormat as W;
     let astc = |block| W::Astc {
         block,
-        channel: if srgb {
-            wgpu::AstcChannel::UnormSrgb
-        } else {
-            wgpu::AstcChannel::Unorm
-        },
+        channel: if srgb { wgpu::AstcChannel::UnormSrgb } else { wgpu::AstcChannel::Unorm },
     };
     match format {
         TextureFormat::Bc1 if srgb => W::Bc1RgbaUnormSrgb,
@@ -149,16 +130,8 @@ impl Rect {
     /// The largest rectangle with the aspect ratio of `width x height` centred in the target.
     pub fn fit(width: u32, height: u32, target_w: u32, target_h: u32) -> Rect {
         let scale = (target_w as f32 / width as f32).min(target_h as f32 / height as f32);
-        let (w, h) = (
-            (width as f32 * scale).round().max(1.0),
-            (height as f32 * scale).round().max(1.0),
-        );
-        Rect {
-            x: ((target_w as f32 - w) / 2.0).floor(),
-            y: ((target_h as f32 - h) / 2.0).floor(),
-            w,
-            h,
-        }
+        let (w, h) = ((width as f32 * scale).round().max(1.0), (height as f32 * scale).round().max(1.0));
+        Rect { x: ((target_w as f32 - w) / 2.0).floor(), y: ((target_h as f32 - h) / 2.0).floor(), w, h }
     }
 
     /// The pixel at a cue position (`x`, `y` in `0..=1` from the top left of the video),
@@ -212,11 +185,7 @@ pub struct VideoRenderer {
 
 impl VideoRenderer {
     /// Creates pipelines drawing into `target` and one texture per video track of `player`.
-    pub fn new<R: Read + Seek>(
-        device: &wgpu::Device,
-        target: wgpu::TextureFormat,
-        player: &Player<R>,
-    ) -> VideoRenderer {
+    pub fn new<R: Read + Seek>(device: &wgpu::Device, target: wgpu::TextureFormat, player: &Player<R>) -> VideoRenderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("praxi"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -314,11 +283,7 @@ impl VideoRenderer {
             opacity: 1.0,
             motion: None,
         };
-        if player
-            .tracks()
-            .iter()
-            .any(|t| t.params.format == TextureFormat::Motion)
-        {
+        if player.tracks().iter().any(|t| t.params.format == TextureFormat::Motion) {
             renderer.motion = Some(motion::Pipelines::new(device));
         }
         for info in player.tracks() {
@@ -328,12 +293,7 @@ impl VideoRenderer {
                 && p.format == TextureFormat::Motion
             {
                 let layout = praxi::format::motion::Layout::new(p);
-                track.motion = Some(motion::Decoder::new(
-                    device,
-                    pipelines,
-                    layout,
-                    &track.texture,
-                ));
+                track.motion = Some(motion::Decoder::new(device, pipelines, layout, &track.texture));
             }
             renderer.tracks.push(track);
         }
@@ -353,19 +313,13 @@ impl VideoRenderer {
         let (padded_w, padded_h) = (blocks.0 * bw, blocks.1 * bh);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("track"),
-            size: wgpu::Extent3d {
-                width: padded_w,
-                height: padded_h,
-                depth_or_array_layers: 1,
-            },
+            size: wgpu::Extent3d { width: padded_w, height: padded_h, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu_format(format, srgb),
             usage: if format == TextureFormat::Motion {
-                wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::STORAGE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC
             } else {
                 wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
             },
@@ -396,29 +350,12 @@ impl VideoRenderer {
             label: Some("track"),
             layout: &self.layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: params.as_entire_binding(),
-                },
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: params.as_entire_binding() },
             ],
         });
-        TrackTexture {
-            texture,
-            params,
-            bind_group,
-            format,
-            blocks,
-            uploaded: None,
-            motion: None,
-        }
+        TrackTexture { texture, params, bind_group, format, blocks, uploaded: None, motion: None }
     }
 
     /// Starts or stops measuring the GPU time of the motion decoder's passes with timestamp
@@ -437,21 +374,14 @@ impl VideoRenderer {
     pub fn gpu_times(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<MotionGpuTime> {
         let mut times = Vec::new();
         for (track, t) in self.tracks.iter_mut().enumerate() {
-            let Some(decoder) = &mut t.motion else {
-                continue;
-            };
-            times.extend(
-                decoder
-                    .read_times(device, queue)
-                    .into_iter()
-                    .map(|f| MotionGpuTime {
-                        track,
-                        keyframe: f.keyframe,
-                        predict: f.predict,
-                        residual: f.residual,
-                        color: f.color,
-                    }),
-            );
+            let Some(decoder) = &mut t.motion else { continue };
+            times.extend(decoder.read_times(device, queue).into_iter().map(|f| MotionGpuTime {
+                track,
+                keyframe: f.keyframe,
+                predict: f.predict,
+                residual: f.residual,
+                color: f.color,
+            }));
         }
         times
     }
@@ -466,11 +396,7 @@ impl VideoRenderer {
         player: &mut Player<R>,
         opacity: f32,
     ) -> usize {
-        let opacity = if opacity.is_nan() {
-            1.0
-        } else {
-            opacity.clamp(0.0, 1.0)
-        };
+        let opacity = if opacity.is_nan() { 1.0 } else { opacity.clamp(0.0, 1.0) };
         if opacity != self.opacity {
             self.opacity = opacity;
             for t in &self.tracks {
@@ -490,9 +416,7 @@ impl VideoRenderer {
                 }
                 continue;
             }
-            let Some(frame) = player.video_frame(i) else {
-                continue;
-            };
+            let Some(frame) = player.video_frame(i) else { continue };
             if t.uploaded == Some(frame.index) {
                 continue;
             }
@@ -510,11 +434,7 @@ impl VideoRenderer {
                     bytes_per_row: Some(t.blocks.0 * t.format.block_bytes()),
                     rows_per_image: Some(t.blocks.1),
                 },
-                wgpu::Extent3d {
-                    width: t.blocks.0 * bw,
-                    height: t.blocks.1 * bh,
-                    depth_or_array_layers: 1,
-                },
+                wgpu::Extent3d { width: t.blocks.0 * bw, height: t.blocks.1 * bh, depth_or_array_layers: 1 },
             );
             t.uploaded = Some(frame.index);
             uploaded += 1;
@@ -536,17 +456,8 @@ impl VideoRenderer {
 
     fn draw_tracks(&self, pass: &mut wgpu::RenderPass<'_>, rect: Rect, replace_first: bool) {
         pass.set_viewport(rect.x, rect.y, rect.w, rect.h, 0.0, 1.0);
-        for (i, t) in self
-            .tracks
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.uploaded.is_some())
-        {
-            pass.set_pipeline(if replace_first && i == 0 {
-                &self.replace
-            } else {
-                &self.blend
-            });
+        for (i, t) in self.tracks.iter().enumerate().filter(|(_, t)| t.uploaded.is_some()) {
+            pass.set_pipeline(if replace_first && i == 0 { &self.replace } else { &self.blend });
             pass.set_bind_group(0, &t.bind_group, &[]);
             pass.draw(0..4, 0..1);
         }
@@ -563,11 +474,7 @@ mod tests {
             for srgb in [false, true] {
                 let w = wgpu_format(format, srgb);
                 assert_eq!(w.block_dimensions(), format.block_size(), "{format}");
-                assert_eq!(
-                    w.block_copy_size(None),
-                    Some(format.block_bytes()),
-                    "{format}"
-                );
+                assert_eq!(w.block_copy_size(None), Some(format.block_bytes()), "{format}");
                 let has_srgb = !matches!(format, TextureFormat::Bc4 | TextureFormat::Bc5);
                 assert_eq!(w.is_srgb(), srgb && has_srgb, "{format}");
             }
@@ -582,22 +489,15 @@ mod tests {
         );
         assert_eq!(both[0], TextureFormat::Bc7);
         assert_eq!(both.len(), 9);
-        assert_eq!(
-            supported_formats(wgpu::Features::TEXTURE_COMPRESSION_ASTC),
-            ASTC
-        );
+        assert_eq!(supported_formats(wgpu::Features::TEXTURE_COMPRESSION_ASTC), ASTC);
     }
 
     /// A device on the adapter `wgpu` picks (`WGPU_ADAPTER_NAME` selects one), if it can
     /// run the motion decoder. It starts from WebGL 2 limits, so the tests check that
     /// `required_limits` raises everything the decoder needs.
     fn gpu() -> Option<(wgpu::Device, wgpu::Queue)> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
-            &instance, None,
-        ))
-        .ok()?;
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None)).ok()?;
         if !supports_motion(&adapter) {
             return None;
         }
@@ -615,21 +515,14 @@ mod tests {
     /// Skips a test that cannot run here, or fails it when `PRAXI_TEST_STRICT` is set
     /// (`docs/features/testing.md`).
     fn skip(why: &str) {
-        assert!(
-            std::env::var_os("PRAXI_TEST_STRICT").is_none(),
-            "PRAXI_TEST_STRICT: {why}"
-        );
+        assert!(std::env::var_os("PRAXI_TEST_STRICT").is_none(), "PRAXI_TEST_STRICT: {why}");
         eprintln!("skipped: {why}");
     }
 
     /// A device with the block compression features of the adapter `wgpu` picks.
     fn block_gpu() -> Option<(wgpu::Device, wgpu::Queue, wgpu::Features)> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
-            &instance, None,
-        ))
-        .ok()?;
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None)).ok()?;
         let required_features = required_features(&adapter);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features,
@@ -660,24 +553,16 @@ mod tests {
             if !formats.contains(&format) {
                 continue;
             }
-            let config = EncoderConfig::new(w, h, 10, 1)
-                .variant(variant)
-                .alpha(true)
-                .threads(2);
+            let config = EncoderConfig::new(w, h, 10, 1).variant(variant).alpha(true).threads(2);
             let mut enc = Encoder::new(Cursor::new(Vec::new()), config).unwrap();
             for t in 0..3 {
                 enc.push_frame(&clip_frame(w, h, t)).unwrap();
             }
             let bytes = enc.finish().unwrap().0.into_inner();
-            let mut player =
-                Player::open(Cursor::new(bytes), &Capabilities::new([format])).unwrap();
+            let mut player = Player::open(Cursor::new(bytes), &Capabilities::new([format])).unwrap();
             let target = device.create_texture(&wgpu::TextureDescriptor {
                 label: None,
-                size: wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -686,14 +571,9 @@ mod tests {
                 view_formats: &[],
             });
             let view = target.create_view(&Default::default());
-            let mut renderer =
-                VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, &player);
+            let mut renderer = VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, &player);
             player.seek(std::time::Duration::from_millis(200)).unwrap();
-            assert_eq!(
-                renderer.prepare(&device, &queue, &mut player, 1.0),
-                1,
-                "{format}"
-            );
+            assert_eq!(renderer.prepare(&device, &queue, &mut player, 1.0), 1, "{format}");
             let mut encoder = device.create_command_encoder(&Default::default());
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -701,33 +581,17 @@ mod tests {
                         view: &view,
                         depth_slice: None,
                         resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
                     })],
                     ..Default::default()
                 });
-                renderer.draw_replace(
-                    &mut pass,
-                    Rect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: w as f32,
-                        h: h as f32,
-                    },
-                );
+                renderer.draw_replace(&mut pass, Rect { x: 0.0, y: 0.0, w: w as f32, h: h as f32 });
             }
             queue.submit([encoder.finish()]);
             let gpu = read_texture(&device, &queue, &target, w, h);
             let frame = player.video_frame(0).unwrap();
             let cpu = praxi_encoder::decode_frame(&player.tracks()[0].params, frame.data).unwrap();
-            let worst = gpu
-                .iter()
-                .zip(&cpu)
-                .map(|(a, b)| a.abs_diff(*b))
-                .max()
-                .unwrap();
+            let worst = gpu.iter().zip(&cpu).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
             // The sampler decodes sRGB to linear and the target encodes it back.
             assert!(worst <= 1, "{format}: a channel differs by {worst}");
             drawn.push(format);
@@ -752,13 +616,7 @@ mod tests {
     }
 
     /// The top-left `width x height` pixels of an RGBA texture.
-    fn read_texture(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        texture: &wgpu::Texture,
-        width: u32,
-        height: u32,
-    ) -> Vec<u8> {
+    fn read_texture(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
         let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -771,37 +629,18 @@ mod tests {
             texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
                 buffer: &staging,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(row),
-                    rows_per_image: None,
-                },
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: None },
             },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
         queue.submit([encoder.finish()]);
-        map(device, &staging)
-            .chunks(row as usize)
-            .flat_map(|r| r[..(width * 4) as usize].to_vec())
-            .collect()
+        map(device, &staging).chunks(row as usize).flat_map(|r| r[..(width * 4) as usize].to_vec()).collect()
     }
 
     fn map(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {
-        buffer
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, |r| r.expect("map"));
-        device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("poll");
-        buffer
-            .slice(..)
-            .get_mapped_range()
-            .expect("mapped")
-            .to_vec()
+        buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        buffer.slice(..).get_mapped_range().expect("mapped").to_vec()
     }
 
     /// Frame `t` of a clip with a scrolling background, a square moving down over it and a
@@ -819,12 +658,7 @@ mod tests {
                 } else {
                     texture(x + 3 * t, y)
                 };
-                rgba.extend([
-                    v / 2 + x as u8,
-                    v / 2 + 40,
-                    v / 2 + (y * 3) as u8,
-                    (y * 6) as u8,
-                ]);
+                rgba.extend([v / 2 + x as u8, v / 2 + 40, v / 2 + (y * 3) as u8, (y * 6) as u8]);
             }
         }
         rgba
@@ -841,10 +675,7 @@ mod tests {
             return skip("no adapter that runs compute shaders");
         };
         // The 4:4:4 clip runs timed, in separate passes per stage.
-        for (chroma, w, h, alpha, timed) in [
-            (Chroma::C420, 72, 40, true, false),
-            (Chroma::C444, 50, 34, false, true),
-        ] {
+        for (chroma, w, h, alpha, timed) in [(Chroma::C420, 72, 40, true, false), (Chroma::C444, 50, 34, false, true)] {
             let config = EncoderConfig::new(w, h, 10, 1)
                 .variant(VariantConfig::motion().qp(12).slices(2).chroma(chroma))
                 .keyint(4)
@@ -856,10 +687,7 @@ mod tests {
             }
             let (out, stats) = enc.finish().unwrap();
             let m = stats.variants[0].motion.unwrap();
-            assert!(
-                m.inter > 0 && m.split > 0 && m.skip > 0,
-                "{chroma:?}: {m:?}"
-            );
+            assert!(m.inter > 0 && m.split > 0 && m.skip > 0, "{chroma:?}: {m:?}");
             let bytes = out.into_inner();
 
             // The CPU reference of every frame.
@@ -872,44 +700,25 @@ mod tests {
             while let Some(chunk) = reader.next_chunk().unwrap() {
                 keyframes.push(chunk.keyframe());
                 reader.read_payload(&chunk, &mut payload).unwrap();
-                decoder
-                    .decode(chunk.keyframe(), &payload, &mut coded)
-                    .unwrap();
+                decoder.decode(chunk.keyframe(), &payload, &mut coded).unwrap();
                 let mut planes = vec![0; layout.size];
-                motion::reconstruct(
-                    &layout,
-                    &coded,
-                    expected.last().map_or(&[][..], |p| p),
-                    &mut planes,
-                );
+                motion::reconstruct(&layout, &coded, expected.last().map_or(&[][..], |p| p), &mut planes);
                 expected.push(planes);
             }
 
-            let mut player = Player::open(
-                Cursor::new(bytes),
-                &Capabilities::new([TextureFormat::Motion]),
-            )
-            .unwrap();
-            let mut renderer =
-                VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, &player);
+            let mut player = Player::open(Cursor::new(bytes), &Capabilities::new([TextureFormat::Motion])).unwrap();
+            let mut renderer = VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, &player);
             let timed = timed && renderer.set_gpu_timing(&device, true);
             if !timed && chroma == Chroma::C444 {
                 eprintln!("timing not checked: the adapter has no timestamp queries");
             }
             let mut check = |player: &mut Player<Cursor<Vec<u8>>>, what: &str| {
-                assert_eq!(
-                    renderer.prepare(&device, &queue, player, 1.0),
-                    1,
-                    "{chroma:?} {what}"
-                );
+                assert_eq!(renderer.prepare(&device, &queue, player, 1.0), 1, "{chroma:?} {what}");
                 let times = renderer.gpu_times(&device, &queue);
                 if timed {
                     // One entry per reconstructed frame; only the last one is converted.
                     let (last, rest) = times.split_last().expect("timed frames");
-                    assert!(
-                        last.color.is_some() && rest.iter().all(|t| t.color.is_none()),
-                        "{what}: {times:?}"
-                    );
+                    assert!(last.color.is_some() && rest.iter().all(|t| t.color.is_none()), "{what}: {times:?}");
                     assert!(times.iter().all(|t| t.track == 0));
                     let last = player.video_frame(0).unwrap().time.as_millis() as usize / 100;
                     let flags: Vec<bool> = times.iter().map(|t| t.keyframe).collect();
@@ -934,10 +743,7 @@ mod tests {
                 }
                 let mut rgba = Vec::new();
                 motion::to_rgba(&layout, &expected[t], &mut rgba);
-                assert!(
-                    read_texture(&device, &queue, &track.texture, w, h) == rgba,
-                    "{chroma:?} {what}, frame {t}: RGBA"
-                );
+                assert!(read_texture(&device, &queue, &track.texture, w, h) == rgba, "{chroma:?} {what}, frame {t}: RGBA");
                 t
             };
             player.play().unwrap();

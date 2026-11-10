@@ -97,11 +97,7 @@ impl Filter {
 }
 
 /// Adds cues to the first stream named `stream`, or to a new stream after the others.
-pub fn add_cues(
-    tracks: &mut Vec<CueTrack>,
-    stream: &str,
-    cues: &[CueConfig],
-) -> Result<(), String> {
+pub fn add_cues(tracks: &mut Vec<CueTrack>, stream: &str, cues: &[CueConfig]) -> Result<(), String> {
     let mut scratch = Vec::new();
     let mut timed = Vec::with_capacity(cues.len());
     for c in cues {
@@ -112,25 +108,14 @@ pub fn add_cues(
                 Err(format!("cue {:?} has invalid {what} {secs}", c.kind))
             }
         };
-        let cue = Cue {
-            duration: micros(c.duration, "duration")?,
-            kind: c.kind.clone(),
-            fields: c.fields.clone(),
-        };
+        let cue = Cue { duration: micros(c.duration, "duration")?, kind: c.kind.clone(), fields: c.fields.clone() };
         scratch.clear();
-        cue.encode(&mut scratch)
-            .map_err(|e| format!("cue {:?}: {e}", c.kind))?;
-        timed.push(TimedCue {
-            time_us: micros(c.time, "time")?,
-            cue,
-        });
+        cue.encode(&mut scratch).map_err(|e| format!("cue {:?}: {e}", c.kind))?;
+        timed.push(TimedCue { time_us: micros(c.time, "time")?, cue });
     }
     match tracks.iter_mut().find(|t| t.name == stream) {
         Some(track) => track.cues.extend(timed),
-        None => tracks.push(CueTrack {
-            name: stream.to_string(),
-            cues: timed,
-        }),
+        None => tracks.push(CueTrack { name: stream.to_string(), cues: timed }),
     }
     Ok(())
 }
@@ -156,9 +141,7 @@ fn seconds_option(secs: Option<f64>, what: &str) -> AnyResult<Option<u64>> {
 }
 
 fn read_tracks(file: &Path) -> AnyResult<Vec<CueTrack>> {
-    let mut reader = Reader::new(BufReader::new(
-        File::open(file).map_err(|e| format!("{}: {e}", file.display()))?,
-    ))?;
+    let mut reader = Reader::new(BufReader::new(File::open(file).map_err(|e| format!("{}: {e}", file.display()))?))?;
     Ok(praxi_format::read_cues(&mut reader)?)
 }
 
@@ -169,86 +152,43 @@ pub fn run(cmd: CuesCmd) -> AnyResult<()> {
             let tracks = praxi_format::read_cues(&mut reader)?;
             write_sheet(&tracks, output.as_deref())
         }
-        CuesCmd::Import {
-            file,
-            sheets,
-            output,
-        } => {
+        CuesCmd::Import { file, sheets, output } => {
             let mut tracks = Vec::new();
             for path in &sheets {
-                let text = std::fs::read_to_string(path)
-                    .map_err(|e| format!("{}: {e}", path.display()))?;
-                tracks.extend(
-                    cue_sheet::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?,
-                );
+                let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+                tracks.extend(cue_sheet::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?);
             }
             import(&file, &tracks, &output)
         }
-        CuesCmd::Srt {
-            input,
-            output,
-            stream,
-            kind,
-            text_key,
-            fields: extra,
-        } => {
+        CuesCmd::Srt { input, output, stream, kind, text_key, fields: extra } => {
             for (i, (key, _)) in extra.iter().enumerate() {
                 if *key == text_key || extra[..i].iter().any(|(k, _)| k == key) {
                     return Err(format!("field {key} given twice").into());
                 }
             }
-            let text =
-                std::fs::read_to_string(&input).map_err(|e| format!("{}: {e}", input.display()))?;
+            let text = std::fs::read_to_string(&input).map_err(|e| format!("{}: {e}", input.display()))?;
             let subtitles = parse_srt(&text).map_err(|e| format!("{}: {e}", input.display()))?;
             let cues = subtitles
                 .into_iter()
                 .map(|s| {
                     let mut fields = vec![(text_key.clone(), Value::String(s.text))];
-                    fields.extend(
-                        extra
-                            .iter()
-                            .map(|(k, v)| (k.clone(), Value::String(v.clone()))),
-                    );
-                    TimedCue {
-                        time_us: s.start_us,
-                        cue: Cue {
-                            duration: s.end_us - s.start_us,
-                            kind: kind.clone(),
-                            fields,
-                        },
-                    }
+                    fields.extend(extra.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))));
+                    TimedCue { time_us: s.start_us, cue: Cue { duration: s.end_us - s.start_us, kind: kind.clone(), fields } }
                 })
                 .collect();
             write_sheet(&[CueTrack { name: stream, cues }], output.as_deref())
         }
-        CuesCmd::Add {
-            file,
-            cues,
-            stream,
-            output,
-        } => {
+        CuesCmd::Add { file, cues, stream, output } => {
             let mut tracks = read_tracks(&file)?;
             add_cues(&mut tracks, &stream, &cues)?;
             eprintln!("added {} cues to stream {stream:?}", cues.len());
             import(&file, &tracks, output.as_deref().unwrap_or(&file))
         }
-        CuesCmd::Remove {
-            file,
-            stream,
-            kind,
-            from,
-            to,
-            output,
-        } => {
+        CuesCmd::Remove { file, stream, kind, from, to, output } => {
             if stream.is_none() && kind.is_none() && from.is_none() && to.is_none() {
                 return Err("give at least one of --stream, --type, --from, --to".into());
             }
-            let filter = Filter {
-                stream,
-                kind,
-                from_us: seconds_option(from, "from")?,
-                to_us: seconds_option(to, "to")?,
-            };
+            let filter = Filter { stream, kind, from_us: seconds_option(from, "from")?, to_us: seconds_option(to, "to")? };
             let mut tracks = read_tracks(&file)?;
             let removed = remove_cues(&mut tracks, &filter);
             eprintln!("removed {removed} cues");
@@ -267,11 +207,7 @@ fn parse_field(s: &str) -> Result<(String, String), String> {
 fn import(input: &Path, tracks: &[CueTrack], output: &Path) -> AnyResult<()> {
     praxi_format::replace_cues_in_file(input, output, tracks)?;
     let count: usize = tracks.iter().map(|t| t.cues.len()).sum();
-    eprintln!(
-        "{}: {} cue streams, {count} cues",
-        output.display(),
-        tracks.len()
-    );
+    eprintln!("{}: {} cue streams, {count} cues", output.display(), tracks.len());
     Ok(())
 }
 
@@ -314,23 +250,15 @@ pub fn parse_srt(text: &str) -> Result<Vec<Subtitle>, String> {
         if lines.peek().is_some_and(|l| !l.contains("-->")) {
             lines.next(); // sequence number
         }
-        let timing = lines
-            .next()
-            .filter(|l| l.contains("-->"))
-            .ok_or_else(|| at("no START --> END line"))?;
+        let timing = lines.next().filter(|l| l.contains("-->")).ok_or_else(|| at("no START --> END line"))?;
         let (start, end) = timing.split_once("-->").expect("-->");
         let end = end.split_whitespace().next().unwrap_or("");
-        let start_us =
-            srt_time(start.trim()).ok_or_else(|| at(&format!("bad time {:?}", start.trim())))?;
+        let start_us = srt_time(start.trim()).ok_or_else(|| at(&format!("bad time {:?}", start.trim())))?;
         let end_us = srt_time(end).ok_or_else(|| at(&format!("bad time {end:?}")))?;
         if end_us < start_us {
             return Err(at("ends before it starts"));
         }
-        out.push(Subtitle {
-            start_us,
-            end_us,
-            text: lines.collect::<Vec<_>>().join("\n"),
-        });
+        out.push(Subtitle { start_us, end_us, text: lines.collect::<Vec<_>>().join("\n") });
     }
     Ok(out)
 }
@@ -340,11 +268,7 @@ fn srt_time(s: &str) -> Option<u64> {
     let (hms, frac) = s.split_once([',', '.'])?;
     let mut parts = hms.split(':');
     let (h, m, sec) = (parts.next()?, parts.next()?, parts.next()?);
-    let digits = |p: &str| {
-        (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| p.parse::<u64>().ok())
-            .flatten()
-    };
+    let digits = |p: &str| (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())).then(|| p.parse::<u64>().ok()).flatten();
     if parts.next().is_some() || frac.len() > 3 {
         return None;
     }
@@ -362,17 +286,8 @@ mod tests {
 
     #[test]
     fn adds_and_removes_cues() {
-        let mut tracks = vec![CueTrack {
-            name: "cues".into(),
-            cues: vec![TimedCue {
-                time_us: 0,
-                cue: Cue::new("a"),
-            }],
-        }];
-        let added = [
-            crate::parse_cue("1.5+0.25=boom:power=2").unwrap(),
-            crate::parse_cue("3=b").unwrap(),
-        ];
+        let mut tracks = vec![CueTrack { name: "cues".into(), cues: vec![TimedCue { time_us: 0, cue: Cue::new("a") }] }];
+        let added = [crate::parse_cue("1.5+0.25=boom:power=2").unwrap(), crate::parse_cue("3=b").unwrap()];
         add_cues(&mut tracks, "cues", &added).unwrap();
         add_cues(&mut tracks, "gameplay", &added[1..]).unwrap();
         assert_eq!(tracks.len(), 2);
@@ -380,49 +295,19 @@ mod tests {
             tracks[0].cues[1],
             TimedCue {
                 time_us: 1_500_000,
-                cue: Cue {
-                    duration: 250_000,
-                    kind: "boom".into(),
-                    fields: vec![("power".into(), Value::String("2".into()))]
-                }
+                cue: Cue { duration: 250_000, kind: "boom".into(), fields: vec![("power".into(), Value::String("2".into()))] }
             }
         );
-        assert!(
-            add_cues(
-                &mut tracks,
-                "cues",
-                &[crate::parse_cue("1=x:k=1;k=2").unwrap()]
-            )
-            .is_err(),
-            "duplicate key"
-        );
-        assert!(
-            add_cues(&mut tracks, "cues", &[crate::parse_cue("-1=x").unwrap()]).is_err(),
-            "negative time"
-        );
+        assert!(add_cues(&mut tracks, "cues", &[crate::parse_cue("1=x:k=1;k=2").unwrap()]).is_err(), "duplicate key");
+        assert!(add_cues(&mut tracks, "cues", &[crate::parse_cue("-1=x").unwrap()]).is_err(), "negative time");
         assert_eq!(tracks[0].cues.len(), 3, "nothing added on errors");
 
-        let only_b = Filter {
-            kind: Some("b".into()),
-            from_us: Some(3_000_000),
-            ..Filter::default()
-        };
+        let only_b = Filter { kind: Some("b".into()), from_us: Some(3_000_000), ..Filter::default() };
         assert_eq!(remove_cues(&mut tracks, &only_b), 2);
         assert_eq!(tracks.len(), 1, "empty stream removed");
-        let early = Filter {
-            stream: Some("cues".into()),
-            to_us: Some(1_500_000),
-            ..Filter::default()
-        };
+        let early = Filter { stream: Some("cues".into()), to_us: Some(1_500_000), ..Filter::default() };
         assert_eq!(remove_cues(&mut tracks, &early), 1);
-        assert_eq!(
-            tracks[0]
-                .cues
-                .iter()
-                .map(|c| c.cue.kind.as_str())
-                .collect::<Vec<_>>(),
-            ["boom"]
-        );
+        assert_eq!(tracks[0].cues.iter().map(|c| c.cue.kind.as_str()).collect::<Vec<_>>(), ["boom"]);
     }
 
     #[test]
@@ -431,35 +316,14 @@ mod tests {
         assert_eq!(
             parse_srt(srt).unwrap(),
             [
-                Subtitle {
-                    start_us: 1_000_000,
-                    end_us: 4_500_000,
-                    text: "Hello.\n<i>Second line</i>".into()
-                },
-                Subtitle {
-                    start_us: 62_250_000,
-                    end_us: 63_000_000,
-                    text: String::new()
-                },
-                Subtitle {
-                    start_us: 36_000_000_000,
-                    end_us: 36_000_000_000,
-                    text: String::new()
-                },
+                Subtitle { start_us: 1_000_000, end_us: 4_500_000, text: "Hello.\n<i>Second line</i>".into() },
+                Subtitle { start_us: 62_250_000, end_us: 63_000_000, text: String::new() },
+                Subtitle { start_us: 36_000_000_000, end_us: 36_000_000_000, text: String::new() },
             ]
         );
-        assert!(
-            parse_srt("1\n00:00:02,000 --> 00:00:01,000\nx\n").is_err(),
-            "ends before start"
-        );
+        assert!(parse_srt("1\n00:00:02,000 --> 00:00:01,000\nx\n").is_err(), "ends before start");
         assert!(parse_srt("1\nhello\n").is_err(), "no timing");
-        assert!(
-            parse_srt("00:00:01 --> 00:00:02,000\n").is_err(),
-            "no milliseconds"
-        );
-        assert!(
-            parse_srt("00:61:01,000 --> 00:62:02,000\n").is_err(),
-            "minutes"
-        );
+        assert!(parse_srt("00:00:01 --> 00:00:02,000\n").is_err(), "no milliseconds");
+        assert!(parse_srt("00:61:01,000 --> 00:62:02,000\n").is_err(), "minutes");
     }
 }

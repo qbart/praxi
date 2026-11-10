@@ -12,8 +12,8 @@ mod waveform;
 
 use clap::Parser;
 use doc::{Document, EditCue, Stream};
-use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 use file::SharedFile;
+use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 use inspector::{CueDraft, valid_stream_name};
 use praxi::format::{Cue, Reader, TimeBase, cue_sheet};
 use praxi::{Capabilities, CueEvent, CueTrack, Event, Player, TextureFormat, Value};
@@ -37,11 +37,7 @@ const MAX_EVENTS: usize = 200;
 const INSTANT_MARKER_US: u64 = 500_000;
 
 #[derive(Parser)]
-#[command(
-    name = "praxi-editor",
-    version,
-    about = "Edits the cues of a praxi file"
-)]
+#[command(name = "praxi-editor", version, about = "Edits the cues of a praxi file")]
 struct Args {
     file: PathBuf,
     /// Cue sheet to edit (default: FILE with the extension .cues.json).
@@ -65,10 +61,7 @@ fn default_sheet(file: &Path) -> PathBuf {
 
 fn main() -> ExitCode {
     let args = Args::parse();
-    let sheet = args
-        .sheet
-        .clone()
-        .unwrap_or_else(|| default_sheet(&args.file));
+    let sheet = args.sheet.clone().unwrap_or_else(|| default_sheet(&args.file));
     // Read the cues first, so a bad sheet fails before a window opens.
     let tracks = match load_tracks(&args.file, &sheet) {
         Ok(t) => t,
@@ -78,9 +71,7 @@ fn main() -> ExitCode {
         }
     };
     let mut options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 860.0])
-            .with_min_inner_size([720.0, 480.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 860.0]).with_min_inner_size([720.0, 480.0]),
         ..Default::default()
     };
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
@@ -122,14 +113,11 @@ fn main() -> ExitCode {
 /// The sheet's tracks if it exists, otherwise the file's cues.
 fn load_tracks(file: &Path, sheet: &Path) -> Result<Vec<CueTrack>, String> {
     if sheet.exists() {
-        let text =
-            std::fs::read_to_string(sheet).map_err(|e| format!("{}: {e}", sheet.display()))?;
+        let text = std::fs::read_to_string(sheet).map_err(|e| format!("{}: {e}", sheet.display()))?;
         return cue_sheet::parse(&text).map_err(|e| format!("{}: {e}", sheet.display()));
     }
-    let mut reader = Reader::new(BufReader::new(
-        File::open(file).map_err(|e| format!("{}: {e}", file.display()))?,
-    ))
-    .map_err(|e| format!("{}: {e}", file.display()))?;
+    let mut reader = Reader::new(BufReader::new(File::open(file).map_err(|e| format!("{}: {e}", file.display()))?))
+        .map_err(|e| format!("{}: {e}", file.display()))?;
     praxi::format::read_cues(&mut reader).map_err(|e| format!("{}: {e}", file.display()))
 }
 
@@ -194,37 +182,21 @@ struct Editor {
 }
 
 impl Editor {
-    fn new(
-        cc: &eframe::CreationContext,
-        args: &Args,
-        sheet: PathBuf,
-        tracks: Vec<CueTrack>,
-    ) -> Result<Editor, String> {
+    fn new(cc: &eframe::CreationContext, args: &Args, sheet: PathBuf, tracks: Vec<CueTrack>) -> Result<Editor, String> {
         let state = cc.wgpu_render_state.as_ref().ok_or("no wgpu renderer")?;
         let caps = praxi_wgpu::capabilities(&state.adapter, args.format)?;
         #[cfg(feature = "audio")]
-        let device_audio = if args.no_audio {
-            None
-        } else {
-            audio::Device::open_default()
-        };
+        let device_audio = if args.no_audio { None } else { audio::Device::open_default() };
         #[cfg(feature = "audio")]
         let caps = match device_audio.as_ref().and_then(|d| d.channels()) {
             Some(channels) => caps.max_audio_channels(channels),
             None => caps,
         };
         let (mut player, player_file) = open_player(&args.file, &caps)?;
-        let streams = Reader::new(BufReader::new(
-            File::open(&args.file).map_err(|e| e.to_string())?,
-        ))
-        .map_err(|e| e.to_string())?
-        .streams()
-        .to_vec();
+        let streams = Reader::new(BufReader::new(File::open(&args.file).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())?.streams().to_vec();
         let frame_base = streams[player.tracks()[0].stream as usize].time_base;
         let waveform = match player.audio_tracks().first() {
-            Some(t) => Some(
-                Waveform::load(&args.file, t.stream).map_err(|e| format!("audio waveform: {e}"))?,
-            ),
+            Some(t) => Some(Waveform::load(&args.file, t.stream).map_err(|e| format!("audio waveform: {e}"))?),
             None => None,
         };
         let video = VideoView::new(state, &player);
@@ -233,14 +205,8 @@ impl Editor {
         player.seek(Duration::ZERO).map_err(|e| e.to_string())?;
         let muted = Arc::new(AtomicBool::new(false));
         #[cfg(feature = "audio")]
-        let audio = device_audio
-            .as_ref()
-            .and_then(|device| start_audio(device, &player, &muted));
-        let status = if sheet.exists() {
-            format!("Opened {}", sheet.display())
-        } else {
-            format!("Cues from the file; Save creates {}", sheet.display())
-        };
+        let audio = device_audio.as_ref().and_then(|device| start_audio(device, &player, &muted));
+        let status = if sheet.exists() { format!("Opened {}", sheet.display()) } else { format!("Cues from the file; Save creates {}", sheet.display()) };
         let selected_stream = doc.streams().first().map(|s| s.uid);
         Ok(Editor {
             file: args.file.clone(),
@@ -285,16 +251,10 @@ impl Editor {
 
     fn cues_changed(&mut self) {
         self.player.replace_cues(self.doc.tracks());
-        if self
-            .selected_cue
-            .is_some_and(|uid| self.doc.find(uid).is_none())
-        {
+        if self.selected_cue.is_some_and(|uid| self.doc.find(uid).is_none()) {
             self.selected_cue = None;
         }
-        if self
-            .selected_stream
-            .is_some_and(|uid| self.doc.stream_index(uid).is_none())
-        {
+        if self.selected_stream.is_some_and(|uid| self.doc.stream_index(uid).is_none()) {
             self.selected_stream = self.doc.streams().first().map(|s| s.uid);
         }
     }
@@ -323,10 +283,7 @@ impl Editor {
 
     /// The stream new cues go to: the selected one, else the first, else a new `cues`.
     fn target_stream(&mut self) -> usize {
-        if let Some(i) = self
-            .selected_stream
-            .and_then(|uid| self.doc.stream_index(uid))
-        {
+        if let Some(i) = self.selected_stream.and_then(|uid| self.doc.stream_index(uid)) {
             return i;
         }
         if self.doc.streams().is_empty() {
@@ -337,13 +294,7 @@ impl Editor {
 
     fn add_cue(&mut self, stream: usize, time_us: u64) {
         let uid = self.doc.new_uid();
-        self.edit(|s| {
-            s[stream].cues.push(EditCue {
-                uid,
-                time_us,
-                cue: Cue::new("cue"),
-            })
-        });
+        self.edit(|s| s[stream].cues.push(EditCue { uid, time_us, cue: Cue::new("cue") }));
         self.selected_cue = Some(uid);
         self.selected_stream = Some(self.doc.streams()[stream].uid);
     }
@@ -351,18 +302,8 @@ impl Editor {
     fn add_stream(&mut self) {
         let uid = self.doc.new_uid();
         let n = self.doc.streams().len();
-        let name = if n == 0 {
-            "cues".to_string()
-        } else {
-            format!("stream{}", n + 1)
-        };
-        self.edit(|s| {
-            s.push(Stream {
-                uid,
-                name,
-                cues: Vec::new(),
-            })
-        });
+        let name = if n == 0 { "cues".to_string() } else { format!("stream{}", n + 1) };
+        self.edit(|s| s.push(Stream { uid, name, cues: Vec::new() }));
         self.selected_stream = Some(uid);
         self.selected_cue = None;
     }
@@ -374,9 +315,7 @@ impl Editor {
     }
 
     fn duplicate_selected(&mut self) {
-        let Some((s, c)) = self.selected_cue.and_then(|uid| self.doc.find(uid)) else {
-            return;
-        };
+        let Some((s, c)) = self.selected_cue.and_then(|uid| self.doc.find(uid)) else { return };
         let mut copy = self.doc.streams()[s].cues[c].clone();
         copy.uid = self.doc.new_uid();
         copy.time_us = self.player.position().as_micros() as u64;
@@ -386,9 +325,7 @@ impl Editor {
 
     /// Sets or removes the selected cue's position on the video.
     fn set_position(&mut self, position: Option<(f32, f32)>) {
-        let Some((s, c)) = self.selected_cue.and_then(|uid| self.doc.find(uid)) else {
-            return;
-        };
+        let Some((s, c)) = self.selected_cue.and_then(|uid| self.doc.find(uid)) else { return };
         let mut cue = self.doc.streams()[s].cues[c].clone();
         cue.cue.set_position(position);
         self.set_cue(s, cue);
@@ -396,9 +333,7 @@ impl Editor {
 
     /// Sets the selected cue's start (`start = true`) or end to the playhead.
     fn set_edge(&mut self, start: bool) {
-        let Some((s, c)) = self.selected_cue.and_then(|uid| self.doc.find(uid)) else {
-            return;
-        };
+        let Some((s, c)) = self.selected_cue.and_then(|uid| self.doc.find(uid)) else { return };
         let mut cue = self.doc.streams()[s].cues[c].clone();
         let at = self.player.position().as_micros() as u64;
         if start {
@@ -414,8 +349,7 @@ impl Editor {
     // --- Files -------------------------------------------------------------------------
 
     fn save(&mut self) -> bool {
-        let result = cue_sheet::write(&self.doc.tracks())
-            .and_then(|text| std::fs::write(&self.sheet, text).map_err(|e| e.to_string()));
+        let result = cue_sheet::write(&self.doc.tracks()).and_then(|text| std::fs::write(&self.sheet, text).map_err(|e| e.to_string()));
         match result {
             Ok(()) => {
                 self.doc.mark_saved();
@@ -432,8 +366,7 @@ impl Editor {
     fn write_into_file(&mut self) {
         // Windows cannot rename over a file that is open.
         self.player_file.close();
-        let written =
-            praxi::format::replace_cues_in_file(&self.file, &self.file, &self.doc.tracks());
+        let written = praxi::format::replace_cues_in_file(&self.file, &self.file, &self.doc.tracks());
         let reopened = self.reopen();
         self.status = match (written, reopened) {
             (Ok(()), Ok(())) => {
@@ -451,11 +384,7 @@ impl Editor {
 
     /// Opens the file again and puts playback back where it was.
     fn reopen(&mut self) -> Result<(), String> {
-        let (at, playing, looping) = (
-            self.player.position(),
-            self.player.is_playing(),
-            self.player.looping(),
-        );
+        let (at, playing, looping) = (self.player.position(), self.player.is_playing(), self.player.looping());
         let (player, player_file) = open_player(&self.file, &self.caps)?;
         #[cfg(feature = "audio")]
         {
@@ -472,10 +401,7 @@ impl Editor {
         }
         #[cfg(feature = "audio")]
         {
-            self.audio = self
-                .audio_device
-                .as_ref()
-                .and_then(|d| start_audio(d, &self.player, &self.muted));
+            self.audio = self.audio_device.as_ref().and_then(|d| start_audio(d, &self.player, &self.muted));
         }
         Ok(())
     }
@@ -507,15 +433,9 @@ impl Editor {
     fn step(&mut self, frames: i64) {
         self.player.pause();
         let tb = self.frame_base;
-        let shown = self
-            .player
-            .video_frame(0)
-            .map_or(0, |f| f.time.as_micros() as u64);
+        let shown = self.player.video_frame(0).map_or(0, |f| f.time.as_micros() as u64);
         let next = (frame_index(tb, shown) as i64 + frames).max(0) as u64;
-        self.seek(
-            tb.to_micros(next)
-                .min(self.player.duration().as_micros() as u64),
-        );
+        self.seek(tb.to_micros(next).min(self.player.duration().as_micros() as u64));
     }
 
     /// The start of the video frame nearest to `us`.
@@ -529,10 +449,7 @@ impl Editor {
         self.last = now;
         #[cfg(feature = "audio")]
         if let Some(audio) = &self.audio {
-            self.player.set_clock(praxi::Clock::Audio {
-                track: 0,
-                latency: audio.latency(),
-            });
+            self.player.set_clock(praxi::Clock::Audio { track: 0, latency: audio.latency() });
         }
         let r = self.player.advance(dt);
         self.report(r);
@@ -542,8 +459,7 @@ impl Editor {
                 Event::CueEnd { id, .. } => self.active.retain(|c| c.id != *id),
                 _ => {}
             }
-            self.events
-                .push_front((self.player.position(), describe_event(&event)));
+            self.events.push_front((self.player.position(), describe_event(&event)));
             self.events.truncate(MAX_EVENTS);
         }
     }
@@ -554,9 +470,7 @@ impl Editor {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        let shortcut = |ctx: &egui::Context, m: Modifiers, k: Key| {
-            ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)))
-        };
+        let shortcut = |ctx: &egui::Context, m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
         let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
         if shortcut(ctx, ctrl_shift, Key::S) {
             self.write_into_file();
@@ -572,24 +486,8 @@ impl Editor {
             self.duplicate_selected();
         }
         let (pressed, shift) = ctx.input(|i| {
-            let keys = [
-                Key::Space,
-                Key::ArrowLeft,
-                Key::ArrowRight,
-                Key::Home,
-                Key::End,
-                Key::C,
-                Key::I,
-                Key::O,
-                Key::Delete,
-                Key::Escape,
-            ];
-            (
-                keys.into_iter()
-                    .filter(|k| i.key_pressed(*k) && !i.modifiers.command)
-                    .collect::<Vec<_>>(),
-                i.modifiers.shift,
-            )
+            let keys = [Key::Space, Key::ArrowLeft, Key::ArrowRight, Key::Home, Key::End, Key::C, Key::I, Key::O, Key::Delete, Key::Escape];
+            (keys.into_iter().filter(|k| i.key_pressed(*k) && !i.modifiers.command).collect::<Vec<_>>(), i.modifiers.shift)
         });
         for key in pressed {
             let pos = self.player.position().as_micros() as u64;
@@ -625,11 +523,7 @@ impl Editor {
                 self.selected_stream = Some(uid);
                 self.selected_cue = None;
             }
-            Action::Change {
-                uid,
-                time_us,
-                duration,
-            } => {
+            Action::Change { uid, time_us, duration } => {
                 if let Some((s, c)) = self.doc.find(uid) {
                     let mut cue = self.doc.streams()[s].cues[c].clone();
                     cue.time_us = time_us;
@@ -645,89 +539,47 @@ impl Editor {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if ui
-                .button("Save")
-                .on_hover_text(format!("Write {} (Ctrl+S)", self.sheet.display()))
-                .clicked()
-            {
+            if ui.button("Save").on_hover_text(format!("Write {} (Ctrl+S)", self.sheet.display())).clicked() {
                 self.save();
             }
-            if ui
-                .button("Write into file")
-                .on_hover_text(format!(
-                    "Replace the cues in {} (Ctrl+Shift+S)",
-                    self.file.display()
-                ))
-                .clicked()
-            {
+            if ui.button("Write into file").on_hover_text(format!("Replace the cues in {} (Ctrl+Shift+S)", self.file.display())).clicked() {
                 self.write_into_file();
             }
             ui.separator();
-            if ui
-                .add_enabled(self.doc.can_undo(), egui::Button::new("Undo"))
-                .clicked()
-            {
+            if ui.add_enabled(self.doc.can_undo(), egui::Button::new("Undo")).clicked() {
                 self.undo();
             }
-            if ui
-                .add_enabled(self.doc.can_redo(), egui::Button::new("Redo"))
-                .clicked()
-            {
+            if ui.add_enabled(self.doc.can_redo(), egui::Button::new("Redo")).clicked() {
                 self.redo();
             }
             ui.separator();
             if ui.button("Add stream").clicked() {
                 self.add_stream();
             }
-            if ui
-                .button("Add cue")
-                .on_hover_text("At the playhead (C)")
-                .clicked()
-            {
+            if ui.button("Add cue").on_hover_text("At the playhead (C)").clicked() {
                 let s = self.target_stream();
                 self.add_cue(s, self.player.position().as_micros() as u64);
             }
-            ui.checkbox(&mut self.snap, "Snap to frames")
-                .on_hover_text("Hold Alt while dragging to place freely");
+            ui.checkbox(&mut self.snap, "Snap to frames").on_hover_text("Hold Alt while dragging to place freely");
             ui.separator();
-            let dirty = if self.doc.is_dirty() {
-                "unsaved changes · "
-            } else {
-                ""
-            };
+            let dirty = if self.doc.is_dirty() { "unsaved changes · " } else { "" };
             ui.label(format!("{dirty}{}", self.status));
         });
     }
 
     fn transport(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if ui
-                .button("|<")
-                .on_hover_text("Previous frame (Left)")
-                .clicked()
-            {
+            if ui.button("|<").on_hover_text("Previous frame (Left)").clicked() {
                 self.step(-1);
             }
-            let label = if self.player.is_playing() {
-                "Pause"
-            } else {
-                "Play"
-            };
+            let label = if self.player.is_playing() { "Pause" } else { "Play" };
             if ui.button(label).on_hover_text("Space").clicked() {
                 self.toggle_play();
             }
-            if ui
-                .button(">|")
-                .on_hover_text("Next frame (Right)")
-                .clicked()
-            {
+            if ui.button(">|").on_hover_text("Next frame (Right)").clicked() {
                 self.step(1);
             }
-            ui.monospace(format!(
-                "{} / {}",
-                clock(self.player.position().as_micros() as u64),
-                clock(self.player.duration().as_micros() as u64)
-            ));
+            ui.monospace(format!("{} / {}", clock(self.player.position().as_micros() as u64), clock(self.player.duration().as_micros() as u64)));
             let mut looping = self.player.looping();
             if ui.checkbox(&mut looping, "Loop").changed() {
                 self.player.set_looping(looping);
@@ -744,11 +596,7 @@ impl Editor {
         match self.selected_cue.and_then(|uid| self.doc.find(uid)) {
             Some((s, c)) => {
                 let cue = self.doc.streams()[s].cues[c].clone();
-                if self
-                    .cue_draft
-                    .as_ref()
-                    .is_none_or(|d| d.uid != cue.uid || d.base != (s, cue.clone()))
-                {
+                if self.cue_draft.as_ref().is_none_or(|d| d.uid != cue.uid || d.base != (s, cue.clone())) {
                     self.cue_draft = Some(CueDraft::new(s, &cue));
                 }
                 ui.heading("Cue");
@@ -764,21 +612,14 @@ impl Editor {
                     if ui.button("Delete").on_hover_text("Delete").clicked() {
                         self.delete_selected();
                     }
-                    if ui
-                        .button("Duplicate at playhead")
-                        .on_hover_text("Ctrl+D")
-                        .clicked()
-                    {
+                    if ui.button("Duplicate at playhead").on_hover_text("Ctrl+D").clicked() {
                         self.duplicate_selected();
                     }
                 });
             }
             None => {
                 self.cue_draft = None;
-                if let Some(si) = self
-                    .selected_stream
-                    .and_then(|uid| self.doc.stream_index(uid))
-                {
+                if let Some(si) = self.selected_stream.and_then(|uid| self.doc.stream_index(uid)) {
                     self.stream_inspector(ui, si);
                 } else {
                     ui.label("Select a cue or a stream on the timeline.");
@@ -792,23 +633,16 @@ impl Editor {
             ui.weak("None at the playhead");
         }
         for c in &self.active {
-            let name = self
-                .player
-                .cue_streams()
-                .iter()
-                .find(|s| s.stream == c.stream)
-                .map_or("", |s| s.name.as_str());
+            let name = self.player.cue_streams().iter().find(|s| s.stream == c.stream).map_or("", |s| s.name.as_str());
             ui.label(format!("{name} · {} · {}", c.kind, fields_text(&c.fields)));
         }
         ui.separator();
         ui.heading("Events");
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                for (at, text) in &self.events {
-                    ui.monospace(format!("{} {text}", clock(at.as_micros() as u64)));
-                }
-            });
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            for (at, text) in &self.events {
+                ui.monospace(format!("{} {text}", clock(at.as_micros() as u64)));
+            }
+        });
     }
 
     fn stream_inspector(&mut self, ui: &mut egui::Ui, si: usize) {
@@ -825,8 +659,7 @@ impl Editor {
         let edit = egui::TextEdit::singleline(draft).hint_text("name");
         let lost = ui.horizontal(|ui| {
             ui.label("Name");
-            ui.add(if ok { edit } else { edit.text_color(red) })
-                .lost_focus()
+            ui.add(if ok { edit } else { edit.text_color(red) }).lost_focus()
         });
         if !ok {
             ui.colored_label(red, "At most 32 bytes, no zero bytes.");
@@ -837,16 +670,10 @@ impl Editor {
         }
         let last = self.doc.streams().len() - 1;
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(si > 0, egui::Button::new("Move up"))
-                .clicked()
-            {
+            if ui.add_enabled(si > 0, egui::Button::new("Move up")).clicked() {
                 self.edit(|s| s.swap(si - 1, si));
             }
-            if ui
-                .add_enabled(si < last, egui::Button::new("Move down"))
-                .clicked()
-            {
+            if ui.add_enabled(si < last, egui::Button::new("Move down")).clicked() {
                 self.edit(|s| s.swap(si, si + 1));
             }
             if ui.button("Delete stream").clicked() {
@@ -860,16 +687,8 @@ impl Editor {
     fn video(&mut self, ui: &mut egui::Ui) {
         let avail = ui.available_rect_before_wrap();
         let (w, h) = self.video.size;
-        let fit = praxi_wgpu::Rect::fit(
-            w,
-            h,
-            avail.width().max(1.0) as u32,
-            avail.height().max(1.0) as u32,
-        );
-        let rect = egui::Rect::from_min_size(
-            avail.min + egui::vec2(fit.x, fit.y),
-            egui::vec2(fit.w, fit.h),
-        );
+        let fit = praxi_wgpu::Rect::fit(w, h, avail.width().max(1.0) as u32, avail.height().max(1.0) as u32);
+        let rect = egui::Rect::from_min_size(avail.min + egui::vec2(fit.x, fit.y), egui::vec2(fit.w, fit.h));
         ui.allocate_rect(avail, egui::Sense::hover());
         let painter = ui.painter_at(avail);
         painter.rect_filled(avail, 0.0, egui::Color32::from_gray(16));
@@ -882,29 +701,15 @@ impl Editor {
 
     /// Markers of positioned cues on the video, the position picker and marker dragging
     /// (`docs/features/cue-editor.md#screen-positions`).
-    fn annotations(
-        &mut self,
-        ui: &mut egui::Ui,
-        painter: &egui::Painter,
-        video: egui::Rect,
-        panel: egui::Rect,
-    ) {
-        let to_screen =
-            |(x, y): (f32, f32)| video.min + egui::vec2(x * video.width(), y * video.height());
+    fn annotations(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, video: egui::Rect, panel: egui::Rect) {
+        let to_screen = |(x, y): (f32, f32)| video.min + egui::vec2(x * video.width(), y * video.height());
         let to_video = |p: egui::Pos2| {
-            let coord = |v: f32, start: f32, size: f32| {
-                inspector::round3(((v - start) / size.max(1.0)).clamp(0.0, 1.0))
-            };
-            (
-                coord(p.x, video.left(), video.width()),
-                coord(p.y, video.top(), video.height()),
-            )
+            let coord = |v: f32, start: f32, size: f32| inspector::round3(((v - start) / size.max(1.0)).clamp(0.0, 1.0));
+            (coord(p.x, video.left(), video.width()), coord(p.y, video.top(), video.height()))
         };
         let picking = self.picking.is_some() && self.picking == self.selected_cue;
         if picking {
-            let pick = ui
-                .interact(panel, ui.scope_id().with("pick"), egui::Sense::click())
-                .on_hover_cursor(egui::CursorIcon::Crosshair);
+            let pick = ui.interact(panel, ui.scope_id().with("pick"), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::Crosshair);
             if pick.clicked()
                 && let Some(p) = pick.interact_pointer_pos()
             {
@@ -919,11 +724,7 @@ impl Editor {
         for (si, stream) in self.doc.streams().iter().enumerate() {
             for c in &stream.cues {
                 let selected = self.selected_cue == Some(c.uid);
-                let end = if c.cue.duration > 0 {
-                    c.end_us()
-                } else {
-                    c.time_us.saturating_add(INSTANT_MARKER_US)
-                };
+                let end = if c.cue.duration > 0 { c.end_us() } else { c.time_us.saturating_add(INSTANT_MARKER_US) };
                 if !selected && !(c.time_us <= at && at < end) {
                     continue;
                 }
@@ -932,14 +733,7 @@ impl Editor {
                     _ => c.cue.position(),
                 };
                 if let Some(position) = position {
-                    markers.push((
-                        c.uid,
-                        stream.uid,
-                        si,
-                        selected,
-                        position,
-                        timeline::label(c),
-                    ));
+                    markers.push((c.uid, stream.uid, si, selected, position, timeline::label(c)));
                 }
             }
         }
@@ -954,31 +748,15 @@ impl Editor {
             if selected {
                 painter.circle_stroke(p, r + 3.0, ring);
             }
-            let galley = painter.layout_no_wrap(
-                label,
-                egui::FontId::proportional(13.0),
-                egui::Color32::from_gray(235),
-            );
+            let galley = painter.layout_no_wrap(label, egui::FontId::proportional(13.0), egui::Color32::from_gray(235));
             let text_at = p + egui::vec2(r + 8.0, -galley.size().y / 2.0);
-            painter.rect_filled(
-                egui::Rect::from_min_size(text_at, galley.size()).expand(4.0),
-                4.0,
-                egui::Color32::from_black_alpha(190),
-            );
+            painter.rect_filled(egui::Rect::from_min_size(text_at, galley.size()).expand(4.0), 4.0, egui::Color32::from_black_alpha(190));
             painter.galley(text_at, galley, egui::Color32::WHITE);
             if picking {
                 continue;
             }
-            let sense = if selected {
-                egui::Sense::click_and_drag()
-            } else {
-                egui::Sense::click()
-            };
-            let hit = ui.interact(
-                egui::Rect::from_center_size(p, egui::Vec2::splat(r * 2.0 + 8.0)),
-                ui.scope_id().with(("marker", uid)),
-                sense,
-            );
+            let sense = if selected { egui::Sense::click_and_drag() } else { egui::Sense::click() };
+            let hit = ui.interact(egui::Rect::from_center_size(p, egui::Vec2::splat(r * 2.0 + 8.0)), ui.scope_id().with(("marker", uid)), sense);
             if selected {
                 let hit = hit.on_hover_cursor(egui::CursorIcon::Grab);
                 if hit.dragged()
@@ -1000,21 +778,14 @@ impl Editor {
 
     fn title(&self) -> String {
         let dirty = if self.doc.is_dirty() { "* " } else { "" };
-        format!(
-            "{dirty}{} — {} — praxi-editor",
-            self.file.display(),
-            self.sheet.display()
-        )
+        format!("{dirty}{} — {} — praxi-editor", self.file.display(), self.sheet.display())
     }
 
     fn close_dialog(&mut self, ctx: &egui::Context) {
         let mut choice = None;
         egui::Modal::new(egui::Id::unique("close")).show(ctx, |ui| {
             ui.heading("Unsaved changes");
-            ui.label(format!(
-                "Save the cues to {} before closing?",
-                self.sheet.display()
-            ));
+            ui.label(format!("Save the cues to {} before closing?", self.sheet.display()));
             ui.horizontal(|ui| {
                 if ui.button("Save").clicked() {
                     choice = Some(0);
@@ -1051,8 +822,7 @@ fn frame_index(tb: TimeBase, us: u64) -> u64 {
 
 fn open_player(file: &Path, caps: &Capabilities) -> Result<(FilePlayer, SharedFile), String> {
     let shared = SharedFile::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let player = Player::open(BufReader::new(shared.clone()), caps)
-        .map_err(|e| format!("{}: {e}", file.display()))?;
+    let player = Player::open(BufReader::new(shared.clone()), caps).map_err(|e| format!("{}: {e}", file.display()))?;
     if player.tracks().is_empty() {
         return Err("the file has no video track this GPU can show".into());
     }
@@ -1062,15 +832,9 @@ fn open_player(file: &Path, caps: &Capabilities) -> Result<(FilePlayer, SharedFi
 /// Starts the audio stream for every audio track, converted to the device's format where
 /// needed, or prints why not.
 #[cfg(feature = "audio")]
-fn start_audio(
-    device: &audio::Device,
-    player: &FilePlayer,
-    muted: &Arc<AtomicBool>,
-) -> Option<audio::Stream> {
+fn start_audio(device: &audio::Device, player: &FilePlayer, muted: &Arc<AtomicBool>) -> Option<audio::Stream> {
     let tracks = player.audio_tracks();
-    let outputs: Vec<_> = (0..tracks.len())
-        .filter_map(|i| player.audio_output(i))
-        .collect();
+    let outputs: Vec<_> = (0..tracks.len()).filter_map(|i| player.audio_output(i)).collect();
     if outputs.is_empty() {
         return None;
     }
@@ -1080,19 +844,13 @@ fn start_audio(
             println!("audio device: {}, {rate} Hz, {channels} ch", device.name());
             for (i, t) in tracks.iter().enumerate() {
                 if (t.params.sample_rate, t.params.channels) != (rate, channels) {
-                    println!(
-                        "audio {i}: converted from {} Hz {} ch",
-                        t.params.sample_rate, t.params.channels
-                    );
+                    println!("audio {i}: converted from {} Hz {} ch", t.params.sample_rate, t.params.channels);
                 }
             }
             Some(stream)
         }
         Err(e) => {
-            eprintln!(
-                "audio device: {}: {e}; editing without sound",
-                device.name()
-            );
+            eprintln!("audio device: {}: {e}; editing without sound", device.name());
             None
         }
     }
@@ -1101,8 +859,7 @@ fn start_audio(
 impl eframe::App for Editor {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        if ctx.input(|i| i.viewport().close_requested()) && self.doc.is_dirty() && !self.allow_close
-        {
+        if ctx.input(|i| i.viewport().close_requested()) && self.doc.is_dirty() && !self.allow_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.confirm_close = true;
         }
@@ -1119,35 +876,28 @@ impl eframe::App for Editor {
             self.toolbar(ui);
             ui.add_space(2.0);
         });
-        egui::Panel::bottom("timeline")
-            .resizable(true)
-            .default_size(260.0)
-            .min_size(140.0)
-            .show(ui, |ui| {
-                let snap_base = self.frame_base;
-                let snap = move |t: u64| Editor::snap_to_frame(snap_base, t);
-                let view = View {
-                    streams: self.doc.streams(),
-                    selected_cue: self.selected_cue,
-                    selected_stream: self.selected_stream,
-                    playhead: self.player.position().as_micros() as u64,
-                    duration: self.player.duration().as_micros() as u64,
-                    waveform: self.waveform.as_ref(),
-                    snap: if self.snap { Some(&snap) } else { None },
-                    follow: self.player.is_playing(),
-                };
-                let actions = self.timeline.show(ui, view);
-                for a in actions {
-                    self.handle(a);
-                }
-            });
-        egui::Panel::right("inspector")
-            .resizable(true)
-            .default_size(340.0)
-            .show(ui, |ui| {
-                ui.add_space(4.0);
-                self.inspector(ui);
-            });
+        egui::Panel::bottom("timeline").resizable(true).default_size(260.0).min_size(140.0).show(ui, |ui| {
+            let snap_base = self.frame_base;
+            let snap = move |t: u64| Editor::snap_to_frame(snap_base, t);
+            let view = View {
+                streams: self.doc.streams(),
+                selected_cue: self.selected_cue,
+                selected_stream: self.selected_stream,
+                playhead: self.player.position().as_micros() as u64,
+                duration: self.player.duration().as_micros() as u64,
+                waveform: self.waveform.as_ref(),
+                snap: if self.snap { Some(&snap) } else { None },
+                follow: self.player.is_playing(),
+            };
+            let actions = self.timeline.show(ui, view);
+            for a in actions {
+                self.handle(a);
+            }
+        });
+        egui::Panel::right("inspector").resizable(true).default_size(340.0).show(ui, |ui| {
+            ui.add_space(4.0);
+            self.inspector(ui);
+        });
         egui::CentralPanel::default().show(ui, |ui| {
             self.transport(ui);
             self.video(ui);
@@ -1168,22 +918,12 @@ mod tests {
 
     #[test]
     fn frame_index_inverts_frame_starts() {
-        for tb in [
-            TimeBase::new(1, 60),
-            TimeBase::new(1001, 30000),
-            TimeBase::new(1, 24),
-        ] {
+        for tb in [TimeBase::new(1, 60), TimeBase::new(1001, 30000), TimeBase::new(1, 24)] {
             for n in 0..10_000 {
                 assert_eq!(frame_index(tb, tb.to_micros(n)), n, "{tb:?} frame {n}");
             }
         }
-        assert_eq!(
-            Editor::snap_to_frame(TimeBase::new(1, 60), 2_000_010),
-            2_000_000
-        );
-        assert_eq!(
-            default_sheet(Path::new("a/intro.praxi")),
-            Path::new("a/intro.cues.json")
-        );
+        assert_eq!(Editor::snap_to_frame(TimeBase::new(1, 60), 2_000_010), 2_000_000);
+        assert_eq!(default_sheet(Path::new("a/intro.praxi")), Path::new("a/intro.cues.json"));
     }
 }

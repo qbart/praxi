@@ -42,10 +42,7 @@ pub const COLOR_FLAG_ALPHA: u16 = 2;
 pub enum Error {
     Io(std::io::Error),
     BadMagic,
-    UnsupportedVersion {
-        major: u16,
-        minor: u16,
-    },
+    UnsupportedVersion { major: u16, minor: u16 },
     Corrupt(String),
     /// The writer was used against the spec (bad stream table, out-of-order chunks...).
     Invalid(String),
@@ -56,9 +53,7 @@ impl fmt::Display for Error {
         match self {
             Error::Io(e) => write!(f, "i/o error: {e}"),
             Error::BadMagic => write!(f, "not a praxi file"),
-            Error::UnsupportedVersion { major, minor } => {
-                write!(f, "unsupported format version {major}.{minor}")
-            }
+            Error::UnsupportedVersion { major, minor } => write!(f, "unsupported format version {major}.{minor}"),
             Error::Corrupt(msg) => write!(f, "corrupt praxi file: {msg}"),
             Error::Invalid(msg) => write!(f, "invalid praxi output: {msg}"),
         }
@@ -133,18 +128,12 @@ impl TextureFormat {
     }
 
     pub fn from_id(id: u16) -> Option<TextureFormat> {
-        Self::ALL
-            .into_iter()
-            .chain([TextureFormat::Motion])
-            .find(|f| f.id() == id)
+        Self::ALL.into_iter().chain([TextureFormat::Motion]).find(|f| f.id() == id)
     }
 
     /// The format whose name matches `s`, ignoring case and spaces: `bc7`, `astc6x6`, `motion`.
     pub fn parse(s: &str) -> Option<TextureFormat> {
-        Self::ALL
-            .into_iter()
-            .chain([TextureFormat::Motion])
-            .find(|f| f.name().replace(' ', "").eq_ignore_ascii_case(s))
+        Self::ALL.into_iter().chain([TextureFormat::Motion]).find(|f| f.name().replace(' ', "").eq_ignore_ascii_case(s))
     }
 
     /// Block width and height in pixels; the macroblock for `Motion`.
@@ -222,13 +211,7 @@ pub struct VideoParams {
 
 impl VideoParams {
     pub fn new(width: u32, height: u32, format: TextureFormat, color_flags: u16) -> VideoParams {
-        VideoParams {
-            width,
-            height,
-            format,
-            color_flags,
-            motion: MotionParams::default(),
-        }
+        VideoParams { width, height, format, color_flags, motion: MotionParams::default() }
     }
 
     pub fn blocks_x(&self) -> u32 {
@@ -358,24 +341,17 @@ impl AudioParams {
             };
         };
         let frame_bytes = channels * sample_bytes;
-        (!payload.is_empty() && payload.len().is_multiple_of(frame_bytes))
-            .then(|| (payload.len() / frame_bytes) as u64)
+        (!payload.is_empty() && payload.len().is_multiple_of(frame_bytes)).then(|| (payload.len() / frame_bytes) as u64)
     }
 
     /// Format-specific limits: Opus needs an Opus rate and at most 255 channels.
     pub fn check_format(&self) -> std::result::Result<(), String> {
         if self.format == SampleFormat::Opus {
             if opus::sample_rate(self.sample_rate).is_none() {
-                return Err(format!(
-                    "{} Hz is not an Opus rate (8000, 12000, 16000, 24000 or 48000)",
-                    self.sample_rate
-                ));
+                return Err(format!("{} Hz is not an Opus rate (8000, 12000, 16000, 24000 or 48000)", self.sample_rate));
             }
             if self.channels > 255 {
-                return Err(format!(
-                    "opus takes at most 255 channels, not {}",
-                    self.channels
-                ));
+                return Err(format!("opus takes at most 255 channels, not {}", self.channels));
             }
         }
         Ok(())
@@ -384,38 +360,17 @@ impl AudioParams {
     /// Decodes a decompressed chunk payload into `out`: interleaved samples in `[-1, 1]`
     /// (nominally, for `f32`). Opus chunks depend on the chunks before them and fail here;
     /// decode them with an [`AudioDecoder`].
-    pub fn decode_payload(
-        &self,
-        payload: &[u8],
-        out: &mut Vec<f32>,
-    ) -> std::result::Result<(), String> {
+    pub fn decode_payload(&self, payload: &[u8], out: &mut Vec<f32>) -> std::result::Result<(), String> {
         if self.format == SampleFormat::Opus {
             return Err("opus chunks need an AudioDecoder".into());
         }
         if self.payload_frames(payload).is_none() {
-            return Err(format!(
-                "{} bytes is not a valid {} payload of {} channels",
-                payload.len(),
-                self.format,
-                self.channels
-            ));
+            return Err(format!("{} bytes is not a valid {} payload of {} channels", payload.len(), self.format, self.channels));
         }
         out.clear();
         match self.format {
-            SampleFormat::S16 => out.extend(
-                payload
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|b| i16::from_le_bytes(*b) as f32 / 32768.0),
-            ),
-            SampleFormat::F32 => out.extend(
-                payload
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|b| f32::from_le_bytes(*b)),
-            ),
+            SampleFormat::S16 => out.extend(payload.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b) as f32 / 32768.0)),
+            SampleFormat::F32 => out.extend(payload.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b))),
             SampleFormat::Adpcm => adpcm::decode(payload, self.channels as usize, out)?,
             SampleFormat::Opus => unreachable!("handled above"),
         }
@@ -436,10 +391,7 @@ pub struct AudioDecoder {
 impl AudioDecoder {
     pub fn new(params: &AudioParams) -> std::result::Result<AudioDecoder, String> {
         params.check_format()?;
-        Ok(AudioDecoder {
-            params: params.clone(),
-            opus: Vec::new(),
-        })
+        Ok(AudioDecoder { params: params.clone(), opus: Vec::new() })
     }
 
     /// Forgets the decoder state, so that the next chunk decodes with a fresh one. Call it
@@ -450,12 +402,7 @@ impl AudioDecoder {
 
     /// Decodes the chunk at `pts` into `out`: interleaved samples in `[-1, 1]` (nominally,
     /// for `f32` and Opus).
-    pub fn decode(
-        &mut self,
-        pts: u64,
-        payload: &[u8],
-        out: &mut Vec<f32>,
-    ) -> std::result::Result<(), String> {
+    pub fn decode(&mut self, pts: u64, payload: &[u8], out: &mut Vec<f32>) -> std::result::Result<(), String> {
         if self.params.format != SampleFormat::Opus {
             return self.params.decode_payload(payload, out);
         }
@@ -467,11 +414,7 @@ impl AudioDecoder {
             }
             None => {
                 // The least recently used state, unless the other one is fresh.
-                let i = self
-                    .opus
-                    .iter()
-                    .position(|d| d.next_pts().is_none())
-                    .unwrap_or(0);
+                let i = self.opus.iter().position(|d| d.next_pts().is_none()).unwrap_or(0);
                 self.opus[i].reset();
                 i
             }
@@ -513,10 +456,7 @@ pub struct TimeBase {
 }
 
 impl TimeBase {
-    pub const MICROS: TimeBase = TimeBase {
-        num: 1,
-        den: 1_000_000,
-    };
+    pub const MICROS: TimeBase = TimeBase { num: 1, den: 1_000_000 };
 
     pub fn new(num: u32, den: u32) -> TimeBase {
         TimeBase { num, den }
@@ -539,12 +479,7 @@ pub struct StreamInfo {
 
 impl StreamInfo {
     pub fn video(group: u16, time_base: TimeBase, params: VideoParams) -> StreamInfo {
-        StreamInfo {
-            group,
-            time_base,
-            chunk_count: 0,
-            params: StreamParams::Video(params),
-        }
+        StreamInfo { group, time_base, chunk_count: 0, params: StreamParams::Video(params) }
     }
 
     /// An audio stream with a time base of `1 / sample_rate`.
@@ -563,10 +498,7 @@ impl StreamInfo {
             group: 0,
             time_base: TimeBase::MICROS,
             chunk_count: 0,
-            params: StreamParams::Cues(CueParams {
-                max_duration: 0,
-                name: name.into(),
-            }),
+            params: StreamParams::Cues(CueParams { max_duration: 0, name: name.into() }),
         }
     }
 

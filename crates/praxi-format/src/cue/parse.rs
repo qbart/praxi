@@ -3,9 +3,7 @@
 use super::Value;
 use serde::Deserialize;
 use serde::de::value::{BorrowedStrDeserializer, SeqDeserializer};
-use serde::de::{
-    self, DeserializeSeed, Deserializer, EnumAccess, MapAccess, VariantAccess, Visitor,
-};
+use serde::de::{self, DeserializeSeed, Deserializer, EnumAccess, MapAccess, VariantAccess, Visitor};
 use std::fmt;
 
 /// Why a cue did not parse into a game type.
@@ -40,10 +38,7 @@ impl std::error::Error for ParseError {}
 
 /// Reads a cue of type `kind` with `fields` into `T`: an enum takes the variant named by
 /// `kind`, a struct or map takes the fields.
-pub fn parse<'a, T: Deserialize<'a>>(
-    kind: &'a str,
-    fields: &'a [(String, Value)],
-) -> Result<T, ParseError> {
+pub fn parse<'a, T: Deserialize<'a>>(kind: &'a str, fields: &'a [(String, Value)]) -> Result<T, ParseError> {
     T::deserialize(CueDe { kind, fields }).map_err(|e| ParseError {
         kind: kind.to_string(),
         field: e.field,
@@ -80,32 +75,17 @@ impl std::error::Error for Error {}
 
 impl de::Error for Error {
     fn custom<M: fmt::Display>(msg: M) -> Error {
-        Error {
-            field: None,
-            message: msg.to_string(),
-            unknown_variant: false,
-        }
+        Error { field: None, message: msg.to_string(), unknown_variant: false }
     }
 
     fn unknown_variant(variant: &str, expected: &'static [&'static str]) -> Error {
         let expected: Vec<String> = expected.iter().map(|v| format!("`{v}`")).collect();
-        let message = format!(
-            "unknown variant `{variant}`, expected one of {}",
-            expected.join(", ")
-        );
-        Error {
-            field: None,
-            message,
-            unknown_variant: true,
-        }
+        let message = format!("unknown variant `{variant}`, expected one of {}", expected.join(", "));
+        Error { field: None, message, unknown_variant: true }
     }
 
     fn missing_field(field: &'static str) -> Error {
-        Error {
-            field: Some(field.to_string()),
-            message: "missing".into(),
-            unknown_variant: false,
-        }
+        Error { field: Some(field.to_string()), message: "missing".into(), unknown_variant: false }
     }
 }
 
@@ -122,20 +102,11 @@ impl<'de> Deserializer<'de> for CueDe<'de> {
         FieldsDe(self.fields).deserialize_any(visitor)
     }
 
-    fn deserialize_enum<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Error> {
+    fn deserialize_enum<V: Visitor<'de>>(self, _name: &'static str, _variants: &'static [&'static str], visitor: V) -> Result<V::Value, Error> {
         visitor.visit_enum(self)
     }
 
-    fn deserialize_unit_struct<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, Error> {
+    fn deserialize_unit_struct<V: Visitor<'de>>(self, _name: &'static str, visitor: V) -> Result<V::Value, Error> {
         visitor.visit_unit()
     }
 
@@ -149,18 +120,13 @@ impl<'de> EnumAccess<'de> for CueDe<'de> {
     type Error = Error;
     type Variant = FieldsDe<'de>;
 
-    fn variant_seed<S: DeserializeSeed<'de>>(
-        self,
-        seed: S,
-    ) -> Result<(S::Value, FieldsDe<'de>), Error> {
-        let variant = seed
-            .deserialize(BorrowedStrDeserializer::<Error>::new(self.kind))
-            .map_err(|mut e| {
-                if e.unknown_variant {
-                    e.message = format!("unknown cue type {:?}", self.kind);
-                }
-                e
-            })?;
+    fn variant_seed<S: DeserializeSeed<'de>>(self, seed: S) -> Result<(S::Value, FieldsDe<'de>), Error> {
+        let variant = seed.deserialize(BorrowedStrDeserializer::<Error>::new(self.kind)).map_err(|mut e| {
+            if e.unknown_variant {
+                e.message = format!("unknown cue type {:?}", self.kind);
+            }
+            e
+        })?;
         Ok((variant, FieldsDe(self.fields)))
     }
 }
@@ -178,17 +144,10 @@ impl<'de> VariantAccess<'de> for FieldsDe<'de> {
     }
 
     fn tuple_variant<V: Visitor<'de>>(self, _len: usize, _visitor: V) -> Result<V::Value, Error> {
-        Err(de::Error::invalid_type(
-            de::Unexpected::Map,
-            &"a struct, newtype or unit variant",
-        ))
+        Err(de::Error::invalid_type(de::Unexpected::Map, &"a struct, newtype or unit variant"))
     }
 
-    fn struct_variant<V: Visitor<'de>>(
-        self,
-        _fields: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Error> {
+    fn struct_variant<V: Visitor<'de>>(self, _fields: &'static [&'static str], visitor: V) -> Result<V::Value, Error> {
         self.deserialize_any(visitor)
     }
 }
@@ -200,17 +159,10 @@ impl<'de> Deserializer<'de> for FieldsDe<'de> {
     type Error = Error;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
-        visitor.visit_map(FieldMap {
-            fields: self.0.iter(),
-            value: None,
-        })
+        visitor.visit_map(FieldMap { fields: self.0.iter(), value: None })
     }
 
-    fn deserialize_unit_struct<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, Error> {
+    fn deserialize_unit_struct<V: Visitor<'de>>(self, _name: &'static str, visitor: V) -> Result<V::Value, Error> {
         visitor.visit_unit()
     }
 
@@ -228,16 +180,10 @@ struct FieldMap<'a> {
 impl<'de> MapAccess<'de> for FieldMap<'de> {
     type Error = Error;
 
-    fn next_key_seed<K: DeserializeSeed<'de>>(
-        &mut self,
-        seed: K,
-    ) -> Result<Option<K::Value>, Error> {
-        let Some((key, value)) = self.fields.next() else {
-            return Ok(None);
-        };
+    fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, Error> {
+        let Some((key, value)) = self.fields.next() else { return Ok(None) };
         self.value = Some((key, value));
-        seed.deserialize(BorrowedStrDeserializer::new(key))
-            .map(Some)
+        seed.deserialize(BorrowedStrDeserializer::new(key)).map(Some)
     }
 
     fn next_value_seed<S: DeserializeSeed<'de>>(&mut self, seed: S) -> Result<S::Value, Error> {
@@ -270,21 +216,12 @@ impl<'de> Deserializer<'de> for ValueDe<'de> {
         visitor.visit_some(self)
     }
 
-    fn deserialize_newtype_struct<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, Error> {
+    fn deserialize_newtype_struct<V: Visitor<'de>>(self, _name: &'static str, visitor: V) -> Result<V::Value, Error> {
         visitor.visit_newtype_struct(self)
     }
 
     /// Unit variants by name.
-    fn deserialize_enum<V: Visitor<'de>>(
-        self,
-        _name: &'static str,
-        _variants: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, Error> {
+    fn deserialize_enum<V: Visitor<'de>>(self, _name: &'static str, _variants: &'static [&'static str], visitor: V) -> Result<V::Value, Error> {
         match self.0 {
             Value::String(s) => visitor.visit_enum(BorrowedStrDeserializer::new(s)),
             _ => self.deserialize_any(visitor),
@@ -312,10 +249,7 @@ mod tests {
 
     fn cue(kind: &str, fields: &[(&str, Value)]) -> Cue {
         let mut c = Cue::new(kind);
-        c.fields = fields
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.clone()))
-            .collect();
+        c.fields = fields.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
         c
     }
 
@@ -336,10 +270,7 @@ mod tests {
     #[derive(Debug, PartialEq, Deserialize)]
     enum GameCue {
         #[serde(rename = "subtitle")]
-        Subtitle {
-            text: String,
-            speaker: Option<String>,
-        },
+        Subtitle { text: String, speaker: Option<String> },
         #[serde(rename = "camera.shake")]
         Shake { strength: f32, frames: u8 },
         #[serde(rename = "sound")]
@@ -347,75 +278,21 @@ mod tests {
         #[serde(rename = "fade")]
         Fade,
         #[serde(rename = "music")]
-        Music {
-            mood: Mood,
-            data: Vec<u8>,
-            loud: bool,
-        },
+        Music { mood: Mood, data: Vec<u8>, loud: bool },
     }
 
     #[test]
     fn enums_take_the_variant_of_the_type() {
-        let c = cue(
-            "subtitle",
-            &[("text", "Hi".into()), ("x", Value::Float(0.5))],
-        );
-        assert_eq!(
-            c.parse::<GameCue>(),
-            Ok(GameCue::Subtitle {
-                text: "Hi".into(),
-                speaker: None
-            })
-        );
-        let c = cue(
-            "camera.shake",
-            &[("frames", Value::Int(12)), ("strength", Value::Int(3))],
-        );
-        assert_eq!(
-            c.parse::<GameCue>(),
-            Ok(GameCue::Shake {
-                strength: 3.0,
-                frames: 12
-            }),
-            "integers into floats"
-        );
-        let c = cue(
-            "sound",
-            &[("name", "door".into()), ("volume", Value::Float(0.5))],
-        );
-        assert_eq!(
-            c.parse::<GameCue>(),
-            Ok(GameCue::Sound(Sound {
-                name: "door".into(),
-                volume: Some(0.5)
-            }))
-        );
-        assert_eq!(
-            cue("fade", &[("anything", Value::Bool(true))]).parse::<GameCue>(),
-            Ok(GameCue::Fade)
-        );
-        let c = cue(
-            "music",
-            &[
-                ("mood", "tense".into()),
-                ("data", Value::Bytes(vec![1, 2])),
-                ("loud", Value::Bool(true)),
-            ],
-        );
-        assert_eq!(
-            c.parse::<GameCue>(),
-            Ok(GameCue::Music {
-                mood: Mood::Tense,
-                data: vec![1, 2],
-                loud: true
-            })
-        );
-        assert_eq!(
-            cue("x", &[("mood", "calm".into())])
-                .parse::<std::collections::HashMap<String, Mood>>()
-                .unwrap()["mood"],
-            Mood::Calm
-        );
+        let c = cue("subtitle", &[("text", "Hi".into()), ("x", Value::Float(0.5))]);
+        assert_eq!(c.parse::<GameCue>(), Ok(GameCue::Subtitle { text: "Hi".into(), speaker: None }));
+        let c = cue("camera.shake", &[("frames", Value::Int(12)), ("strength", Value::Int(3))]);
+        assert_eq!(c.parse::<GameCue>(), Ok(GameCue::Shake { strength: 3.0, frames: 12 }), "integers into floats");
+        let c = cue("sound", &[("name", "door".into()), ("volume", Value::Float(0.5))]);
+        assert_eq!(c.parse::<GameCue>(), Ok(GameCue::Sound(Sound { name: "door".into(), volume: Some(0.5) })));
+        assert_eq!(cue("fade", &[("anything", Value::Bool(true))]).parse::<GameCue>(), Ok(GameCue::Fade));
+        let c = cue("music", &[("mood", "tense".into()), ("data", Value::Bytes(vec![1, 2])), ("loud", Value::Bool(true))]);
+        assert_eq!(c.parse::<GameCue>(), Ok(GameCue::Music { mood: Mood::Tense, data: vec![1, 2], loud: true }));
+        assert_eq!(cue("x", &[("mood", "calm".into())]).parse::<std::collections::HashMap<String, Mood>>().unwrap()["mood"], Mood::Calm);
     }
 
     #[test]
@@ -427,18 +304,8 @@ mod tests {
             #[serde(default)]
             count: i64,
         }
-        let c = cue(
-            "anything",
-            &[("text", "a".into()), ("raw", Value::Bytes(vec![7]))],
-        );
-        assert_eq!(
-            c.parse::<Borrowed>(),
-            Ok(Borrowed {
-                text: "a",
-                raw: &[7],
-                count: 0
-            })
-        );
+        let c = cue("anything", &[("text", "a".into()), ("raw", Value::Bytes(vec![7]))]);
+        assert_eq!(c.parse::<Borrowed>(), Ok(Borrowed { text: "a", raw: &[7], count: 0 }));
 
         #[derive(Debug, PartialEq, Deserialize)]
         struct Position {
@@ -464,69 +331,32 @@ mod tests {
             Other,
         }
         assert_eq!(cue("fade", &[]).parse::<Known>(), Ok(Known::Fade));
-        assert_eq!(
-            cue("explosion", &[("size", Value::Int(3))]).parse::<Known>(),
-            Ok(Known::Other)
-        );
+        assert_eq!(cue("explosion", &[("size", Value::Int(3))]).parse::<Known>(), Ok(Known::Other));
     }
 
     #[test]
     fn errors_name_the_cue_and_the_field() {
         let err = cue("explosion", &[]).parse::<GameCue>().unwrap_err();
         assert!(err.is_unknown_type());
-        assert_eq!(
-            err.to_string(),
-            "cue \"explosion\": unknown cue type \"explosion\""
-        );
+        assert_eq!(err.to_string(), "cue \"explosion\": unknown cue type \"explosion\"");
 
-        let err = cue(
-            "camera.shake",
-            &[("strength", "hard".into()), ("frames", Value::Int(1))],
-        )
-        .parse::<GameCue>()
-        .unwrap_err();
+        let err = cue("camera.shake", &[("strength", "hard".into()), ("frames", Value::Int(1))]).parse::<GameCue>().unwrap_err();
         assert!(!err.is_unknown_type());
         assert_eq!(err.field.as_deref(), Some("strength"));
-        assert_eq!(
-            err.to_string(),
-            "cue \"camera.shake\": field \"strength\": invalid type: string \"hard\", expected f32"
-        );
+        assert_eq!(err.to_string(), "cue \"camera.shake\": field \"strength\": invalid type: string \"hard\", expected f32");
 
-        let err = cue("subtitle", &[("speaker", "Bob".into())])
-            .parse::<GameCue>()
-            .unwrap_err();
+        let err = cue("subtitle", &[("speaker", "Bob".into())]).parse::<GameCue>().unwrap_err();
         assert_eq!(err.to_string(), "cue \"subtitle\": field \"text\": missing");
 
-        let err = cue(
-            "camera.shake",
-            &[("strength", Value::Int(1)), ("frames", Value::Int(300))],
-        )
-        .parse::<GameCue>()
-        .unwrap_err();
+        let err = cue("camera.shake", &[("strength", Value::Int(1)), ("frames", Value::Int(300))]).parse::<GameCue>().unwrap_err();
         assert_eq!(err.field.as_deref(), Some("frames"));
         assert!(err.message.contains("300"), "{err}");
 
-        let err = cue(
-            "camera.shake",
-            &[
-                ("strength", Value::Float(1.0)),
-                ("frames", Value::Float(2.0)),
-            ],
-        )
-        .parse::<GameCue>()
-        .unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "cue \"camera.shake\": field \"frames\": invalid type: floating point `2.0`, expected u8"
-        );
+        let err = cue("camera.shake", &[("strength", Value::Float(1.0)), ("frames", Value::Float(2.0))]).parse::<GameCue>().unwrap_err();
+        assert_eq!(err.to_string(), "cue \"camera.shake\": field \"frames\": invalid type: floating point `2.0`, expected u8");
 
-        let err = cue("music", &[("mood", "angry".into())])
-            .parse::<GameCue>()
-            .unwrap_err();
-        assert!(
-            !err.is_unknown_type(),
-            "unknown unit variants in fields are field errors"
-        );
+        let err = cue("music", &[("mood", "angry".into())]).parse::<GameCue>().unwrap_err();
+        assert!(!err.is_unknown_type(), "unknown unit variants in fields are field errors");
         assert_eq!(err.field.as_deref(), Some("mood"));
 
         #[derive(Debug, Deserialize)]
@@ -535,12 +365,7 @@ mod tests {
         struct Strict {
             text: String,
         }
-        let err = cue(
-            "subtitle",
-            &[("text", "a".into()), ("x", Value::Float(0.1))],
-        )
-        .parse::<Strict>()
-        .unwrap_err();
+        let err = cue("subtitle", &[("text", "a".into()), ("x", Value::Float(0.1))]).parse::<Strict>().unwrap_err();
         assert!(err.message.contains("unknown field `x`"), "{err}");
     }
 }

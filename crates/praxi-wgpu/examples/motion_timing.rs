@@ -11,11 +11,8 @@ use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args().nth(1).ok_or("usage: motion_timing FILE")?;
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(
-        &instance, None,
-    ))?;
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None))?;
     let info = adapter.get_info();
     println!("adapter: {} ({:?})", info.name, info.backend);
     if !praxi_wgpu::supports_motion(&adapter) {
@@ -40,8 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             is_keyframe.push(chunk.keyframe());
         }
     }
-    let mut renderer =
-        praxi_wgpu::VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, &player);
+    let mut renderer = praxi_wgpu::VideoRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, &player);
     let timed = renderer.set_gpu_timing(&device, true);
     if !timed {
         println!("no timestamp queries: wall times only");
@@ -74,11 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ms = start.elapsed().as_secs_f64() * 1e3;
             let gpu = renderer.gpu_times(&device, &queue);
             if pass > 0 {
-                if keyframe {
-                    keyframes.push(ms)
-                } else {
-                    deltas.push(ms)
-                }
+                if keyframe { keyframes.push(ms) } else { deltas.push(ms) }
                 for t in gpu {
                     let kind = &mut passes[usize::from(!t.keyframe)];
                     let color = t.color.unwrap_or_default();

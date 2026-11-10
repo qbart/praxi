@@ -27,11 +27,7 @@ impl VideoView {
         let texture = |label, format, usage| {
             state.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
-                size: wgpu::Extent3d {
-                    width: size.0,
-                    height: size.1,
-                    depth_or_array_layers: 1,
-                },
+                size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -45,31 +41,15 @@ impl VideoView {
         let usage = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING;
         let shown = texture("video shown", wgpu::TextureFormat::Rgba8Unorm, usage);
         let view = shown.create_view(&Default::default());
-        let id = state.renderer.write().register_native_texture(
-            &state.device,
-            &view,
-            wgpu::FilterMode::Linear,
-        );
-        let renderer =
-            VideoRenderer::new(&state.device, wgpu::TextureFormat::Rgba8UnormSrgb, player);
+        let id = state.renderer.write().register_native_texture(&state.device, &view, wgpu::FilterMode::Linear);
+        let renderer = VideoRenderer::new(&state.device, wgpu::TextureFormat::Rgba8UnormSrgb, player);
         let target_view = target.create_view(&Default::default());
-        VideoView {
-            renderer,
-            target,
-            target_view,
-            shown,
-            texture: id,
-            size,
-        }
+        VideoView { renderer, target, target_view, shown, texture: id, size }
     }
 
     /// Uploads and draws the frames that changed since the last call.
     pub fn update<R: Read + Seek>(&mut self, state: &RenderState, player: &mut Player<R>) {
-        if self
-            .renderer
-            .prepare(&state.device, &state.queue, player, 1.0)
-            == 0
-        {
+        if self.renderer.prepare(&state.device, &state.queue, player, 1.0) == 0 {
             return;
         }
         let mut encoder = state.device.create_command_encoder(&Default::default());
@@ -80,33 +60,18 @@ impl VideoView {
                     view: &self.target_view,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
                 })],
                 ..Default::default()
             });
             let (w, h) = self.size;
-            self.renderer.draw_replace(
-                &mut pass,
-                Rect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: w as f32,
-                    h: h as f32,
-                },
-            );
+            self.renderer.draw_replace(&mut pass, Rect { x: 0.0, y: 0.0, w: w as f32, h: h as f32 });
         }
         let (width, height) = self.size;
         encoder.copy_texture_to_texture(
             self.target.as_image_copy(),
             self.shown.as_image_copy(),
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
         state.queue.submit([encoder.finish()]);
     }

@@ -61,8 +61,7 @@ pub fn decode(src: &[u8], out: &mut [u8]) -> Result<(), &'static str> {
     let mut streams: [&[u8]; STREAMS] = [&[]; STREAMS];
     let mut rest = &src[HEADER_SIZE..];
     for (j, stream) in streams.iter_mut().enumerate().take(STREAMS - 1) {
-        let size =
-            u32::from_le_bytes(src[128 + 4 * j..132 + 4 * j].try_into().expect("4 bytes")) as usize;
+        let size = u32::from_le_bytes(src[128 + 4 * j..132 + 4 * j].try_into().expect("4 bytes")) as usize;
         if size > rest.len() {
             return Err("Huffman stream sizes exceed the section");
         }
@@ -82,12 +81,7 @@ pub fn decode(src: &[u8], out: &mut [u8]) -> Result<(), &'static str> {
 
     // Interleaved loop while every stream has 8 readable bytes and every run room for 5
     // pairs. Run 3 is the shortest.
-    let lim = streams
-        .iter()
-        .map(|s| s.len())
-        .min()
-        .unwrap_or(0)
-        .checked_sub(8);
+    let lim = streams.iter().map(|s| s.len()).min().unwrap_or(0).checked_sub(8);
     let end = parts[STREAMS - 1].len().checked_sub(2 * PER_REFILL);
     let mut written = [0; STREAMS];
     if let (Some(lim), Some(end)) = (lim, end) {
@@ -95,8 +89,7 @@ pub fn decode(src: &[u8], out: &mut [u8]) -> Result<(), &'static str> {
         // Local copies, so the reader state can stay in registers across output writes.
         let [mut r0, mut r1, mut r2, mut r3] = readers;
         let [mut w0, mut w1, mut w2, mut w3] = written;
-        while r0.pos.max(r1.pos).max(r2.pos).max(r3.pos) <= lim && w0.max(w1).max(w2).max(w3) <= end
-        {
+        while r0.pos.max(r1.pos).max(r2.pos).max(r3.pos) <= lim && w0.max(w1).max(w2).max(w3) <= end {
             r0.refill_fast();
             r1.refill_fast();
             r2.refill_fast();
@@ -135,23 +128,14 @@ struct BitReader<'a> {
 
 impl<'a> BitReader<'a> {
     fn new(src: &'a [u8]) -> BitReader<'a> {
-        BitReader {
-            src,
-            pos: 0,
-            acc: 0,
-            bits: 0,
-        }
+        BitReader { src, pos: 0, acc: 0, bits: 0 }
     }
 
     /// Loads whole bytes until at least 56 bits are valid; needs `pos + 8 <= src.len()`.
     /// Bits above `bits` may hold the following bytes, which later loads OR in again.
     #[inline(always)]
     fn refill_fast(&mut self) {
-        let word = u64::from_le_bytes(
-            self.src[self.pos..self.pos + 8]
-                .try_into()
-                .expect("8 bytes"),
-        );
+        let word = u64::from_le_bytes(self.src[self.pos..self.pos + 8].try_into().expect("8 bytes"));
         self.acc |= word << self.bits;
         self.pos += ((63 - self.bits) >> 3) as usize;
         self.bits |= 56;
@@ -281,11 +265,8 @@ pub(crate) fn code_lengths(hist: &[u32; 256]) -> [u8; 256] {
 
     // Leaf depths of a Huffman tree. Nodes 0..n are leaves; parents get higher numbers.
     let mut parent = vec![0usize; 2 * n - 1];
-    let mut heap: BinaryHeap<Reverse<(u64, usize)>> = syms
-        .iter()
-        .enumerate()
-        .map(|(i, &s)| Reverse((hist[s as usize] as u64, i)))
-        .collect();
+    let mut heap: BinaryHeap<Reverse<(u64, usize)>> =
+        syms.iter().enumerate().map(|(i, &s)| Reverse((hist[s as usize] as u64, i))).collect();
     let mut next = n;
     while let (Some(Reverse((wa, a))), Some(Reverse((wb, b)))) = (heap.pop(), heap.pop()) {
         parent[a] = next;
@@ -350,9 +331,7 @@ mod tests {
 
     #[test]
     fn roundtrips() {
-        for len in [
-            0, 1, 2, 3, 4, 5, 19, 20, 21, 39, 40, 41, 100, 1000, 4099, 100_000,
-        ] {
+        for len in [0, 1, 2, 3, 4, 5, 19, 20, 21, 39, 40, 41, 100, 1000, 4099, 100_000] {
             roundtrip(&noise(len, len as u64 + 7, 8));
             roundtrip(&noise(len, len as u64 + 9, 3));
             roundtrip(&vec![42; len]);
@@ -374,13 +353,7 @@ mod tests {
         data.iter().for_each(|&s| hist[s as usize] += 1);
         let lens = code_lengths(&hist);
         assert_eq!(lens.iter().max(), Some(&(MAX_LEN as u8)));
-        assert_eq!(
-            lens.iter()
-                .filter(|&&l| l > 0)
-                .map(|&l| TABLE_SIZE >> l)
-                .sum::<usize>(),
-            TABLE_SIZE
-        );
+        assert_eq!(lens.iter().filter(|&&l| l > 0).map(|&l| TABLE_SIZE >> l).sum::<usize>(), TABLE_SIZE);
         roundtrip(&data);
     }
 
@@ -399,24 +372,15 @@ mod tests {
         assert!(decode(&enc[..100], &mut out).is_err(), "short header");
         let mut bad = enc.clone();
         bad[0] = 0xFF;
-        assert!(
-            decode(&bad, &mut out).is_err(),
-            "lengths over 11 / incomplete code"
-        );
+        assert!(decode(&bad, &mut out).is_err(), "lengths over 11 / incomplete code");
         let mut bad = enc.clone();
         bad[128..132].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(decode(&bad, &mut out).is_err(), "stream size past the end");
-        assert!(
-            decode(&enc[..enc.len() - 50], &mut out).is_err(),
-            "truncated last stream"
-        );
+        assert!(decode(&enc[..enc.len() - 50], &mut out).is_err(), "truncated last stream");
         let mut bad = vec![0u8; HEADER_SIZE];
         assert!(decode(&bad, &mut out).is_err(), "no codes");
         assert!(decode(&bad, &mut []).is_ok(), "empty section");
         bad[0] = 0x10; // one symbol of length 1
-        assert!(
-            decode(&bad, &mut out[..10]).is_err(),
-            "single code without stream bits"
-        );
+        assert!(decode(&bad, &mut out[..10]).is_err(), "single code without stream bits");
     }
 }

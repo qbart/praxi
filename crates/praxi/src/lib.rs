@@ -8,10 +8,7 @@ mod audio;
 
 use audio::us_to_frames;
 use praxi_format::motion::{CodedFrame, Decoder, MAX_AHEAD};
-use praxi_format::{
-    AudioDecoder, CHUNK_HEADER_SIZE, ChunkHeader, Cue, IndexEntry, Reader, StreamInfo,
-    StreamParams, TimeBase,
-};
+use praxi_format::{AudioDecoder, CHUNK_HEADER_SIZE, ChunkHeader, Cue, IndexEntry, Reader, StreamInfo, StreamParams, TimeBase};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -19,10 +16,7 @@ use std::io::{Read, Seek};
 use std::time::Duration;
 
 pub use audio::AudioOutput;
-pub use praxi_format::{
-    self as format, AudioParams, CueTrack, SampleFormat, TextureFormat, TimedCue, Value,
-    VideoParams,
-};
+pub use praxi_format::{self as format, AudioParams, CueTrack, SampleFormat, TextureFormat, TimedCue, Value, VideoParams};
 
 /// Default for [`Player::set_audio_sync_tolerance`].
 pub const DEFAULT_AUDIO_SYNC_TOLERANCE: Duration = Duration::from_millis(60);
@@ -46,9 +40,7 @@ pub enum Clock {
 pub enum Error {
     Format(praxi_format::Error),
     /// The group has no variant in a texture format the engine supports.
-    NoSupportedVariant {
-        group: u16,
-    },
+    NoSupportedVariant { group: u16 },
     Corrupt(String),
 }
 
@@ -56,10 +48,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Format(e) => e.fmt(f),
-            Error::NoSupportedVariant { group } => write!(
-                f,
-                "group {group} has no variant in a supported texture format"
-            ),
+            Error::NoSupportedVariant { group } => write!(f, "group {group} has no variant in a supported texture format"),
             Error::Corrupt(msg) => write!(f, "corrupt praxi file: {msg}"),
         }
     }
@@ -92,10 +81,7 @@ pub struct Capabilities {
 
 impl Capabilities {
     pub fn new(formats: impl IntoIterator<Item = TextureFormat>) -> Capabilities {
-        Capabilities {
-            formats: formats.into_iter().collect(),
-            max_audio_channels: None,
-        }
+        Capabilities { formats: formats.into_iter().collect(), max_audio_channels: None }
     }
 
     /// Prefers audio variants with at most `channels` channels (default: unlimited).
@@ -114,16 +100,11 @@ pub enum Event {
     Started,
     Paused,
     Resumed,
-    Seeked {
-        to: Duration,
-    },
+    Seeked { to: Duration },
     /// The clock reached the start of a cue (`docs/features/cues.md`).
     Cue(CueEvent),
     /// A cue with a non-zero duration ended.
-    CueEnd {
-        id: u64,
-        stream: u16,
-    },
+    CueEnd { id: u64, stream: u16 },
     Looped,
     Finished,
 }
@@ -162,9 +143,7 @@ impl CueEvent {
     /// Reads this cue into a game type: an enum takes the variant named by the cue type, a
     /// struct the fields (`docs/features/cue-runtime.md#typed-cues`).
     #[cfg(feature = "serde")]
-    pub fn parse<'a, T: serde::Deserialize<'a>>(
-        &'a self,
-    ) -> std::result::Result<T, format::cue::ParseError> {
+    pub fn parse<'a, T: serde::Deserialize<'a>>(&'a self) -> std::result::Result<T, format::cue::ParseError> {
         format::cue::parse(&self.kind, &self.fields)
     }
 }
@@ -195,11 +174,7 @@ impl TableCue {
             kind: cue.kind,
             fields: cue.fields,
         };
-        TableCue {
-            start_us,
-            end_us,
-            event,
-        }
+        TableCue { start_us, end_us, event }
     }
 }
 
@@ -309,8 +284,7 @@ impl MotionQueue {
         // Decoding cancels the decoder's decode-ahead.
         self.ahead.clear();
         self.next(keyframe);
-        self.decoder
-            .decode(keyframe, payload, &mut self.frames[self.queued])?;
+        self.decoder.decode(keyframe, payload, &mut self.frames[self.queued])?;
         self.queued += 1;
         Ok(())
     }
@@ -322,9 +296,7 @@ impl MotionQueue {
         }
         self.ahead.pop_front();
         self.next(chunk.keyframe());
-        let result = self
-            .decoder
-            .finish_ahead(chunk.offset, &mut self.frames[self.queued])?;
+        let result = self.decoder.finish_ahead(chunk.offset, &mut self.frames[self.queued])?;
         if result.is_err() {
             // The decoder cancels the frames after a broken one.
             self.ahead.clear();
@@ -362,20 +334,12 @@ impl Track {
             }
         } else if chunk.keyframe() {
             if payload.len() != p.frame_size() {
-                return corrupt(format!(
-                    "keyframe at {} has {} bytes, expected {}",
-                    chunk.offset,
-                    payload.len(),
-                    p.frame_size()
-                ));
+                return corrupt(format!("keyframe at {} has {} bytes, expected {}", chunk.offset, payload.len(), p.frame_size()));
             }
             self.frame.copy_from_slice(payload);
         } else {
             if !self.has_frame {
-                return corrupt(format!(
-                    "delta frame at {} without a keyframe",
-                    chunk.offset
-                ));
+                return corrupt(format!("delta frame at {} without a keyframe", chunk.offset));
             }
             apply_delta(&mut self.frame, payload, p, chunk.offset)?;
         }
@@ -393,10 +357,7 @@ fn apply_delta(frame: &mut [u8], payload: &[u8], p: &VideoParams, offset: u64) -
     let (mask, blocks) = payload.split_at(mask_size);
     let changed: usize = mask.iter().map(|b| b.count_ones() as usize).sum();
     if blocks.len() != changed * bb {
-        return corrupt(format!(
-            "delta frame at {offset} has {} block bytes for {changed} blocks",
-            blocks.len()
-        ));
+        return corrupt(format!("delta frame at {offset} has {} block bytes for {changed} blocks", blocks.len()));
     }
     let block_count = p.block_count();
     let mut src = 0;
@@ -405,14 +366,9 @@ fn apply_delta(frame: &mut [u8], payload: &[u8], p: &VideoParams, offset: u64) -
         while bits != 0 {
             let i = byte_i * 8 + bits.trailing_zeros() as usize;
             if i >= block_count {
-                return corrupt(format!(
-                    "delta frame at {offset} sets mask bits past the last block"
-                ));
+                return corrupt(format!("delta frame at {offset} sets mask bits past the last block"));
             }
-            for (dst, residual) in frame[i * bb..(i + 1) * bb]
-                .iter_mut()
-                .zip(&blocks[src..src + bb])
-            {
+            for (dst, residual) in frame[i * bb..(i + 1) * bb].iter_mut().zip(&blocks[src..src + bb]) {
                 *dst ^= residual;
             }
             src += bb;
@@ -492,11 +448,7 @@ impl<R: Read + Seek> Player<R> {
         let mut tracks = Vec::new();
         for (&group, members) in &groups {
             let chosen = caps.formats.iter().find_map(|f| {
-                members.iter().copied().find(|&s| {
-                    streams[s as usize]
-                        .video_params()
-                        .is_some_and(|v| v.format == *f)
-                })
+                members.iter().copied().find(|&s| streams[s as usize].video_params().is_some_and(|v| v.format == *f))
             });
             let Some(stream) = chosen else {
                 return Err(Error::NoSupportedVariant { group });
@@ -505,11 +457,7 @@ impl<R: Read + Seek> Player<R> {
             let params = *s.video_params().expect("selected stream is video");
             routes[stream as usize] = Route::Video(tracks.len());
             tracks.push(Track {
-                info: TrackInfo {
-                    stream,
-                    group,
-                    params,
-                },
+                info: TrackInfo { stream, group, params },
                 time_base: s.time_base,
                 frame: vec![0; params.frame_size()],
                 has_frame: false,
@@ -534,20 +482,12 @@ impl<R: Read + Seek> Player<R> {
         let mut audio = Vec::new();
         for (&group, members) in &audio_groups {
             let stream = select_audio_variant(&streams, members, caps.max_audio_channels);
-            let params = streams[stream as usize]
-                .audio_params()
-                .expect("selected stream is audio")
-                .clone();
+            let params = streams[stream as usize].audio_params().expect("selected stream is audio").clone();
             routes[stream as usize] = Route::Audio(audio.len());
-            let decoder = AudioDecoder::new(&params)
-                .map_err(|e| Error::Corrupt(format!("audio stream {stream}: {e}")))?;
+            let decoder = AudioDecoder::new(&params).map_err(|e| Error::Corrupt(format!("audio stream {stream}: {e}")))?;
             audio.push(AudioTrack {
                 output: AudioOutput::new(&params, audio_tolerance_us),
-                info: AudioTrackInfo {
-                    stream,
-                    group,
-                    params,
-                },
+                info: AudioTrackInfo { stream, group, params },
                 enabled: true,
                 base_frame: 0,
                 resume_offset: 0,
@@ -558,40 +498,24 @@ impl<R: Read + Seek> Player<R> {
         let mut cue_enabled = vec![false; streams.len()];
         for (i, s) in streams.iter().enumerate() {
             if let Some(c) = s.cue_params() {
-                cue_streams.push(CueStreamInfo {
-                    stream: i as u16,
-                    name: c.name.clone(),
-                });
+                cue_streams.push(CueStreamInfo { stream: i as u16, name: c.name.clone() });
                 cue_enabled[i] = true;
             }
         }
         let index = reader.read_index()?;
         let mut cues = Vec::new();
         let mut payload = Vec::new();
-        for e in index.iter().filter(|e| {
-            streams
-                .get(e.stream as usize)
-                .is_some_and(|s| s.cue_params().is_some())
-        }) {
+        for e in index.iter().filter(|e| streams.get(e.stream as usize).is_some_and(|s| s.cue_params().is_some())) {
             let chunk = reader.chunk_at(e.offset)?;
             if chunk.stream != e.stream {
-                return corrupt(format!(
-                    "index entry for stream {} points at a chunk of stream {}",
-                    e.stream, chunk.stream
-                ));
+                return corrupt(format!("index entry for stream {} points at a chunk of stream {}", e.stream, chunk.stream));
             }
             reader.read_payload(&chunk, &mut payload)?;
             let cue = Cue::decode(&payload)?;
             let time_base = streams[chunk.stream as usize].time_base;
             let start_us = time_base.to_micros(chunk.pts);
             let end_us = time_base.to_micros(chunk.pts.saturating_add(cue.duration));
-            cues.push(TableCue::new(
-                chunk.offset,
-                chunk.stream,
-                start_us,
-                end_us,
-                cue,
-            ));
+            cues.push(TableCue::new(chunk.offset, chunk.stream, start_us, end_us, cue));
         }
         // Stable: ties keep file order.
         cues.sort_by_key(|c| c.start_us);
@@ -601,11 +525,7 @@ impl<R: Read + Seek> Player<R> {
             track_infos: tracks.iter().map(|t| t.info).collect(),
             tracks,
             audio_infos: audio.iter().map(|a| a.info.clone()).collect(),
-            max_preload_us: audio
-                .iter()
-                .map(|a| a.info.params.preload_us as u64)
-                .max()
-                .unwrap_or(0),
+            max_preload_us: audio.iter().map(|a| a.info.params.preload_us as u64).max().unwrap_or(0),
             loop_scan: None,
             audio,
             audio_tolerance_us,
@@ -695,41 +615,23 @@ impl<R: Read + Seek> Player<R> {
     pub fn replace_cues(&mut self, tracks: Vec<CueTrack>) {
         self.end_cues(|_| true);
         let first = self.reader.streams().len();
-        let tracks = &tracks[..tracks
-            .len()
-            .min((u16::MAX as usize + 1).saturating_sub(first))];
+        let tracks = &tracks[..tracks.len().min((u16::MAX as usize + 1).saturating_sub(first))];
         self.cue_enabled = vec![true; first + tracks.len()];
         self.cue_enabled[..first].fill(false);
         self.cue_streams = tracks
             .iter()
             .enumerate()
-            .map(|(i, t)| CueStreamInfo {
-                stream: (first + i) as u16,
-                name: t.name.clone(),
-            })
+            .map(|(i, t)| CueStreamInfo { stream: (first + i) as u16, name: t.name.clone() })
             .collect();
-        let mut cues: Vec<(u64, u16, &TimedCue)> = tracks
-            .iter()
-            .enumerate()
-            .flat_map(|(i, t)| {
-                t.cues
-                    .iter()
-                    .map(move |c| (c.time_us, (first + i) as u16, c))
-            })
-            .collect();
+        let mut cues: Vec<(u64, u16, &TimedCue)> =
+            tracks.iter().enumerate().flat_map(|(i, t)| t.cues.iter().map(move |c| (c.time_us, (first + i) as u16, c))).collect();
         cues.sort_by_key(|c| c.0);
         self.cues = cues
             .into_iter()
             .enumerate()
             .map(|(i, (start_us, stream, c))| {
                 let end_us = start_us.saturating_add(c.cue.duration);
-                TableCue::new(
-                    REPLACED_CUE_ID + i as u64,
-                    stream,
-                    start_us,
-                    end_us,
-                    c.cue.clone(),
-                )
+                TableCue::new(REPLACED_CUE_ID + i as u64, stream, start_us, end_us, c.cue.clone())
             })
             .collect();
         if let Some(through) = self.cues_through.filter(|_| self.state != State::Finished) {
@@ -746,10 +648,7 @@ impl<R: Read + Seek> Player<R> {
     /// The cues of enabled streams not emitted yet that start within `within` of the clock,
     /// in start order, with the time until they start; continues into the next pass when
     /// looping (`docs/features/cue-runtime.md#upcoming-cues`).
-    pub fn upcoming_cues(
-        &self,
-        within: Duration,
-    ) -> impl Iterator<Item = (Duration, &CueEvent)> + '_ {
+    pub fn upcoming_cues(&self, within: Duration) -> impl Iterator<Item = (Duration, &CueEvent)> + '_ {
         let clock = self.clock_us;
         let horizon = clock.saturating_add(within.as_micros().min(u64::MAX as u128) as u64);
         let (mut this_pass, mut next_pass) = (0..0, 0..0);
@@ -758,25 +657,19 @@ impl<R: Read + Seek> Player<R> {
                 Some(t) => self.cues.partition_point(|c| c.start_us <= t),
                 None => self.cues.partition_point(|c| c.start_us < clock),
             };
-            let last = self
-                .cues
-                .partition_point(|c| c.start_us <= horizon.min(self.duration_us));
+            let last = self.cues.partition_point(|c| c.start_us <= horizon.min(self.duration_us));
             this_pass = first..last.max(first);
             if self.looping && horizon > self.duration_us {
-                let end = self
-                    .cues
-                    .partition_point(|c| c.start_us <= horizon - self.duration_us);
+                let end = self.cues.partition_point(|c| c.start_us <= horizon - self.duration_us);
                 next_pass = 0..end.min(first);
             }
         }
         let to_end = self.duration_us.saturating_sub(clock);
         let cue = move |i: usize, until: u64| {
             let c = &self.cues[i];
-            self.cue_enabled[c.event.stream as usize]
-                .then_some((Duration::from_micros(until), &c.event))
+            self.cue_enabled[c.event.stream as usize].then_some((Duration::from_micros(until), &c.event))
         };
-        let this_pass =
-            this_pass.filter_map(move |i| cue(i, self.cues[i].start_us.saturating_sub(clock)));
+        let this_pass = this_pass.filter_map(move |i| cue(i, self.cues[i].start_us.saturating_sub(clock)));
         let next_pass = next_pass.filter_map(move |i| cue(i, to_end + self.cues[i].start_us));
         this_pass.chain(next_pass)
     }
@@ -895,15 +788,9 @@ impl<R: Read + Seek> Player<R> {
         let mut start = u64::MAX;
         for t in &mut self.tracks {
             let entries = self.index.iter().filter(|e| e.stream == t.info.stream);
-            let before = entries
-                .clone()
-                .rev()
-                .find(|e| t.time_base.to_micros(e.pts) <= target);
+            let before = entries.clone().rev().find(|e| t.time_base.to_micros(e.pts) <= target);
             let Some(entry) = before.or_else(|| entries.clone().next()) else {
-                return corrupt(format!(
-                    "stream {} has no keyframe in the index",
-                    t.info.stream
-                ));
+                return corrupt(format!("stream {} has no keyframe in the index", t.info.stream));
             };
             t.resume_offset = entry.offset;
             start = start.min(entry.offset);
@@ -916,10 +803,7 @@ impl<R: Read + Seek> Player<R> {
                 SampleFormat::Opus => target.saturating_sub(format::opus::PREROLL_US),
                 _ => target,
             };
-            let before = entries
-                .clone()
-                .rev()
-                .find(|e| s.time_base.to_micros(e.pts) <= from);
+            let before = entries.clone().rev().find(|e| s.time_base.to_micros(e.pts) <= from);
             a.resume_offset = match before.or_else(|| entries.clone().next()) {
                 Some(entry) => entry.offset,
                 None => u64::MAX,
@@ -942,9 +826,7 @@ impl<R: Read + Seek> Player<R> {
         if self.state == State::Finished {
             self.state = State::Paused;
         }
-        self.events.push_back(Event::Seeked {
-            to: Duration::from_micros(target),
-        });
+        self.events.push_back(Event::Seeked { to: Duration::from_micros(target) });
         self.sync_audio();
         self.begin_active_cues(target);
         Ok(())
@@ -1011,9 +893,7 @@ impl<R: Read + Seek> Player<R> {
         self.clock_us = 0;
         self.cues_through = None;
         let start = self.reader.data_start();
-        self.reader
-            .seek_to(start)
-            .expect("data start is a valid chunk offset");
+        self.reader.seek_to(start).expect("data start is a valid chunk offset");
     }
 
     /// Decodes every chunk due at the clock. `emit_cues = false` (seeking) skips cues.
@@ -1088,12 +968,7 @@ impl<R: Read + Seek> Player<R> {
     fn begin_cue(&mut self, i: usize) {
         let c = &self.cues[i];
         if c.end_us > c.start_us {
-            self.active_cues.push(ActiveCue {
-                end_us: c.end_us,
-                id: c.event.id,
-                stream: c.event.stream,
-                index: i,
-            });
+            self.active_cues.push(ActiveCue { end_us: c.end_us, id: c.event.id, stream: c.event.stream, index: i });
         }
         self.events.push_back(Event::Cue(c.event.clone()));
     }
@@ -1119,11 +994,7 @@ impl<R: Read + Seek> Player<R> {
                 // Due in the next pass at `time - preload`, which is `duration` later on this clock.
                 let time = s.time_base.to_micros(chunk.pts);
                 let a = &self.audio[ai];
-                if time.saturating_add(self.duration_us)
-                    > self
-                        .clock_us
-                        .saturating_add(a.info.params.preload_us as u64)
-                {
+                if time.saturating_add(self.duration_us) > self.clock_us.saturating_add(a.info.params.preload_us as u64) {
                     break;
                 }
                 if a.enabled {
@@ -1145,11 +1016,7 @@ impl<R: Read + Seek> Player<R> {
         let mut open: Vec<bool> = self
             .tracks
             .iter()
-            .map(|t| {
-                t.motion
-                    .as_ref()
-                    .is_some_and(|m| m.decoder.threads() > 1 && m.decoder.ahead() < MAX_AHEAD)
-            })
+            .map(|t| t.motion.as_ref().is_some_and(|m| m.decoder.threads() > 1 && m.decoder.ahead() < MAX_AHEAD))
             .collect();
         let limit = self.clock_us.saturating_add(self.ahead_window_us);
         let mut next = self.pending;
@@ -1171,9 +1038,7 @@ impl<R: Read + Seek> Player<R> {
                 } else if m.ahead.back().is_none_or(|&last| chunk.offset > last) {
                     self.reader.read_payload(&chunk, &mut self.payload)?;
                     let m = self.tracks[ti].motion.as_mut().expect("motion track");
-                    if m.decoder
-                        .decode_ahead(chunk.offset, chunk.keyframe(), &self.payload)
-                    {
+                    if m.decoder.decode_ahead(chunk.offset, chunk.keyframe(), &self.payload) {
                         m.ahead.push_back(chunk.offset);
                         open[ti] = m.decoder.ahead() < MAX_AHEAD;
                     } else {
@@ -1182,11 +1047,7 @@ impl<R: Read + Seek> Player<R> {
                 }
             }
             let end = chunk.offset + CHUNK_HEADER_SIZE + chunk.stored_size as u64;
-            next = if end < self.reader.header().index_offset {
-                Some(self.reader.chunk_at(end)?)
-            } else {
-                None
-            };
+            next = if end < self.reader.header().index_offset { Some(self.reader.chunk_at(end)?) } else { None };
         }
         Ok(())
     }
@@ -1195,10 +1056,7 @@ impl<R: Read + Seek> Player<R> {
     fn queue_audio(&mut self, ai: usize, chunk: &ChunkHeader, at: u64) -> Result<()> {
         self.reader.read_payload(chunk, &mut self.payload)?;
         let a = &mut self.audio[ai];
-        if let Err(e) = a
-            .decoder
-            .decode(chunk.pts, &self.payload, &mut self.samples)
-        {
+        if let Err(e) = a.decoder.decode(chunk.pts, &self.payload, &mut self.samples) {
             return corrupt(format!("audio chunk at {}: {e}", chunk.offset));
         }
         a.output.lock().push(at, &self.samples);
@@ -1247,10 +1105,7 @@ impl<R: Read + Seek> Player<R> {
         self.active_cues = kept;
         ended.sort_by_key(|c| (c.end_us, c.id));
         for c in ended {
-            self.events.push_back(Event::CueEnd {
-                id: c.id,
-                stream: c.stream,
-            });
+            self.events.push_back(Event::CueEnd { id: c.id, stream: c.stream });
         }
     }
 
@@ -1270,10 +1125,7 @@ impl<R: Read + Seek> Player<R> {
 /// the earlier stream on ties (`docs/features/audio.md#variant-selection`).
 fn select_audio_variant(streams: &[StreamInfo], members: &[u16], max: Option<u16>) -> u16 {
     let channels = |s: u16| streams[s as usize].audio_params().map_or(0, |a| a.channels);
-    let fitting = members
-        .iter()
-        .copied()
-        .filter(|&s| max.is_none_or(|m| channels(s) <= m));
+    let fitting = members.iter().copied().filter(|&s| max.is_none_or(|m| channels(s) <= m));
     fitting
         .max_by_key(|&s| (channels(s), Reverse(s)))
         .or_else(|| members.iter().copied().min_by_key(|&s| (channels(s), s)))

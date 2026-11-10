@@ -35,10 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (i, t) in player.tracks().iter().enumerate() {
         let p = &t.params;
-        println!(
-            "video {i}: {} {}x{} (stream {})",
-            p.format, p.width, p.height, t.stream
-        );
+        println!("video {i}: {} {}x{} (stream {})", p.format, p.width, p.height, t.stream);
     }
     let mut textures: Vec<Texture> = player.tracks().iter().map(|_| Texture::default()).collect();
 
@@ -46,11 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stop = Arc::new(AtomicBool::new(false));
     let audio_frames = Arc::new(AtomicU64::new(0));
     let device = player.audio_output(0).map(|out| {
-        println!(
-            "audio 0: {} Hz, {} channels",
-            out.sample_rate(),
-            out.channels()
-        );
+        println!("audio 0: {} Hz, {} channels", out.sample_rate(), out.channels());
         let (stop, frames) = (stop.clone(), audio_frames.clone());
         thread::spawn(move || audio_device(out, &stop, &frames))
     });
@@ -75,11 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let at = player.position().as_secs_f64();
             match event {
                 Event::Cue(cue) => {
-                    let fields: Vec<String> = cue
-                        .fields
-                        .iter()
-                        .map(|(k, v)| format!("{k}={v:?}"))
-                        .collect();
+                    let fields: Vec<String> = cue.fields.iter().map(|(k, v)| format!("{k}={v:?}")).collect();
                     println!("[{at:7.3}] cue {} {}", cue.kind, fields.join(" "));
                 }
                 Event::CueEnd { id, .. } => println!("[{at:7.3}] cue {id} ended"),
@@ -111,25 +100,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let elapsed = start.elapsed().as_secs_f64();
     println!("{frames} game frames in {elapsed:.2} s");
     for (i, t) in textures.iter().enumerate() {
-        println!(
-            "video {i}: {} uploads, {:.1} MB, {} game frames without upload",
-            t.uploads,
-            t.bytes as f64 / 1e6,
-            frames as u64 - t.uploads
-        );
+        println!("video {i}: {} uploads, {:.1} MB, {} game frames without upload", t.uploads, t.bytes as f64 / 1e6, frames as u64 - t.uploads);
     }
     let ms = |d: Duration| d.as_secs_f64() * 1e3;
-    println!(
-        "advance: {:.3} ms average, {:.3} ms max",
-        ms(advance_total / frames.max(1)),
-        ms(advance_max)
-    );
+    println!("advance: {:.3} ms average, {:.3} ms max", ms(advance_total / frames.max(1)), ms(advance_max));
     if let Some(out) = player.audio_output(0) {
         let read = audio_frames.load(Ordering::Relaxed) as f64 / out.sample_rate() as f64;
-        println!(
-            "audio: {read:.2} s read of {:.2} s",
-            player.duration().as_secs_f64()
-        );
+        println!("audio: {read:.2} s read of {:.2} s", player.duration().as_secs_f64());
     }
     Ok(())
 }
@@ -145,8 +122,6 @@ fn audio_device(out: AudioOutput, stop: &AtomicBool, frames: &AtomicU64) {
         buf[n..].fill(0.0); // a device plays silence for what is missing
         frames.fetch_add((n / out.channels()) as u64, Ordering::Relaxed);
         buffers += 1;
-        thread::sleep(
-            (start + Duration::from_millis(10) * buffers).saturating_duration_since(Instant::now()),
-        );
+        thread::sleep((start + Duration::from_millis(10) * buffers).saturating_duration_since(Instant::now()));
     }
 }
