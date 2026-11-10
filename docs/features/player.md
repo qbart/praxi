@@ -32,8 +32,9 @@ for track in 0..player.tracks().len() {
 }
 ```
 
-- `Player::open(reader, &caps)` reads the header and stream table and selects one variant
-  per group ([texture-variants.md](texture-variants.md)). The reader needs `Read + Seek`.
+- `Player::open(reader, &caps)` reads the header and stream table, selects one variant
+  per group ([texture-variants.md](texture-variants.md)) and reads every cue into memory
+  ([cue-runtime.md](cue-runtime.md#cue-table)). The reader needs `Read + Seek`.
 - `tracks()` lists the selected video streams, one per group, in group order.
 - `play()`: start or resume playback and decode every chunk due at the current clock, so
   the first frame, the first audio and cues at that time are ready before the next
@@ -56,6 +57,9 @@ for track in 0..player.tracks().len() {
   reach start decoding on the worker threads one `advance` before they are due
   ([motion-codec.md](motion-codec.md#decode-ahead)).
 - `cue_streams()` and `set_cue_stream_enabled(stream, bool)`: see [cues.md](cues.md).
+- `active_cues()`: the cues active at the playhead; `upcoming_cues(within)`: the cues
+  starting within `within`, with the time until they start
+  ([cue-runtime.md](cue-runtime.md)).
 - `replace_cues(tracks)`: play these cues in place of the file's cue streams
   ([cue-preview.md](cue-preview.md#player)).
 - `audio_tracks()`, `audio_output(track)`, `set_audio_track_enabled(track, bool)` and
@@ -95,6 +99,6 @@ over to the next `advance`, so no game frame rate drifts and tiny steps add up.
 
 ## Errors
 
-`open` fails on a malformed file, an unsupported version, or a video group with no
-supported variant (every audio group has a selectable variant). `advance` and `seek` fail on I/O errors or corrupt chunks (for example a
+`open` fails on a malformed file (a malformed cue included), an unsupported version, or a
+video group with no supported variant (every audio group has a selectable variant). `advance` and `seek` fail on I/O errors or corrupt chunks (for example a
 delta frame without a preceding keyframe).

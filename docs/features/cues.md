@@ -42,7 +42,9 @@ reserved names:
 - A cue has a position only when both fields are present and in range; otherwise it has
   none, and `x` / `y` are ordinary fields. Integers count so that hand-written sheets can
   say `0` and `1`.
-- `Cue::position()` and `CueEvent::position()` return `Option<(f32, f32)>`;
+- `Cue::position()` and `CueEvent::position()` return `Option<(f32, f32)>`; `praxi-wgpu`
+  and `praxi-bevy` map it to where the video is drawn
+  ([cue-runtime.md](cue-runtime.md#screen-positions));
   `Cue::set_position(Some((x, y)))` writes both fields as floats (clamped to `0..=1`)
   and `set_position(None)` removes them. The fields keep their order; new fields go last.
 - The encoder CLI's `--cue` and `praxi cues add` write string fields, which do not count as
@@ -70,6 +72,10 @@ reserved names:
 - `replace_cues(tracks)` plays other cues in place of the file's cue streams, for example
   from cue sheets; their streams are numbered after the file's streams and their ids are
   `2^63` and above ([cue-preview.md](cue-preview.md#player)).
+- The player reads every cue at `open` and keeps them in memory. `active_cues()` gives the
+  cues active at the playhead, `upcoming_cues(within)` the cues about to start, and
+  `CueEvent::parse::<T>()` converts a cue into a game type with serde
+  ([cue-runtime.md](cue-runtime.md)).
 
 ## Authoring
 

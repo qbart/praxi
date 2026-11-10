@@ -91,7 +91,7 @@ video.draw(&mut pass, praxi_wgpu::Rect::fit(width, height, target_w, target_h));
 | `required_features(adapter)` | The texture compression features to request with the device. |
 | `required_limits(adapter, base)` | `base` raised to what the motion decoder needs when the adapter supports it (`base` unchanged otherwise). Request the device with it whenever `capabilities` may contain `motion`: a device made with lower limits fails validation when a motion track's pipelines are created. |
 | `wgpu_format(format, srgb)` | The `wgpu` texture format of a praxi texture format. |
-| `Rect` | A pixel rectangle of the render target; `Rect::fit(w, h, target_w, target_h)` letterboxes. |
+| `Rect` | A pixel rectangle of the render target; `Rect::fit(w, h, target_w, target_h)` letterboxes; `point` and `position` map cue positions to pixels and back ([cue-runtime.md](cue-runtime.md#screen-positions)). |
 | `VideoRenderer::new(device, target_format, player)` | Pipelines for `target_format` and one texture per video track of `player`. One renderer per player. |
 | `prepare(device, queue, player, opacity)` | Uploads the tracks whose frame changed and reconstructs the queued frames of `motion` tracks on the GPU; returns how many tracks changed. Sets the opacity (0 to 1) for the next draws. |
 | `set_gpu_timing(device, enabled)`, `gpu_times(device, queue)` | Profiling: GPU time of each motion pass from timestamp queries (needs `Features::TIMESTAMP_QUERY`; `gpu_times` waits for the GPU) ([motion-codec.md](motion-codec.md#gpu-timing)). |

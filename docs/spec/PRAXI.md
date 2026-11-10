@@ -589,7 +589,8 @@ first entry), starts a fresh decoder there and drops the frames before `t`
 ([Opus payload](#opus-payload)).
 
 Cues active at `t` are found through the index: for each cue stream, read the cues whose
-time lies in `[t - max_duration, t]` and keep those ending after `t`.
+time lies in `[t - max_duration, t]` and keep those ending after `t`. (The `praxi` player
+reads every cue through the index at open instead and keeps them in memory.)
 
 ## Changelog
 

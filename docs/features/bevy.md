@@ -28,8 +28,12 @@ App::new()
 - `PraxiVideo::player()` gives the player: play, pause, seek, loop, cue streams,
   `replace_cues` and the rest of the player API ([player.md](player.md)).
 - Every `Update`, the plugin advances each video's player by Bevy's `Time` delta and
-  sends each player event as a `PraxiEvent { entity, event }` message. Read them with
-  `MessageReader<PraxiEvent>`.
+  sends each player event as a `PraxiEvent { entity, event }` message, in the system set
+  `PraxiSystems::Advance`. Read them with `MessageReader<PraxiEvent>`.
+- `PraxiCuePlugin::<T>` also sends cues parsed into a game type as `PraxiCue<T>` messages
+  (`PraxiSystems::Cues`), and `position_on_sprite` / `position_in_rect` map cue positions
+  to where the video is shown ([cue-runtime.md](cue-runtime.md)). The `cue_game` example
+  consumes cues in a small game ([cue-runtime.md](cue-runtime.md#example-game)).
 - In `PostUpdate`, the plugin uploads new frames (`VideoRenderer::prepare`) and draws video
   track 0 and the tracks blended over it into the video's own `Rgba8UnormSrgb` texture,
   through Bevy's `RenderDevice` and `RenderQueue`, which Bevy also puts in the main world.
