@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "streams": [
+    {
+      "name": "subtitles",
+      "cues": [
+        { "time": 0.5, "duration": 2.2, "type": "subtitle", "fields": { "text": "Morning in the meadow", "speaker": "Narrator" } },
+        { "time": 3.2, "duration": 2.0, "type": "subtitle", "fields": { "text": "Something stirs...", "x": 0.72, "y": 0.42 } },
+        { "time": 6.0, "duration": 2.5, "type": "subtitle", "fields": { "text": "Big Buck wakes up", "speaker": "Narrator" } }
+      ]
+    },
+    {
+      "name": "camera",
+      "cues": [
+        { "time": 1.0, "duration": 1.5, "type": "camera.shake", "fields": { "strength": 12.0, "frequency": 14.0 } },
+        { "time": 7.2, "duration": 0.8, "type": "camera.shake", "fields": { "strength": 30.0 } }
+      ]
+    },
+    {
+      "name": "markers",
+      "cues": [
+        { "time": 2.0, "duration": 3.0, "type": "marker", "fields": { "label": "Bird", "x": 0.3, "y": 0.35 } },
+        { "time": 5.5, "type": "marker", "fields": { "label": "Look here", "x": 0.5, "y": 0.5 } },
+        { "time": 8.0, "duration": 1.8, "type": "marker", "fields": { "label": "Burrow", "x": 0.62, "y": 0.66 } }
+      ]
+    },
+    {
+      "name": "sounds",
+      "cues": [
+        { "time": 2.5, "type": "sound", "fields": { "name": "birdsong" } },
+        { "time": 7.2, "type": "sound", "fields": { "name": "rumble" } }
+      ]
+    }
+  ]
+}

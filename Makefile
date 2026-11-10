@@ -2,7 +2,7 @@ SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
-.PHONY: build test test-strict check check-windows samples bench bench-baseline examples
+.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game
 
 build:
 	cargo build --release
@@ -45,3 +45,13 @@ examples: samples
 		--cue "0.5+0.3=light.flash:color=red" --cue 1.2=marker
 	cargo run --release -p praxi --example game_loop -- $(EXAMPLE)
 	cargo run --release -p praxi --example decode_thread -- $(EXAMPLE) $(EXAMPLE)
+
+# The cue game example (docs/features/cue-runtime.md#example-game) on the sample.
+CUE_GAME := target/cue_game.praxi
+
+$(CUE_GAME): $(BENCH_INPUT)
+	mkdir -p target
+	cargo run --release -p praxi-cli -- encode $(BENCH_INPUT) -o $@ --scale 1280x-1 --variant bc7 --variant motion
+
+cue-game: $(CUE_GAME)
+	cargo run --release -p praxi-bevy --example cue_game -- $(CUE_GAME) crates/praxi-bevy/examples/cue_game.cues.json
