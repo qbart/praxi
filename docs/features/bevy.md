@@ -85,7 +85,8 @@ A simple cue editor: the full editor is `praxi-editor` ([cue-editor.md](cue-edit
 `ImagePlugin`, `MeshPlugin`) when an adapter is available. For a motion clip, and a BC7
 clip when the adapter samples BC, it plays for ten updates of 50 ms and checks that frames
 were drawn, the latest drawn frame was copied into the image's GPU texture and the clip's
-cue arrived as a `PraxiEvent`. The copied pixels are not read back. Without an adapter it
+cue arrived as a `PraxiEvent` and, through `PraxiCuePlugin`, as one `PraxiCue<T>` of an
+enum `T`. The copied pixels are not read back. Without an adapter it
 skips, as the other GPU tests do ([testing.md](testing.md)).
 
 The editor example is a manual check. It also runs under Xvfb on lavapipe:

@@ -9,8 +9,9 @@ example game in `praxi-bevy` uses all of them.
 
 The player keeps every cue of the file in memory, sorted by start time (ties in file
 order). `Player::open` reads them through the index: one read per cue chunk. Cues are
-small (a type and a few fields), so even a long film with thousands of subtitles costs a
-few hundred KB and a few milliseconds at open. A malformed cue makes `open` fail, where it
+small (a type and a few fields), so this costs little memory even with thousands of
+subtitles; the reads add to the time `open` takes. A malformed cue, or an index entry of a
+cue stream pointing at a chunk of another stream, makes `open` fail, where a malformed cue
 used to fail the `advance` that reached it.
 
 Playback emits cues from the table and skips cue chunks while reading, so seeking needs no
@@ -107,8 +108,9 @@ for (until, cue) in player.upcoming_cues(Duration::from_secs(2)) {
 ```
 
 - "Not emitted yet": after an `advance`, cues at or before the clock have been emitted and
-  are not listed; before the first `play` (or after a `seek`, for cues after the target)
-  cues at the clock are listed with `until` zero.
+  are not listed. Before the first `play`, cues at time 0 are listed with `until` zero.
+  After a `seek`, cues at or before the target count as passed, as they do for emitting
+  ([cues.md](cues.md#player-behaviour)).
 - When looping, the window continues into the next pass: cues from the start of the file
   are listed after the end, with `until` counted across the loop. Each cue is listed at
   most once, however long `within` is.
@@ -157,8 +159,9 @@ pub struct PraxiCue<T> {
 }
 ```
 
-- Cue types `T` does not know are skipped silently; other parse errors are logged with
-  `warn!` (naming the file, the cue type and the field) and skipped.
+- Cue types `T` does not know are skipped silently; other parse errors are printed to
+  stderr (naming the file, the cue type and the field), as the plugin's other errors are,
+  and skipped.
 - Several plugins with different `T` can be added (for example one per game system).
 - System sets order it: `PraxiSystems::Advance` advances the players and sends
   `PraxiEvent`s, then `PraxiSystems::Cues` sends `PraxiCue<T>`s, both in `Update`. Systems
@@ -174,21 +177,28 @@ cargo run --release -p praxi-bevy --example cue_game -- intro.praxi [intro.cues.
 make cue-game    # the 10 s Big Buck Bunny sample with crates/praxi-bevy/examples/cue_game.cues.json
 ```
 
-- The video is a sprite fitted to the window, letterboxed, and refitted on resize. Space
-  plays or pauses, Left / Right seek 2 s, L toggles looping, Escape quits.
+- The video is a sprite fitted to the window, letterboxed, and refitted on resize. It
+  starts playing, looping. Space plays or pauses, Left / Right seek 2 s, L toggles
+  looping, Escape quits.
 - With a sheet, its cues replace the file's (`replace_cues`), so the example runs on any
   file.
 - Cue types, read through a `GameCue` enum and `PraxiCuePlugin<GameCue>`:
 
   | Type | Fields | The example |
   |---|---|---|
-  | `subtitle` | `text`, optional `speaker` | Shown at the bottom while active, from `active_cues()`. With a position, shown at the position instead, as a speech bubble. |
-  | `camera.shake` | `strength` (pixels), optional `frequency` (Hz, default 12) | Shakes the camera for the cue's duration, fading out. |
-  | `marker` | `label`, position | A ring at the position with its label, while active (instantaneous markers for 1 s). |
-  | `sound` | `name` | Listed in the HUD as "preloading NAME in 1.2 s" from `upcoming_cues(2 s)`, then "playing NAME" (no audio is played). |
+  | `subtitle` | `text`, optional `speaker` | Shown at the bottom while active (`speaker: text`), from `active_cues()`. With a position, shown there instead as a speech bubble (text on a dark background). |
+  | `camera.shake` | `strength` (pixels), optional `frequency` (Hz, default 12) | Shakes the camera for the cue's duration, fading out, from `PraxiCue<GameCue>`; its `CueEnd` stops it. The HUD and subtitles are UI and stay still. |
+  | `marker` | `label`, position | A ring (gizmo circles) at the position with its label, while active; instantaneous markers from `PraxiCue<GameCue>` for 1 s. |
+  | `sound` | `name` | Listed in the HUD as "preloading NAME in 1.2 s" from `upcoming_cues(2 s)`, then "playing NAME" for 2 s (no audio is played). |
 
-- A HUD at the top left shows the playhead, the active cues and the upcoming ones.
-- Other cue types are ignored; malformed ones log a warning.
+- A HUD at the top left shows the playhead, the play state, the types of the active cues
+  and the sounds.
+- Overlays (bubbles, markers) are `Text2d` entities kept per cue id, in world space, so
+  they move with the video when it shakes. Seeking and looping clear the instantaneous
+  markers and the sounds played.
+- Other cue types are ignored; malformed ones are reported on stderr.
+- The example needs Bevy's sprite, text, UI and gizmo features, which only the
+  dev-dependencies turn on; the library keeps its small feature set.
 
 ## Tests
 
@@ -196,12 +206,13 @@ make cue-game    # the 10 s Big Buck Bunny sample with crates/praxi-bevy/example
   borrowed strings, bytes, options, integer to float, and the errors (unknown type, wrong
   type, missing field, out-of-range integer) with their messages.
 - `praxi`: `active_cues` through play, overlapping cues, seek, loop, finish, disabling a
-  stream and `replace_cues`; `upcoming_cues` before play, during play, at the loop seam
-  and when finished; file cues and replaced cues give the same events as before (the
-  existing cue tests).
+  stream and `replace_cues`; `upcoming_cues` before play, during play, with a disabled
+  stream, at the loop seam and when finished, with the ids of the later events;
+  `CueEvent::parse` on the cues of a file. The existing cue tests check that file cues and
+  replaced cues still give the same events.
 - `praxi-wgpu`: `Rect::point` and `Rect::position` round trip, outside points.
 - `praxi-bevy`: `position_on_sprite` and `position_in_rect`; the headless app test also
   checks `PraxiCue<T>` messages with an enum `T`.
 - The example game is a manual check, under Xvfb like the cue editor
-  ([bevy.md](bevy.md#tests)): subtitles, a positioned bubble, a marker and the shake in
-  screenshots.
+  ([testing.md](testing.md#window-checks-under-xvfb)): subtitles, a positioned bubble,
+  markers, the shake and sounds announced ahead, in screenshots of a full loop.

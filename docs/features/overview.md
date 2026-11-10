@@ -108,6 +108,9 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
    ([audio.md](audio.md#opus-evaluation)), then Opus audio in format 0.10
    ([audio.md](audio.md#opus)); `praxi-bevy` with a `bevy_egui` cue editor
    example ([bevy.md](bevy.md)).
+10. **M9** Cues at runtime: every cue in memory at open, typed cues with serde, active and
+    upcoming cues, cue positions mapped to the drawn video, typed cue messages in Bevy, and
+    a `cue_game` example ([cue-runtime.md](cue-runtime.md)).
 
 ## Next
 

@@ -4,8 +4,9 @@ Work in order, top to bottom. Each item gets a spec in `docs/features/` before c
 (AGENTS.md); file format changes go to `docs/spec/`. Done items move to the milestones in
 [docs/features/overview.md](docs/features/overview.md#milestones).
 
-Done so far (M7, M8): cue editing after encoding, BC1, manual test targets, decode-ahead
-of several frames, `praxi-audio`, the Opus evaluation and the Bevy cue editor.
+Done so far (M7 to M9): cue editing after encoding, BC1, manual test targets, decode-ahead
+of several frames, `praxi-audio`, Opus audio, the Bevy cue editor and consuming cues at
+runtime.
 
 ## 1. Checks on real machines
 
@@ -33,23 +34,19 @@ The code is done and tested; these were never run where they matter.
 
 ## 3. Consuming cues at runtime
 
-Today a game reads cues as `Event::Cue` / `Event::CueEnd` from `Player::poll_event`
-(or `PraxiEvent` messages in Bevy), matches the type string and reads the fields by hand
-([cues.md](docs/features/cues.md#player-behaviour)). Scope to be decided; candidates:
+Done ([cue-runtime.md](docs/features/cue-runtime.md)).
 
-- [ ] Typed fields: deserialize a cue's fields into a game struct (serde, behind a
-  feature), with errors naming the cue and field.
-- [ ] Dispatch by type: register a handler per cue type instead of matching strings.
-- [ ] Active cues: query the cues active at the playhead (for UI such as subtitles)
-  without tracking `Cue` / `CueEnd` pairs.
-- [ ] Lookahead: list the cues starting within the next N ms, so the game can preload
-  what they trigger (sounds, assets).
-- [ ] Bevy: typed cue messages per cue type in `praxi-bevy`.
-- [ ] Positions at runtime: helpers to map a cue's position (`x`, `y` in `0..=1`,
-  [cues.md](docs/features/cues.md#screen-position)) to the rectangle the video is drawn in,
-  for `praxi-wgpu` and `praxi-bevy`.
-- [ ] An example game consuming cues: subtitles, camera shake, and markers drawn at cue
-  positions during playback; tests.
+- [x] Typed fields: `CueEvent::parse::<T>()` with serde (feature `serde`), errors naming
+  the cue and field.
+- [x] Dispatch by type: `parse` into an enum whose variants are the cue types, then
+  `match`; unknown types are a distinct error or a `#[serde(other)]` variant.
+- [x] Active cues: `Player::active_cues()`. The player now reads every cue at open.
+- [x] Lookahead: `Player::upcoming_cues(within)`, across the loop seam when looping.
+- [x] Bevy: `PraxiCuePlugin<T>` sends `PraxiCue<T>` messages.
+- [x] Positions at runtime: `praxi_wgpu::Rect::point` / `position`,
+  `praxi_bevy::position_on_sprite` / `position_in_rect`.
+- [x] An example game: `cue_game` in `praxi-bevy` (`make cue-game`) with subtitles, a
+  speech bubble, camera shake, markers and sounds announced ahead; checked under Xvfb.
 
 ## 4. Cue authoring follow-ups
 

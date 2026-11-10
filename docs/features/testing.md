@@ -62,8 +62,10 @@ There is no window manager, so `tools/wm_close.py` sends `WM_DELETE_WINDOW` as a
 manager's close button does. Checked this way: the editor's close dialog (no dialog
 without changes; Cancel keeps the window, Discard closes without saving, Save writes the
 sheet and closes), the editor's "Write into file", cue positions (annotations on the video,
-Pick, dragging a marker, selecting by marker, saved `x` / `y`), and the Bevy cue editor
-([bevy.md](bevy.md#tests)). Coordinates depend on the layout, so these are not scripted
+Pick, dragging a marker, selecting by marker, saved `x` / `y`), the Bevy cue editor
+([bevy.md](bevy.md#tests)) and the cue game example (a full loop recorded at 5 fps:
+subtitles, the positioned bubble, markers, the shake, sounds announced ahead; Space and
+Right) ([cue-runtime.md](cue-runtime.md#example-game)). Coordinates depend on the layout, so these are not scripted
 tests.
 
 ## Manual checks
@@ -76,6 +78,8 @@ These need a desktop and are not covered by tests:
 - The `cutscene` example (`cargo run -p praxi-wgpu --example cutscene -- FILE`).
 - The Bevy cue editor (`cargo run --release -p praxi-bevy --example cue_editor -- FILE`),
   also under Xvfb ([bevy.md](bevy.md#tests)).
+- The cue game (`make cue-game`), also under Xvfb
+  ([cue-runtime.md](cue-runtime.md#example-game)).
 - Sound from the viewer and the editor, including converted tracks
   ([audio-output.md](audio-output.md)).
 - GPU decode time on real hardware: `motion_timing` ([motion-codec.md](motion-codec.md#tools)).
