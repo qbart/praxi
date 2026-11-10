@@ -39,11 +39,29 @@ pub struct Document {
 impl Document {
     /// A document holding `tracks`, which count as saved.
     pub fn new(tracks: Vec<CueTrack>) -> Document {
-        let mut doc = Document { streams: Vec::new(), undo: Vec::new(), redo: Vec::new(), saved: Vec::new(), next_uid: 0 };
+        let mut doc = Document {
+            streams: Vec::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            saved: Vec::new(),
+            next_uid: 0,
+        };
         let mut streams = Vec::new();
         for t in &tracks {
-            let cues = t.cues.iter().map(|c| EditCue { uid: doc.new_uid(), time_us: c.time_us, cue: c.cue.clone() }).collect();
-            streams.push(Stream { uid: doc.new_uid(), name: t.name.clone(), cues });
+            let cues = t
+                .cues
+                .iter()
+                .map(|c| EditCue {
+                    uid: doc.new_uid(),
+                    time_us: c.time_us,
+                    cue: c.cue.clone(),
+                })
+                .collect();
+            streams.push(Stream {
+                uid: doc.new_uid(),
+                name: t.name.clone(),
+                cues,
+            });
         }
         sort(&mut streams);
         doc.streams = streams;
@@ -61,7 +79,14 @@ impl Document {
             .iter()
             .map(|s| CueTrack {
                 name: s.name.clone(),
-                cues: s.cues.iter().map(|c| TimedCue { time_us: c.time_us, cue: c.cue.clone() }).collect(),
+                cues: s
+                    .cues
+                    .iter()
+                    .map(|c| TimedCue {
+                        time_us: c.time_us,
+                        cue: c.cue.clone(),
+                    })
+                    .collect(),
             })
             .collect()
     }
@@ -77,7 +102,10 @@ impl Document {
             || self.streams.iter().zip(&self.saved).any(|(s, t)| {
                 s.name != t.name
                     || s.cues.len() != t.cues.len()
-                    || s.cues.iter().zip(&t.cues).any(|(a, b)| a.time_us != b.time_us || a.cue != b.cue)
+                    || s.cues
+                        .iter()
+                        .zip(&t.cues)
+                        .any(|(a, b)| a.time_us != b.time_us || a.cue != b.cue)
             })
     }
 
@@ -111,20 +139,30 @@ impl Document {
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(prev) = self.undo.pop() else { return false };
+        let Some(prev) = self.undo.pop() else {
+            return false;
+        };
         self.redo.push(std::mem::replace(&mut self.streams, prev));
         true
     }
 
     pub fn redo(&mut self) -> bool {
-        let Some(next) = self.redo.pop() else { return false };
+        let Some(next) = self.redo.pop() else {
+            return false;
+        };
         self.undo.push(std::mem::replace(&mut self.streams, next));
         true
     }
 
     /// Stream and cue index of the cue `uid`.
     pub fn find(&self, uid: u64) -> Option<(usize, usize)> {
-        self.streams.iter().enumerate().find_map(|(s, stream)| stream.cues.iter().position(|c| c.uid == uid).map(|c| (s, c)))
+        self.streams.iter().enumerate().find_map(|(s, stream)| {
+            stream
+                .cues
+                .iter()
+                .position(|c| c.uid == uid)
+                .map(|c| (s, c))
+        })
     }
 
     pub fn stream_index(&self, uid: u64) -> Option<usize> {
@@ -144,18 +182,35 @@ mod tests {
     use super::*;
 
     fn track(times: &[u64]) -> CueTrack {
-        CueTrack { name: "s".into(), cues: times.iter().map(|&t| TimedCue { time_us: t, cue: Cue::new(format!("c{t}")) }).collect() }
+        CueTrack {
+            name: "s".into(),
+            cues: times
+                .iter()
+                .map(|&t| TimedCue {
+                    time_us: t,
+                    cue: Cue::new(format!("c{t}")),
+                })
+                .collect(),
+        }
     }
 
     #[test]
     fn edits_sort_and_undo() {
         let mut doc = Document::new(vec![track(&[300, 100])]);
-        assert_eq!(doc.tracks(), [track(&[100, 300])], "cues are sorted on load");
+        assert_eq!(
+            doc.tracks(),
+            [track(&[100, 300])],
+            "cues are sorted on load"
+        );
         assert!(!doc.is_dirty());
         let uid = doc.streams()[0].cues[0].uid;
 
         assert!(doc.edit(|s| s[0].cues[0].time_us = 500));
-        assert_eq!(doc.find(uid), Some((0, 1)), "the moved cue is found after sorting");
+        assert_eq!(
+            doc.find(uid),
+            Some((0, 1)),
+            "the moved cue is found after sorting"
+        );
         assert!(doc.is_dirty());
         assert!(!doc.edit(|_| {}), "no-op edits add no undo step");
 
@@ -169,7 +224,10 @@ mod tests {
         doc.mark_saved();
         assert!(!doc.is_dirty());
         doc.undo();
-        assert!(doc.is_dirty(), "undoing past the save makes the document dirty");
+        assert!(
+            doc.is_dirty(),
+            "undoing past the save makes the document dirty"
+        );
     }
 
     #[test]

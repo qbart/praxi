@@ -5,7 +5,10 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-cue-sheet = ["praxi-format/cue-sheet"]
+# Cues into game types (docs/features/cue-runtime.md#typed-cues).
+serde = ["dep:serde", "praxi-format/serde"]
+cue-sheet = ["serde", "praxi-format/cue-sheet"]
 
 [dependencies]
 praxi-format.workspace = true
+serde = { workspace = true, optional = true }

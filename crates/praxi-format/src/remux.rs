@@ -26,17 +26,27 @@ pub fn read_cues<R: Read + Seek>(reader: &mut Reader<R>) -> Result<Vec<CueTrack>
     let streams = reader.streams().to_vec();
     let mut tracks: Vec<Option<CueTrack>> = streams
         .iter()
-        .map(|s| s.cue_params().map(|c| CueTrack { name: c.name.clone(), cues: Vec::new() }))
+        .map(|s| {
+            s.cue_params().map(|c| CueTrack {
+                name: c.name.clone(),
+                cues: Vec::new(),
+            })
+        })
         .collect();
     let mut payload = Vec::new();
     for entry in reader.read_index()? {
-        let Some(track) = &mut tracks[entry.stream as usize] else { continue };
+        let Some(track) = &mut tracks[entry.stream as usize] else {
+            continue;
+        };
         let chunk = reader.chunk_at(entry.offset)?;
         reader.read_payload(&chunk, &mut payload)?;
         let mut cue = Cue::decode(&payload)?;
         let time_base = streams[entry.stream as usize].time_base;
         cue.duration = time_base.to_micros(cue.duration);
-        track.cues.push(TimedCue { time_us: time_base.to_micros(chunk.pts), cue });
+        track.cues.push(TimedCue {
+            time_us: time_base.to_micros(chunk.pts),
+            cue,
+        });
     }
     Ok(tracks.into_iter().flatten().collect())
 }
@@ -44,7 +54,11 @@ pub fn read_cues<R: Read + Seek>(reader: &mut Reader<R>) -> Result<Vec<CueTrack>
 /// Writes the file of `reader` to `out` with its cue streams replaced by `tracks`. Other
 /// streams keep their order and their chunks are copied in stored form; the cue streams
 /// follow them. The duration becomes the larger of the old one and the latest cue end.
-pub fn replace_cues<R: Read + Seek, W: Write + Seek>(mut reader: Reader<R>, out: W, tracks: &[CueTrack]) -> Result<W> {
+pub fn replace_cues<R: Read + Seek, W: Write + Seek>(
+    mut reader: Reader<R>,
+    out: W,
+    tracks: &[CueTrack],
+) -> Result<W> {
     let input = reader.streams().to_vec();
     // New stream number of each kept input stream.
     let mut renumber = vec![None; input.len()];
@@ -52,7 +66,10 @@ pub fn replace_cues<R: Read + Seek, W: Write + Seek>(mut reader: Reader<R>, out:
     for (i, s) in input.iter().enumerate() {
         if s.cue_params().is_none() {
             renumber[i] = Some(streams.len() as u16);
-            streams.push(StreamInfo { chunk_count: 0, ..s.clone() });
+            streams.push(StreamInfo {
+                chunk_count: 0,
+                ..s.clone()
+            });
         }
     }
     let first_cue_stream = streams.len();
@@ -63,7 +80,12 @@ pub fn replace_cues<R: Read + Seek, W: Write + Seek>(mut reader: Reader<R>, out:
     let mut cues: Vec<(u16, &TimedCue)> = tracks
         .iter()
         .enumerate()
-        .flat_map(|(t, track)| track.cues.iter().map(move |c| ((first_cue_stream + t) as u16, c)))
+        .flat_map(|(t, track)| {
+            track
+                .cues
+                .iter()
+                .map(move |c| ((first_cue_stream + t) as u16, c))
+        })
         .collect();
     cues.sort_by_key(|(_, c)| c.time_us);
     let mut duration_us = reader.header().duration_us;
@@ -75,7 +97,9 @@ pub fn replace_cues<R: Read + Seek, W: Write + Seek>(mut reader: Reader<R>, out:
     let mut stored = Vec::new();
     reader.seek_to(reader.data_start())?;
     while let Some(mut chunk) = reader.next_chunk()? {
-        let Some(stream) = renumber[chunk.stream as usize] else { continue };
+        let Some(stream) = renumber[chunk.stream as usize] else {
+            continue;
+        };
         let time_us = input[chunk.stream as usize].decode_time_us(chunk.pts);
         while let Some((s, c)) = next.next_if(|(_, c)| c.time_us <= time_us) {
             w.write_cue(*s, c.time_us, &c.cue)?;
@@ -94,7 +118,10 @@ pub fn replace_cues<R: Read + Seek, W: Write + Seek>(mut reader: Reader<R>, out:
 /// `output`, renamed over it when complete; `output` may be `input`. The temporary file is
 /// removed on failure.
 pub fn replace_cues_in_file(input: &Path, output: &Path, tracks: &[CueTrack]) -> Result<()> {
-    let name = output.file_name().ok_or_else(|| Error::Invalid("output has no file name".into()))?.to_string_lossy();
+    let name = output
+        .file_name()
+        .ok_or_else(|| Error::Invalid("output has no file name".into()))?
+        .to_string_lossy();
     let temp = output.with_file_name(format!(".{name}.praxi-tmp"));
     let result = (|| -> Result<()> {
         let reader = Reader::new(BufReader::new(File::open(input)?))?;
@@ -116,7 +143,11 @@ fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
     let mut attempts = 0;
     loop {
         match std::fs::rename(from, to) {
-            Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied && attempts < 10 => {
+            Err(e)
+                if cfg!(windows)
+                    && e.kind() == std::io::ErrorKind::PermissionDenied
+                    && attempts < 10 =>
+            {
                 attempts += 1;
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }

@@ -186,14 +186,19 @@ impl CodedFrame {
     /// Kind and quadrant vectors of macroblock `i`.
     pub fn mb(&self, i: usize) -> (u32, [Mv; 4]) {
         let w = &self.mbs[i * MB_WORDS..(i + 1) * MB_WORDS];
-        (w[0], [1, 2, 3, 4].map(|q| (w[q] as i16 as i32, (w[q] >> 16) as i16 as i32)))
+        (
+            w[0],
+            [1, 2, 3, 4].map(|q| (w[q] as i16 as i32, (w[q] >> 16) as i16 as i32)),
+        )
     }
 
     /// Appends a macroblock record.
     pub fn push_mb(&mut self, kind: u32, mvs: &[Mv; 4]) {
         self.mbs.push(kind);
-        self.mbs
-            .extend(mvs.iter().map(|mv| (mv.0 as u16 as u32) | (mv.1 as u16 as u32) << 16));
+        self.mbs.extend(
+            mvs.iter()
+                .map(|mv| (mv.0 as u16 as u32) | (mv.1 as u16 as u32) << 16),
+        );
     }
 
     pub fn block_count(&self) -> usize {
@@ -270,7 +275,11 @@ pub fn dequantize(level: i32, qp: u8) -> i32 {
 
 /// The plane of transform block `index`.
 pub fn block_plane(layout: &Layout, index: u32) -> usize {
-    layout.planes.iter().rposition(|p| p.first_block <= index).expect("block index")
+    layout
+        .planes
+        .iter()
+        .rposition(|p| p.first_block <= index)
+        .expect("block index")
 }
 
 /// The inverse transform of row-major coefficients: residuals, row-major.
@@ -438,7 +447,15 @@ pub fn predict_transform_block(
     let mut part = [0u8; 16];
     for (q, mv) in mvs.iter().enumerate() {
         let (qx, qy) = (q % 2 * 4, q / 2 * 4);
-        predict_block(reference, plane, x0 + qx as i32, y0 + qy as i32, 4, *mv, &mut part);
+        predict_block(
+            reference,
+            plane,
+            x0 + qx as i32,
+            y0 + qy as i32,
+            4,
+            *mv,
+            &mut part,
+        );
         for y in 0..4 {
             out[(qy + y) * 8 + qx..][..4].copy_from_slice(&part[y * 4..][..4]);
         }
@@ -457,7 +474,14 @@ pub fn reconstruct(layout: &Layout, frame: &CodedFrame, reference: &[u8], out: &
                 if kind == MB_INTRA {
                     block.fill(128);
                 } else {
-                    predict_transform_block(&reference[plane.offset..], plane, bx, by, &mvs, &mut block);
+                    predict_transform_block(
+                        &reference[plane.offset..],
+                        plane,
+                        bx,
+                        by,
+                        &mvs,
+                        &mut block,
+                    );
                 }
                 for y in 0..8 {
                     let row = plane.offset + ((by * 8 + y) * plane.width + bx * 8) as usize;
@@ -625,7 +649,14 @@ pub fn mv_predictor(
 }
 
 /// Sets the vectors of quadrants `subs` of macroblock (`mx`, `my`) in an 8x8 vector field.
-pub fn set_field(field: &mut [Mv], mbs_x: u32, mx: u32, my: u32, subs: std::ops::Range<u32>, mv: Mv) {
+pub fn set_field(
+    field: &mut [Mv],
+    mbs_x: u32,
+    mx: u32,
+    my: u32,
+    subs: std::ops::Range<u32>,
+    mv: Mv,
+) {
     for sub in subs {
         let (bx, by) = (2 * mx + sub % 2, 2 * my + sub / 2);
         field[(by * 2 * mbs_x + bx) as usize] = mv;
@@ -703,13 +734,19 @@ impl Assembly {
 
     fn add(&mut self, s: usize, part: Part, result: Result<(), String>) {
         if let Err(e) = result
-            && self.first_error.as_ref().is_none_or(|(first, _)| s < *first)
+            && self
+                .first_error
+                .as_ref()
+                .is_none_or(|(first, _)| s < *first)
         {
             self.first_error = Some((s, e));
         }
         self.parts[s] = part;
         self.back[s] = true;
-        while self.first_error.is_none() && self.appended < self.parts.len() && self.back[self.appended] {
+        while self.first_error.is_none()
+            && self.appended < self.parts.len()
+            && self.back[self.appended]
+        {
             if self.appended == 0 {
                 std::mem::swap(&mut self.parts[0].out, &mut self.out);
             } else {
@@ -742,7 +779,13 @@ struct Frame {
 
 impl Frame {
     fn new(layout: Layout) -> Frame {
-        Frame { layout, tables: Default::default(), keyframe: false, payload: Vec::new(), slices: Vec::new() }
+        Frame {
+            layout,
+            tables: Default::default(),
+            keyframe: false,
+            payload: Vec::new(),
+            slices: Vec::new(),
+        }
     }
 
     fn tables(&self) -> [&[u16; TABLE_SIZE]; TABLES] {
@@ -761,7 +804,10 @@ impl Frame {
             return Err(format!("qp {qp} out of range"));
         }
         if slices == 0 || slices > layout.mbs_y {
-            return Err(format!("{slices} slices for {} macroblock rows", layout.mbs_y));
+            return Err(format!(
+                "{slices} slices for {} macroblock rows",
+                layout.mbs_y
+            ));
         }
         if !layout.alpha() && mask & (1 << TABLE_DC_A | 1 << TABLE_AC_A) != 0 {
             return Err("alpha tables without an alpha plane".into());
@@ -791,7 +837,8 @@ impl Frame {
         at += 4 * slices as usize;
         self.slices.clear();
         for s in 0..slices as usize {
-            let len = u32::from_le_bytes(sizes[4 * s..4 * s + 4].try_into().expect("4 bytes")) as usize;
+            let len =
+                u32::from_le_bytes(sizes[4 * s..4 * s + 4].try_into().expect("4 bytes")) as usize;
             if payload.len() - at < len {
                 return Err(format!("slice {s} runs past the payload"));
             }
@@ -808,10 +855,19 @@ impl Frame {
     /// Decodes slice `s` of `payload` into `part`.
     fn decode_slice(&self, payload: &[u8], s: usize, part: &mut Part) -> Result<(), String> {
         let rows = self.layout.slice_rows(s as u32, self.slices.len() as u32);
-        part.field.resize(4 * rows.len() * self.layout.mbs_x as usize, (0, 0));
+        part.field
+            .resize(4 * rows.len() * self.layout.mbs_x as usize, (0, 0));
         let data = &payload[self.slices[s].clone()];
-        decode_slice(&self.layout, &self.tables(), self.keyframe, rows, data, &mut part.field, &mut part.out)
-            .map_err(|e| format!("slice {s}: {e}"))
+        decode_slice(
+            &self.layout,
+            &self.tables(),
+            self.keyframe,
+            rows,
+            data,
+            &mut part.field,
+            &mut part.out,
+        )
+        .map_err(|e| format!("slice {s}: {e}"))
     }
 }
 
@@ -841,7 +897,11 @@ impl Job {
         drop(frame);
         if let Some(assembly) = &self.assembly {
             let result = std::mem::replace(&mut self.result, Ok(()));
-            assembly.lock().expect("assembly lock").add(self.s, std::mem::take(&mut self.part), result);
+            assembly.lock().expect("assembly lock").add(
+                self.s,
+                std::mem::take(&mut self.part),
+                result,
+            );
         }
         // The decoder waits for every job, so it is still listening.
         let _ = self.done.clone().send(self);
@@ -870,7 +930,10 @@ impl Shared {
     /// The next queued slice of `frame`.
     fn pop_for(&self, frame: &Arc<Frame>) -> Option<Job> {
         let mut queue = self.queue.lock().expect("queue lock");
-        let i = queue.jobs.iter().position(|j| Arc::ptr_eq(&j.frame, frame))?;
+        let i = queue
+            .jobs
+            .iter()
+            .position(|j| Arc::ptr_eq(&j.frame, frame))?;
         queue.jobs.remove(i)
     }
 
@@ -904,7 +967,10 @@ impl Shared {
 
 impl Pool {
     fn new() -> Pool {
-        Pool { shared: Arc::default(), workers: Vec::new() }
+        Pool {
+            shared: Arc::default(),
+            workers: Vec::new(),
+        }
     }
 
     /// Starts workers until there are `n`.
@@ -947,7 +1013,8 @@ impl Decoder {
             frame: Arc::new(Frame::new(Layout::new(params))),
             params: params.motion,
             parts: Vec::new(),
-            threads: std::thread::available_parallelism().map_or(1, |n| n.get().min(DEFAULT_THREADS)),
+            threads: std::thread::available_parallelism()
+                .map_or(1, |n| n.get().min(DEFAULT_THREADS)),
             pool: None,
             primed: false,
             ahead: VecDeque::new(),
@@ -961,7 +1028,11 @@ impl Decoder {
     pub fn set_threads(&mut self, threads: usize) {
         self.cancel_ahead();
         self.threads = threads.max(1);
-        if self.pool.as_ref().is_some_and(|p| p.workers.len() >= self.threads) {
+        if self
+            .pool
+            .as_ref()
+            .is_some_and(|p| p.workers.len() >= self.threads)
+        {
             self.pool = None;
         }
     }
@@ -985,7 +1056,8 @@ impl Decoder {
         if !keyframe && !self.primed {
             return Err("delta frame without a preceding keyframe".into());
         }
-        let frame = Arc::get_mut(&mut self.frame).expect("slice jobs hold no frame between decodes");
+        let frame =
+            Arc::get_mut(&mut self.frame).expect("slice jobs hold no frame between decodes");
         let qp = frame.parse(keyframe, payload)?;
         let slices = frame.slices.len();
         out.keyframe = keyframe;
@@ -1016,15 +1088,22 @@ impl Decoder {
     /// Decodes the slices on the calling thread and `threads - 1` workers, each taking the
     /// next slice in order, and appends them to `out` (which holds slice 0's buffers in
     /// `parts[0]`). Returns the error of the first failing slice.
-    fn decode_parallel(&mut self, payload: &[u8], threads: usize, out: &mut CodedFrame) -> Result<(), String> {
-        let frame = Arc::get_mut(&mut self.frame).expect("slice jobs hold no frame between decodes");
+    fn decode_parallel(
+        &mut self,
+        payload: &[u8],
+        threads: usize,
+        out: &mut CodedFrame,
+    ) -> Result<(), String> {
+        let frame =
+            Arc::get_mut(&mut self.frame).expect("slice jobs hold no frame between decodes");
         frame.payload.clear();
         frame.payload.extend_from_slice(payload);
         let pool = self.pool.get_or_insert_with(Pool::new);
         pool.grow(threads - 1);
         let (done, results) = mpsc::channel();
         let slices = self.parts.len();
-        pool.shared.push(&self.frame, &mut self.parts, None, &done, threads - 1);
+        pool.shared
+            .push(&self.frame, &mut self.parts, None, &done, threads - 1);
         drop(done);
         // Finished slices are appended while others still decode, as soon as the slices
         // before them are in.
@@ -1073,7 +1152,12 @@ impl Decoder {
     }
 
     fn set_scales(&self, qp: u8, out: &mut CodedFrame) {
-        for (p, scale) in out.scales.iter_mut().enumerate().take(self.frame.layout.planes.len()) {
+        for (p, scale) in out
+            .scales
+            .iter_mut()
+            .enumerate()
+            .take(self.frame.layout.planes.len())
+        {
             *scale = dequant_scale(plane_qp(qp, p, &self.params));
         }
     }
@@ -1085,7 +1169,10 @@ impl Decoder {
     /// thread, for a delta frame before any keyframe, when the queue is full, or for an
     /// invalid header; frames after a refused one must not be queued.
     pub fn decode_ahead(&mut self, tag: u64, keyframe: bool, payload: &[u8]) -> bool {
-        if self.threads == 1 || self.ahead.len() >= MAX_AHEAD || !keyframe && !self.primed && self.ahead.is_empty() {
+        if self.threads == 1
+            || self.ahead.len() >= MAX_AHEAD
+            || !keyframe && !self.primed && self.ahead.is_empty()
+        {
             return false;
         }
         let mut slot = self.spare.pop().unwrap_or_else(|| Slot {
@@ -1112,9 +1199,21 @@ impl Decoder {
         pool.grow(self.threads - 1);
         let (done, results) = mpsc::channel();
         let workers = (self.threads - 1).min(slices);
-        pool.shared.push(&slot.frame, &mut assembly.parts, Some(&slot.assembly), &done, workers);
+        pool.shared.push(
+            &slot.frame,
+            &mut assembly.parts,
+            Some(&slot.assembly),
+            &done,
+            workers,
+        );
         drop(assembly);
-        self.ahead.push_back(Ahead { tag, keyframe, qp, results, slot });
+        self.ahead.push_back(Ahead {
+            tag,
+            keyframe,
+            qp,
+            results,
+            slot,
+        });
         true
     }
 
@@ -1131,7 +1230,12 @@ impl Decoder {
         if self.ahead.front().is_none_or(|a| a.tag != tag) {
             return None;
         }
-        let Ahead { keyframe, qp, mut slot, .. } = {
+        let Ahead {
+            keyframe,
+            qp,
+            mut slot,
+            ..
+        } = {
             let ahead = self.ahead.pop_front().expect("checked above");
             if let Err(e) = self.wait_ahead(&ahead, true) {
                 self.spare.push(ahead.slot);
@@ -1178,7 +1282,13 @@ impl Decoder {
         for _ in 0..left {
             ahead.results.recv().expect("a slice thread panicked");
         }
-        let first_error = ahead.slot.assembly.lock().expect("assembly lock").first_error.take();
+        let first_error = ahead
+            .slot
+            .assembly
+            .lock()
+            .expect("assembly lock")
+            .first_error
+            .take();
         match first_error {
             Some((_, e)) if run => Err(e),
             _ => Ok(()),
@@ -1397,7 +1507,11 @@ impl<'a> BitReader<'a> {
     #[inline(always)]
     fn refill(&mut self) {
         if self.pos + 8 <= self.src.len() {
-            let word = u64::from_le_bytes(self.src[self.pos..self.pos + 8].try_into().expect("8 bytes"));
+            let word = u64::from_le_bytes(
+                self.src[self.pos..self.pos + 8]
+                    .try_into()
+                    .expect("8 bytes"),
+            );
             self.acc |= word << self.bits;
             self.pos += ((63 - self.bits) >> 3) as usize;
             self.bits |= 56;
@@ -1625,7 +1739,11 @@ struct BitWriter<'a> {
 
 impl BitWriter<'_> {
     fn new(out: &mut Vec<u8>) -> BitWriter<'_> {
-        BitWriter { out, acc: 0, bits: 0 }
+        BitWriter {
+            out,
+            acc: 0,
+            bits: 0,
+        }
     }
 
     #[inline(always)]
@@ -1732,7 +1850,11 @@ mod tests {
         };
         let pixels: Vec<u8> = (0..64).map(|i| (i % 8 * 10) as u8).collect();
         assert_eq!(predict(&pixels, &plane, 2, 3, 0, 0), 20);
-        assert_eq!(predict(&pixels, &plane, 2, 3, 2, 0), 25, "half pel of a ramp");
+        assert_eq!(
+            predict(&pixels, &plane, 2, 3, 2, 0),
+            25,
+            "half pel of a ramp"
+        );
         assert_eq!(predict(&pixels, &plane, 2, 3, -8, 5), 0, "integer part");
         assert_eq!(
             predict(&pixels, &plane, 7, 0, 4, 0),
@@ -1827,7 +1949,9 @@ mod tests {
         for threads in [1, 2, 4] {
             let mut dec = Decoder::new(&p);
             dec.set_threads(threads);
-            let err = dec.decode(true, &payload, &mut CodedFrame::default()).unwrap_err();
+            let err = dec
+                .decode(true, &payload, &mut CodedFrame::default())
+                .unwrap_err();
             assert!(err.starts_with("slice 1:"), "{threads} threads: {err}");
         }
         // Decoded ahead, the error comes from `finish_ahead`.
@@ -1835,7 +1959,10 @@ mod tests {
         dec.set_threads(4);
         assert!(dec.decode_ahead(9, true, &payload));
         assert!(dec.decode_ahead(10, true, &payload));
-        let err = dec.finish_ahead(9, &mut CodedFrame::default()).unwrap().unwrap_err();
+        let err = dec
+            .finish_ahead(9, &mut CodedFrame::default())
+            .unwrap()
+            .unwrap_err();
         assert!(err.starts_with("slice 1:"), "{err}");
         assert_eq!(dec.ahead(), 0, "the frames after an error are cancelled");
     }
@@ -1844,23 +1971,44 @@ mod tests {
     fn decode_ahead_is_cancelled_by_decodes() {
         let p = params(16, 32, false);
         let layout = Layout::new(&p);
-        let tokens = vec![vec![Token::new(TABLE_MB, MB_INTRA, 0, 0); layout.mb_count()]];
+        let tokens = vec![vec![
+            Token::new(TABLE_MB, MB_INTRA, 0, 0);
+            layout.mb_count()
+        ]];
         let mut payload = Vec::new();
         Encoder::new().write(true, 30, &tokens, &mut payload);
         let mut dec = Decoder::new(&p);
         dec.set_threads(1);
-        assert!(!dec.decode_ahead(1, true, &payload), "nothing runs ahead on one thread");
+        assert!(
+            !dec.decode_ahead(1, true, &payload),
+            "nothing runs ahead on one thread"
+        );
         dec.set_threads(2);
-        assert!(!dec.decode_ahead(1, false, &payload), "a delta frame needs a keyframe first");
-        assert!(!dec.decode_ahead(1, true, &payload[..2]), "invalid headers are left to decode");
+        assert!(
+            !dec.decode_ahead(1, false, &payload),
+            "a delta frame needs a keyframe first"
+        );
+        assert!(
+            !dec.decode_ahead(1, true, &payload[..2]),
+            "invalid headers are left to decode"
+        );
         assert!(dec.decode_ahead(1, true, &payload));
-        assert!(dec.finish_ahead(2, &mut CodedFrame::default()).is_none(), "another tag");
+        assert!(
+            dec.finish_ahead(2, &mut CodedFrame::default()).is_none(),
+            "another tag"
+        );
         let mut frame = CodedFrame::default();
         dec.decode(true, &payload, &mut frame).unwrap();
-        assert!(dec.finish_ahead(1, &mut CodedFrame::default()).is_none(), "cancelled by the decode");
+        assert!(
+            dec.finish_ahead(1, &mut CodedFrame::default()).is_none(),
+            "cancelled by the decode"
+        );
         assert!(dec.decode_ahead(3, true, &payload));
         dec.set_threads(3);
-        assert!(dec.finish_ahead(3, &mut CodedFrame::default()).is_none(), "cancelled by set_threads");
+        assert!(
+            dec.finish_ahead(3, &mut CodedFrame::default()).is_none(),
+            "cancelled by set_threads"
+        );
         assert!(dec.decode_ahead(4, true, &payload));
         let mut ahead = CodedFrame::default();
         dec.finish_ahead(4, &mut ahead).unwrap().unwrap();
@@ -1871,10 +2019,14 @@ mod tests {
         }
         assert!(!dec.decode_ahead(9, false, &payload), "the queue is full");
         assert_eq!(dec.ahead(), MAX_AHEAD);
-        assert!(dec.finish_ahead(1, &mut CodedFrame::default()).is_none(), "not the first frame");
+        assert!(
+            dec.finish_ahead(1, &mut CodedFrame::default()).is_none(),
+            "not the first frame"
+        );
         dec.finish_ahead(0, &mut ahead).unwrap().unwrap();
         assert_eq!(ahead, frame);
-        dec.decode(true, &payload, &mut CodedFrame::default()).unwrap();
+        dec.decode(true, &payload, &mut CodedFrame::default())
+            .unwrap();
         assert_eq!(dec.ahead(), 0, "cancelled by the decode");
     }
 
@@ -1928,15 +2080,35 @@ mod tests {
                         match kind {
                             MB_SPLIT => {
                                 for sub in 0..4 {
-                                    let pred = mv_predictor(&field, layout.mbs_x, rows.start, mx, my, sub, 1);
+                                    let pred = mv_predictor(
+                                        &field,
+                                        layout.mbs_x,
+                                        rows.start,
+                                        mx,
+                                        my,
+                                        sub,
+                                        1,
+                                    );
                                     mvs[sub as usize] = vector(t, pred);
-                                    set_field(&mut field, layout.mbs_x, mx, my, sub..sub + 1, mvs[sub as usize]);
+                                    set_field(
+                                        &mut field,
+                                        layout.mbs_x,
+                                        mx,
+                                        my,
+                                        sub..sub + 1,
+                                        mvs[sub as usize],
+                                    );
                                 }
                             }
                             MB_INTRA => set_field(&mut field, layout.mbs_x, mx, my, 0..4, (0, 0)),
                             _ => {
-                                let pred = mv_predictor(&field, layout.mbs_x, rows.start, mx, my, 0, 2);
-                                let mv = if kind == MB_INTER { vector(t, pred) } else { pred };
+                                let pred =
+                                    mv_predictor(&field, layout.mbs_x, rows.start, mx, my, 0, 2);
+                                let mv = if kind == MB_INTER {
+                                    vector(t, pred)
+                                } else {
+                                    pred
+                                };
                                 mvs = [mv; 4];
                                 set_field(&mut field, layout.mbs_x, mx, my, 0..4, mv);
                             }
@@ -1962,7 +2134,8 @@ mod tests {
                             for z in zigzag.iter_mut() {
                                 if rand(4) == 0 {
                                     let size = rand(15);
-                                    *z = (rand(1 << size) as i32 + 1) * if rand(2) == 0 { 1 } else { -1 };
+                                    *z = (rand(1 << size) as i32 + 1)
+                                        * if rand(2) == 0 { 1 } else { -1 };
                                 }
                             }
                             if rand(3) == 0 {
@@ -1980,7 +2153,10 @@ mod tests {
                                 natural[ZIGZAG[k] as usize] = l;
                             }
                             let plane = &layout.planes[pl];
-                            expected.push_block(plane.first_block + by * plane.blocks_x() + bx, &natural);
+                            expected.push_block(
+                                plane.first_block + by * plane.blocks_x() + bx,
+                                &natural,
+                            );
                         }
                     }
                 }
@@ -2007,20 +2183,37 @@ mod tests {
             }
             assert!(ahead.decode_ahead(frame_no as u64, keyframe, payload));
             let mut other = CodedFrame::default();
-            ahead.finish_ahead(frame_no as u64, &mut other).unwrap().unwrap();
+            ahead
+                .finish_ahead(frame_no as u64, &mut other)
+                .unwrap()
+                .unwrap();
             assert_eq!(other, frame, "frame {frame_no} decoded ahead");
             if frame_no % 3 == 0 {
                 for (n, (payload, expected)) in frames.iter().enumerate().skip(frame_no).take(3) {
-                    assert!(batched.decode_ahead(n as u64, expected.keyframe, payload), "frame {n} queued");
+                    assert!(
+                        batched.decode_ahead(n as u64, expected.keyframe, payload),
+                        "frame {n} queued"
+                    );
                 }
             }
-            batched.finish_ahead(frame_no as u64, &mut other).unwrap().unwrap();
+            batched
+                .finish_ahead(frame_no as u64, &mut other)
+                .unwrap()
+                .unwrap();
             assert_eq!(other, frame, "frame {frame_no} decoded ahead in a batch");
             assert_eq!(frame.scales[..3], [dequant_scale(30); 3]);
             assert_eq!(frame.mbs, expected.mbs, "frame {frame_no}");
-            assert_eq!(frame.block_count(), expected.block_count(), "frame {frame_no}");
+            assert_eq!(
+                frame.block_count(),
+                expected.block_count(),
+                "frame {frame_no}"
+            );
             for i in 0..frame.block_count() {
-                assert_eq!(frame.block(i), expected.block(i), "frame {frame_no} block {i}");
+                assert_eq!(
+                    frame.block(i),
+                    expected.block(i),
+                    "frame {frame_no} block {i}"
+                );
             }
         }
     }
@@ -2052,10 +2245,7 @@ mod tests {
         let (index, coeffs) = frame.block(1);
         assert_eq!(index, 4, "block 0 of the second macroblock");
         // Zigzag position 40 is row 3, column 5.
-        assert_eq!(
-            (coeffs[0], coeffs[1], coeffs[29]),
-            (12, -3, 1)
-        );
+        assert_eq!((coeffs[0], coeffs[1], coeffs[29]), (12, -3, 1));
 
         // Delta frame: an inter macroblock with a vector, then a skip.
         let tokens = vec![

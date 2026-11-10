@@ -1,6 +1,11 @@
 //! Cue payloads (`docs/spec/PRAXI.md#cue-payload`).
 
+#[cfg(feature = "serde")]
+mod parse;
+
 use crate::{Error, Result, corrupt};
+#[cfg(feature = "serde")]
+pub use parse::{ParseError, parse};
 
 const VALUE_STRING: u8 = 1;
 const VALUE_INT: u8 = 2;
@@ -80,7 +85,11 @@ pub struct Cue {
 
 impl Cue {
     pub fn new(kind: impl Into<String>) -> Cue {
-        Cue { duration: 0, kind: kind.into(), fields: Vec::new() }
+        Cue {
+            duration: 0,
+            kind: kind.into(),
+            fields: Vec::new(),
+        }
     }
 
     pub fn get(&self, key: &str) -> Option<&Value> {
@@ -113,8 +122,17 @@ impl Cue {
                     }
                 }
             }
-            None => self.fields.retain(|(k, _)| k != POSITION_X && k != POSITION_Y),
+            None => self
+                .fields
+                .retain(|(k, _)| k != POSITION_X && k != POSITION_Y),
         }
+    }
+
+    /// Reads this cue into a game type: an enum takes the variant named by the cue type, a
+    /// struct the fields (`docs/features/cue-runtime.md#typed-cues`).
+    #[cfg(feature = "serde")]
+    pub fn parse<'a, T: serde::Deserialize<'a>>(&'a self) -> std::result::Result<T, ParseError> {
+        parse(&self.kind, &self.fields)
     }
 
     /// Appends the payload encoding of this cue to `out`.
@@ -208,7 +226,11 @@ impl Cue {
         if r.at != payload.len() {
             return corrupt("trailing bytes after cue fields");
         }
-        Ok(Cue { duration, kind, fields })
+        Ok(Cue {
+            duration,
+            kind,
+            fields,
+        })
     }
 }
 
@@ -219,7 +241,11 @@ struct Cursor<'a> {
 
 impl<'a> Cursor<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let Some(s) = self.at.checked_add(n).and_then(|end| self.b.get(self.at..end)) else {
+        let Some(s) = self
+            .at
+            .checked_add(n)
+            .and_then(|end| self.b.get(self.at..end))
+        else {
             return corrupt("truncated cue payload");
         };
         self.at += n;
@@ -263,13 +289,27 @@ mod tests {
 
         cue.set_position(Some((0.75, -2.0)));
         assert_eq!(cue.position(), Some((0.75, 0.0)));
-        assert_eq!(cue.fields[1], ("x".into(), Value::Float(0.75)), "kept in place");
+        assert_eq!(
+            cue.fields[1],
+            ("x".into(), Value::Float(0.75)),
+            "kept in place"
+        );
         assert_eq!(cue.fields[0].0, "label");
         cue.set_position(None);
         assert_eq!(cue.fields, [("label".into(), Value::from("a"))]);
         cue.set_position(Some((0.5, 0.5)));
-        assert_eq!(cue.fields[1..], [("x".into(), Value::Float(0.5)), ("y".into(), Value::Float(0.5))]);
+        assert_eq!(
+            cue.fields[1..],
+            [
+                ("x".into(), Value::Float(0.5)),
+                ("y".into(), Value::Float(0.5))
+            ]
+        );
         cue.set_position(Some((0.3, 0.5)));
-        assert_eq!(cue.get("x"), Some(&Value::Float(0.3)), "the f32's shortest decimal");
+        assert_eq!(
+            cue.get("x"),
+            Some(&Value::Float(0.3)),
+            "the f32's shortest decimal"
+        );
     }
 }

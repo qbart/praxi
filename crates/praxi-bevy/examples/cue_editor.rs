@@ -43,7 +43,10 @@ const LANE_COLORS: [egui::Color32; 9] = [
 
 fn main() -> AppExit {
     let args = Args::parse();
-    let sheet = args.sheet.clone().unwrap_or_else(|| args.file.with_extension("cues.json"));
+    let sheet = args
+        .sheet
+        .clone()
+        .unwrap_or_else(|| args.file.with_extension("cues.json"));
     let tracks = match load(&args.file, &sheet) {
         Ok(tracks) => tracks,
         Err(e) => {
@@ -54,7 +57,11 @@ fn main() -> AppExit {
     let title = format!("praxi cues: {}", args.file.display());
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window { title, resolution: (1280, 800).into(), ..default() }),
+            primary_window: Some(Window {
+                title,
+                resolution: (1280, 800).into(),
+                ..default()
+            }),
             ..default()
         }))
         .add_plugins((EguiPlugin::default(), PraxiPlugin))
@@ -68,7 +75,8 @@ fn main() -> AppExit {
 /// The cues of `sheet` if it exists, otherwise those stored in `file`.
 fn load(file: &PathBuf, sheet: &PathBuf) -> Result<Vec<CueTrack>, String> {
     if sheet.exists() {
-        let text = std::fs::read_to_string(sheet).map_err(|e| format!("{}: {e}", sheet.display()))?;
+        let text =
+            std::fs::read_to_string(sheet).map_err(|e| format!("{}: {e}", sheet.display()))?;
         return cue_sheet::parse(&text).map_err(|e| format!("{}: {e}", sheet.display()));
     }
     let f = File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -113,8 +121,16 @@ struct Editor {
 
 impl Editor {
     fn new(file: PathBuf, sheet: PathBuf, tracks: Vec<CueTrack>) -> Editor {
-        let status = if sheet.exists() { format!("Opened {}", sheet.display()) } else { format!("Cues from the file; Save creates {}", sheet.display()) };
-        let selected = if tracks.is_empty() { Selection::None } else { Selection::Stream(0) };
+        let status = if sheet.exists() {
+            format!("Opened {}", sheet.display())
+        } else {
+            format!("Cues from the file; Save creates {}", sheet.display())
+        };
+        let selected = if tracks.is_empty() {
+            Selection::None
+        } else {
+            Selection::Stream(0)
+        };
         Editor {
             file,
             sheet,
@@ -143,7 +159,10 @@ impl Editor {
             }
             let cues = std::mem::take(&mut track.cues);
             let mut cues: Vec<Option<TimedCue>> = cues.into_iter().map(Some).collect();
-            track.cues = order.iter().map(|&i| cues[i].take().expect("each cue once")).collect();
+            track.cues = order
+                .iter()
+                .map(|&i| cues[i].take().expect("each cue once"))
+                .collect();
         }
         self.draft = None;
         self.dirty = true;
@@ -151,7 +170,8 @@ impl Editor {
     }
 
     fn save(&mut self) {
-        let result = cue_sheet::write(&self.tracks).and_then(|text| std::fs::write(&self.sheet, text).map_err(|e| e.to_string()));
+        let result = cue_sheet::write(&self.tracks)
+            .and_then(|text| std::fs::write(&self.sheet, text).map_err(|e| e.to_string()));
         self.status = match result {
             Ok(()) => {
                 self.dirty = false;
@@ -164,7 +184,8 @@ impl Editor {
     fn write_into_file(&mut self, video: &mut PraxiVideo) {
         // Windows cannot rename over a file that is open.
         video.release_file();
-        let written = praxi_bevy::praxi::format::replace_cues_in_file(&self.file, &self.file, &self.tracks);
+        let written =
+            praxi_bevy::praxi::format::replace_cues_in_file(&self.file, &self.file, &self.tracks);
         let reopened = video.reopen();
         video.player().replace_cues(self.tracks.clone());
         self.status = match (written, reopened) {
@@ -178,15 +199,25 @@ impl Editor {
     }
 }
 
-fn setup(mut commands: Commands, adapter: Res<RenderAdapter>, mut images: ResMut<Assets<Image>>, mut editor: ResMut<Editor>) {
+fn setup(
+    mut commands: Commands,
+    adapter: Res<RenderAdapter>,
+    mut images: ResMut<Assets<Image>>,
+    mut editor: ResMut<Editor>,
+) {
     commands.spawn(Camera2d);
     match PraxiVideo::open(&editor.file, &adapter, &mut images) {
         Ok(mut video) => {
             let track = video.player().tracks()[0];
             editor.video_size = egui::vec2(track.params.width as f32, track.params.height as f32);
-            let f = File::open(&editor.file).ok().and_then(|f| Reader::new(BufReader::new(f)).ok());
+            let f = File::open(&editor.file)
+                .ok()
+                .and_then(|f| Reader::new(BufReader::new(f)).ok());
             if let Some(reader) = f {
-                editor.frame_us = reader.streams()[track.stream as usize].time_base.to_micros(1).max(1);
+                editor.frame_us = reader.streams()[track.stream as usize]
+                    .time_base
+                    .to_micros(1)
+                    .max(1);
             }
             video.player().replace_cues(editor.tracks.clone());
             commands.spawn(video);
@@ -201,7 +232,12 @@ fn setup(mut commands: Commands, adapter: Res<RenderAdapter>, mut images: ResMut
 fn log_events(mut events: MessageReader<PraxiEvent>, mut editor: ResMut<Editor>) {
     for e in events.read() {
         let text = match &e.event {
-            Event::Cue(c) => format!("{:.3} cue {} +{:.3}", c.time.as_secs_f64(), c.kind, c.duration.as_secs_f64()),
+            Event::Cue(c) => format!(
+                "{:.3} cue {} +{:.3}",
+                c.time.as_secs_f64(),
+                c.kind,
+                c.duration.as_secs_f64()
+            ),
             other => format!("{other:?}"),
         };
         editor.events.push_front(text);
@@ -209,8 +245,15 @@ fn log_events(mut events: MessageReader<PraxiEvent>, mut editor: ResMut<Editor>)
     }
 }
 
-fn ui(mut contexts: EguiContexts, mut editor: ResMut<Editor>, video: Option<Single<&mut PraxiVideo>>, keys: Res<ButtonInput<KeyCode>>) -> Result {
-    let Some(mut video) = video else { return Ok(()) };
+fn ui(
+    mut contexts: EguiContexts,
+    mut editor: ResMut<Editor>,
+    video: Option<Single<&mut PraxiVideo>>,
+    keys: Res<ButtonInput<KeyCode>>,
+) -> Result {
+    let Some(mut video) = video else {
+        return Ok(());
+    };
     let video = &mut **video;
     let editor = &mut *editor;
     if editor.texture.is_none() {
@@ -220,10 +263,20 @@ fn ui(mut contexts: EguiContexts, mut editor: ResMut<Editor>, video: Option<Sing
     if !ctx.egui_wants_keyboard_input() {
         keys_input(editor, video, &keys);
     }
-    let mut root = egui::Ui::new(ctx.clone(), "root".into(), egui::UiBuilder::new().layer_id(egui::LayerId::background()).max_rect(ctx.viewport_rect()));
+    let mut root = egui::Ui::new(
+        ctx.clone(),
+        "root".into(),
+        egui::UiBuilder::new()
+            .layer_id(egui::LayerId::background())
+            .max_rect(ctx.viewport_rect()),
+    );
     egui::Panel::top("top").show(&mut root, |ui| top_bar(ui, editor, video));
-    egui::Panel::bottom("timeline").exact_size(RULER_H + LANE_H * editor.tracks.len().max(1) as f32 + 16.0).show(&mut root, |ui| timeline(ui, editor, video));
-    egui::Panel::right("inspector").default_size(320.0).show(&mut root, |ui| inspector(ui, editor, video));
+    egui::Panel::bottom("timeline")
+        .exact_size(RULER_H + LANE_H * editor.tracks.len().max(1) as f32 + 16.0)
+        .show(&mut root, |ui| timeline(ui, editor, video));
+    egui::Panel::right("inspector")
+        .default_size(320.0)
+        .show(&mut root, |ui| inspector(ui, editor, video));
     egui::CentralPanel::default().show(&mut root, |ui| {
         let avail = ui.available_size();
         let scale = (avail.x / editor.video_size.x).min(avail.y / editor.video_size.y);
@@ -292,16 +345,32 @@ fn top_bar(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
             step(editor, video, 1);
         }
         let player = video.player();
-        ui.monospace(format!("{:8.3} / {:.3} s", player.position().as_secs_f64(), player.duration().as_secs_f64()));
+        ui.monospace(format!(
+            "{:8.3} / {:.3} s",
+            player.position().as_secs_f64(),
+            player.duration().as_secs_f64()
+        ));
         ui.separator();
-        if ui.button("Save").on_hover_text(editor.sheet.display().to_string()).clicked() {
+        if ui
+            .button("Save")
+            .on_hover_text(editor.sheet.display().to_string())
+            .clicked()
+        {
             editor.save();
         }
-        if ui.button("Write into file").on_hover_text(editor.file.display().to_string()).clicked() {
+        if ui
+            .button("Write into file")
+            .on_hover_text(editor.file.display().to_string())
+            .clicked()
+        {
             editor.write_into_file(video);
         }
         ui.separator();
-        ui.label(format!("{}{}", if editor.dirty { "* " } else { "" }, editor.status));
+        ui.label(format!(
+            "{}{}",
+            if editor.dirty { "* " } else { "" },
+            editor.status
+        ));
     });
 }
 
@@ -320,10 +389,24 @@ fn timeline(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
     let every = (seconds / 20).max(1);
     for s in (0..=seconds).step_by(every as usize) {
         let x = x_of(s * 1_000_000);
-        painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.top() + 6.0)], visuals.widgets.noninteractive.fg_stroke);
-        painter.text(egui::pos2(x + 2.0, rect.top() + 4.0), egui::Align2::LEFT_TOP, format!("{s}s"), egui::FontId::monospace(10.0), visuals.text_color());
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.top() + 6.0)],
+            visuals.widgets.noninteractive.fg_stroke,
+        );
+        painter.text(
+            egui::pos2(x + 2.0, rect.top() + 4.0),
+            egui::Align2::LEFT_TOP,
+            format!("{s}s"),
+            egui::FontId::monospace(10.0),
+            visuals.text_color(),
+        );
     }
-    let lane_rect = |s: usize| egui::Rect::from_min_size(egui::pos2(rect.left(), rect.top() + RULER_H + LANE_H * s as f32), egui::vec2(rect.width(), LANE_H));
+    let lane_rect = |s: usize| {
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left(), rect.top() + RULER_H + LANE_H * s as f32),
+            egui::vec2(rect.width(), LANE_H),
+        )
+    };
     let mut cue_rects = Vec::new();
     for (s, track) in editor.tracks.iter().enumerate() {
         let lane = lane_rect(s);
@@ -331,26 +414,62 @@ fn timeline(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
         if editor.selected == Selection::Stream(s) {
             painter.rect_filled(lane, 0.0, lane_color.gamma_multiply(0.12));
         }
-        painter.text(lane.left_top() + egui::vec2(4.0, 2.0), egui::Align2::LEFT_TOP, &track.name, egui::FontId::proportional(11.0), visuals.weak_text_color());
+        painter.text(
+            lane.left_top() + egui::vec2(4.0, 2.0),
+            egui::Align2::LEFT_TOP,
+            &track.name,
+            egui::FontId::proportional(11.0),
+            visuals.weak_text_color(),
+        );
         for (c, cue) in track.cues.iter().enumerate() {
             let x0 = x_of(cue.time_us);
             let x1 = x_of(cue.time_us + cue.cue.duration).max(x0 + 3.0);
-            let r = egui::Rect::from_min_max(egui::pos2(x0, lane.top() + 12.0), egui::pos2(x1, lane.bottom() - 2.0));
+            let r = egui::Rect::from_min_max(
+                egui::pos2(x0, lane.top() + 12.0),
+                egui::pos2(x1, lane.bottom() - 2.0),
+            );
             let selected = editor.selected == Selection::Cue(s, c);
-            let stroke = if selected { egui::Stroke::new(2.0, visuals.strong_text_color()) } else { egui::Stroke::NONE };
+            let stroke = if selected {
+                egui::Stroke::new(2.0, visuals.strong_text_color())
+            } else {
+                egui::Stroke::NONE
+            };
             painter.rect(r, 2.0, lane_color, stroke, egui::StrokeKind::Inside);
             // Dark labels on bars; ticks are too thin, so their labels sit on the lane.
-            let text = if cue.cue.duration > 0 { egui::Color32::from_gray(24) } else { visuals.strong_text_color() };
-            painter.text(r.left_top() + egui::vec2(2.0, 0.0), egui::Align2::LEFT_TOP, &cue.cue.kind, egui::FontId::proportional(10.0), text);
+            let text = if cue.cue.duration > 0 {
+                egui::Color32::from_gray(24)
+            } else {
+                visuals.strong_text_color()
+            };
+            painter.text(
+                r.left_top() + egui::vec2(2.0, 0.0),
+                egui::Align2::LEFT_TOP,
+                &cue.cue.kind,
+                egui::FontId::proportional(10.0),
+                text,
+            );
             cue_rects.push((r, s, c));
         }
     }
     let playhead = x_of(video.player().position().as_micros() as u64);
-    painter.line_segment([egui::pos2(playhead, rect.top()), egui::pos2(playhead, rect.bottom())], egui::Stroke::new(1.5, egui::Color32::RED));
-    if let Some(pos) = response.interact_pointer_pos().filter(|_| response.clicked()) {
+    painter.line_segment(
+        [
+            egui::pos2(playhead, rect.top()),
+            egui::pos2(playhead, rect.bottom()),
+        ],
+        egui::Stroke::new(1.5, egui::Color32::RED),
+    );
+    if let Some(pos) = response
+        .interact_pointer_pos()
+        .filter(|_| response.clicked())
+    {
         if pos.y < rect.top() + RULER_H {
             let _ = video.player().seek(Duration::from_micros(us_of(pos.x)));
-        } else if let Some(&(_, s, c)) = cue_rects.iter().rev().find(|(r, _, _)| r.expand(2.0).contains(pos)) {
+        } else if let Some(&(_, s, c)) = cue_rects
+            .iter()
+            .rev()
+            .find(|(r, _, _)| r.expand(2.0).contains(pos))
+        {
             editor.selected = Selection::Cue(s, c);
         } else {
             let s = ((pos.y - rect.top() - RULER_H) / LANE_H) as usize;
@@ -399,7 +518,11 @@ fn seconds(text: &str) -> Option<u64> {
 }
 
 fn inspector(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
-    if editor.draft.as_ref().is_none_or(|d| d.of != editor.selected) {
+    if editor
+        .draft
+        .as_ref()
+        .is_none_or(|d| d.of != editor.selected)
+    {
         editor.draft = Some(draft_for(editor));
     }
     let mut draft = editor.draft.take().expect("draft");
@@ -409,7 +532,11 @@ fn inspector(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
         Selection::Cue(s, c) => {
             ui.heading(format!("Cue in {}", editor.tracks[s].name));
             egui::Grid::new("cue").num_columns(2).show(ui, |ui| {
-                for (label, text) in [("Start (s)", &mut draft.start), ("Duration (s)", &mut draft.duration), ("Type", &mut draft.kind)] {
+                for (label, text) in [
+                    ("Start (s)", &mut draft.start),
+                    ("Duration (s)", &mut draft.duration),
+                    ("Type", &mut draft.kind),
+                ] {
                     ui.label(label);
                     commit |= ui.text_edit_singleline(text).lost_focus();
                     ui.end_row();
@@ -434,9 +561,15 @@ fn inspector(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
                 });
             }
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut draft.new_key).hint_text("new key").desired_width(120.0));
+                ui.add(
+                    egui::TextEdit::singleline(&mut draft.new_key)
+                        .hint_text("new key")
+                        .desired_width(120.0),
+                );
                 if ui.button("Add field").clicked() && !draft.new_key.is_empty() {
-                    draft.fields.push((std::mem::take(&mut draft.new_key), String::new()));
+                    draft
+                        .fields
+                        .push((std::mem::take(&mut draft.new_key), String::new()));
                     commit = true;
                 }
             });
@@ -465,7 +598,9 @@ fn inspector(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
             ui.heading("Stream");
             ui.horizontal(|ui| {
                 ui.label("Name");
-                if ui.text_edit_singleline(&mut draft.name).lost_focus() && draft.name != editor.tracks[s].name {
+                if ui.text_edit_singleline(&mut draft.name).lost_focus()
+                    && draft.name != editor.tracks[s].name
+                {
                     if draft.name.len() <= 32 {
                         editor.tracks[s].name = draft.name.clone();
                         editor.changed(video);
@@ -475,7 +610,10 @@ fn inspector(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
                 }
             });
             if ui.button("Add cue at playhead").clicked() {
-                editor.tracks[s].cues.push(TimedCue { time_us: playhead, cue: Cue::new("cue") });
+                editor.tracks[s].cues.push(TimedCue {
+                    time_us: playhead,
+                    cue: Cue::new("cue"),
+                });
                 let c = editor.tracks[s].cues.len() - 1;
                 editor.selected = Selection::Cue(s, c);
                 editor.changed(video);
@@ -489,7 +627,10 @@ fn inspector(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
         editor.draft = Some(draft);
     }
     if ui.button("Add stream").clicked() {
-        editor.tracks.push(CueTrack { name: format!("stream{}", editor.tracks.len()), cues: Vec::new() });
+        editor.tracks.push(CueTrack {
+            name: format!("stream{}", editor.tracks.len()),
+            cues: Vec::new(),
+        });
         editor.selected = Selection::Stream(editor.tracks.len() - 1);
         editor.changed(video);
     }
@@ -510,16 +651,34 @@ fn commit_cue(editor: &mut Editor, video: &mut PraxiVideo, draft: &Draft, s: usi
     let mut fields = Vec::new();
     for (i, (key, value)) in draft.fields.iter().enumerate() {
         // Fields of other types keep their values; new and string fields are strings.
-        let kept = old.fields.iter().find(|(k, v)| k == key && !matches!(v, Value::String(_)) && i < old.fields.len());
-        fields.push((key.clone(), kept.map_or_else(|| Value::String(value.clone()), |(_, v)| v.clone())));
+        let kept = old
+            .fields
+            .iter()
+            .find(|(k, v)| k == key && !matches!(v, Value::String(_)) && i < old.fields.len());
+        fields.push((
+            key.clone(),
+            kept.map_or_else(|| Value::String(value.clone()), |(_, v)| v.clone()),
+        ));
     }
-    let cue = Cue { duration, kind: draft.kind.clone(), fields };
+    let cue = Cue {
+        duration,
+        kind: draft.kind.clone(),
+        fields,
+    };
     if let Err(e) = cue.encode(&mut Vec::new()) {
         editor.status = format!("Not applied: {e}");
         return;
     }
-    if editor.tracks[s].cues[c] != (TimedCue { time_us: start, cue: cue.clone() }) {
-        editor.tracks[s].cues[c] = TimedCue { time_us: start, cue };
+    if editor.tracks[s].cues[c]
+        != (TimedCue {
+            time_us: start,
+            cue: cue.clone(),
+        })
+    {
+        editor.tracks[s].cues[c] = TimedCue {
+            time_us: start,
+            cue,
+        };
         editor.changed(video);
     }
 }

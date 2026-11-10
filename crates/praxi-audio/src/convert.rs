@@ -14,7 +14,12 @@ pub struct Resampler {
 
 impl Resampler {
     pub fn new(channels: usize, from_rate: u32, to_rate: u32) -> Resampler {
-        Resampler { channels, step: from_rate as f64 / to_rate as f64, buf: vec![0.0; channels], pos: 1.0 }
+        Resampler {
+            channels,
+            step: from_rate as f64 / to_rate as f64,
+            buf: vec![0.0; channels],
+            pos: 1.0,
+        }
     }
 
     /// Fills `out` (interleaved, whole frames) with converted frames, reading source frames
@@ -40,7 +45,11 @@ impl Resampler {
                 let p = |k: usize| self.buf[k * c + ch];
                 let (p0, p1, p2, p3) = (p(i - 1), p(i), p(i + 1), p(i + 2));
                 out[f * c + ch] = p1
-                    + 0.5 * t * (p2 - p0 + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3 + t * (3.0 * (p1 - p2) + p3 - p0)));
+                    + 0.5
+                        * t
+                        * (p2 - p0
+                            + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3
+                                + t * (3.0 * (p1 - p2) + p3 - p0)));
             }
         }
         // Keep the frame before the next position and everything after it.
@@ -83,7 +92,9 @@ mod tests {
     use super::*;
 
     fn sine(rate: u32, hz: f64, frames: usize) -> Vec<f32> {
-        (0..frames).map(|i| (std::f64::consts::TAU * hz * i as f64 / rate as f64).sin() as f32 * 0.5).collect()
+        (0..frames)
+            .map(|i| (std::f64::consts::TAU * hz * i as f64 / rate as f64).sin() as f32 * 0.5)
+            .collect()
     }
 
     /// Resamples `input` (mono) in callbacks of varying size.
@@ -120,10 +131,18 @@ mod tests {
         let input = sine(48_000, 1000.0, 48_000);
         let down = run(&input, 48_000, 44_100, 44_000);
         let expected = sine(44_100, 1000.0, 44_000);
-        let err = down.iter().zip(&expected).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let err = down
+            .iter()
+            .zip(&expected)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
         assert!(err < 0.002, "48 kHz to 44.1 kHz: max error {err}");
         let up = run(&down, 44_100, 48_000, 47_000);
-        let err = up.iter().zip(&input).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        let err = up
+            .iter()
+            .zip(&input)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f32::max);
         assert!(err < 0.004, "and back: max error {err}");
     }
 
@@ -140,7 +159,10 @@ mod tests {
         }
         // 480 000 output frames at 48 kHz are 441 000 source frames, plus the lookahead.
         let played = read as f64 - r.pending_frames();
-        assert!((played - 441_000.0).abs() < 1e-6, "played {played} source frames");
+        assert!(
+            (played - 441_000.0).abs() < 1e-6,
+            "played {played} source frames"
+        );
         assert!(r.pending_frames() < 3.0);
     }
 

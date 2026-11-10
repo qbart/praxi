@@ -18,24 +18,39 @@ pub struct Device {
 impl Device {
     /// The default output device, if there is one.
     pub fn open_default() -> Option<Device> {
-        cpal::default_host().default_output_device().map(|device| Device { device })
+        cpal::default_host()
+            .default_output_device()
+            .map(|device| Device { device })
     }
 
     pub fn name(&self) -> String {
-        self.device.description().map(|d| d.to_string()).unwrap_or_else(|_| "unknown device".into())
+        self.device
+            .description()
+            .map(|d| d.to_string())
+            .unwrap_or_else(|_| "unknown device".into())
     }
 
     /// The channel count of the device's default configuration.
     pub fn channels(&self) -> Option<u16> {
-        self.device.default_output_config().ok().map(|c| c.channels())
+        self.device
+            .default_output_config()
+            .ok()
+            .map(|c| c.channels())
     }
 
     /// Starts a stream that plays the sum of `outputs`: at `outputs[0]`'s rate and channel
     /// count when the device supports them, otherwise at the device's default
     /// configuration, each output converted to it.
-    pub fn start(&self, outputs: Vec<AudioOutput>, muted: Arc<AtomicBool>) -> Result<Stream, String> {
+    pub fn start(
+        &self,
+        outputs: Vec<AudioOutput>,
+        muted: Arc<AtomicBool>,
+    ) -> Result<Stream, String> {
         let first = outputs.first().ok_or("no audio outputs")?;
-        let (rate, channels) = (first.sample_rate(), u16::try_from(first.channels()).map_err(|_| "too many channels")?);
+        let (rate, channels) = (
+            first.sample_rate(),
+            u16::try_from(first.channels()).map_err(|_| "too many channels")?,
+        );
         let rank = |f: cpal::SampleFormat| match f {
             cpal::SampleFormat::F32 => 0,
             cpal::SampleFormat::I16 => 1,
@@ -46,24 +61,47 @@ impl Device {
             .device
             .supported_output_configs()
             .map_err(|e| e.to_string())?
-            .filter(|c| c.channels() == channels && (c.min_sample_rate()..=c.max_sample_rate()).contains(&rate))
+            .filter(|c| {
+                c.channels() == channels
+                    && (c.min_sample_rate()..=c.max_sample_rate()).contains(&rate)
+            })
             .min_by_key(|c| rank(c.sample_format()));
         let (config, format) = match native {
-            Some(c) => (cpal::StreamConfig { channels, sample_rate: rate, buffer_size: cpal::BufferSize::Default }, c.sample_format()),
+            Some(c) => (
+                cpal::StreamConfig {
+                    channels,
+                    sample_rate: rate,
+                    buffer_size: cpal::BufferSize::Default,
+                },
+                c.sample_format(),
+            ),
             None => {
-                let c = self.device.default_output_config().map_err(|e| e.to_string())?;
+                let c = self
+                    .device
+                    .default_output_config()
+                    .map_err(|e| e.to_string())?;
                 (c.config(), c.sample_format())
             }
         };
         let latency_us = Arc::new(AtomicU64::new(0));
         let stream = match format {
-            cpal::SampleFormat::F32 => self.build::<f32>(config, outputs, muted, latency_us.clone()),
-            cpal::SampleFormat::I16 => self.build::<i16>(config, outputs, muted, latency_us.clone()),
-            cpal::SampleFormat::I32 => self.build::<i32>(config, outputs, muted, latency_us.clone()),
+            cpal::SampleFormat::F32 => {
+                self.build::<f32>(config, outputs, muted, latency_us.clone())
+            }
+            cpal::SampleFormat::I16 => {
+                self.build::<i16>(config, outputs, muted, latency_us.clone())
+            }
+            cpal::SampleFormat::I32 => {
+                self.build::<i32>(config, outputs, muted, latency_us.clone())
+            }
             f => return Err(format!("unsupported device sample format {f}")),
         }?;
         stream.play().map_err(|e| e.to_string())?;
-        Ok(Stream { _stream: stream, latency_us, config: (config.sample_rate, config.channels) })
+        Ok(Stream {
+            _stream: stream,
+            latency_us,
+            config: (config.sample_rate, config.channels),
+        })
     }
 
     fn build<T>(
@@ -77,7 +115,10 @@ impl Device {
         T: cpal::SizedSample + cpal::FromSample<f32>,
     {
         let channels = config.channels as usize;
-        let mut sources: Vec<Source> = outputs.into_iter().map(|o| Source::new(o, config.sample_rate)).collect();
+        let mut sources: Vec<Source> = outputs
+            .into_iter()
+            .map(|o| Source::new(o, config.sample_rate))
+            .collect();
         let mut mix = Vec::new();
         let frame_us = 1e6 / config.sample_rate as f64;
         self.device
@@ -95,7 +136,8 @@ impl Device {
                         source.add_to(&mut mix, channels);
                     }
                     let held_us = sources.first().map_or(0.0, |s| s.held_us());
-                    let latency = t.playback.duration_since(t.callback).as_micros() as u64 + (buffer_us + held_us) as u64;
+                    let latency = t.playback.duration_since(t.callback).as_micros() as u64
+                        + (buffer_us + held_us) as u64;
                     latency_us.store(latency, Ordering::Relaxed);
                     let muted = muted.load(Ordering::Relaxed);
                     for (b, m) in buf.iter_mut().zip(&mix) {
@@ -122,8 +164,15 @@ struct Source {
 impl Source {
     fn new(output: AudioOutput, rate: u32) -> Source {
         let channels = output.channels();
-        let resampler = (output.sample_rate() != rate).then(|| Resampler::new(channels, output.sample_rate(), rate));
-        Source { output, resampler, channels, read: Vec::new(), converted: Vec::new() }
+        let resampler = (output.sample_rate() != rate)
+            .then(|| Resampler::new(channels, output.sample_rate(), rate));
+        Source {
+            output,
+            resampler,
+            channels,
+            read: Vec::new(),
+            converted: Vec::new(),
+        }
     }
 
     /// Reads the frames of one callback and adds them to `mix`, which has `channels`.
@@ -151,7 +200,9 @@ impl Source {
 
     /// Microseconds of source audio read but not played yet.
     fn held_us(&self) -> f64 {
-        self.resampler.as_ref().map_or(0.0, |r| r.pending_frames() * 1e6 / self.output.sample_rate() as f64)
+        self.resampler.as_ref().map_or(0.0, |r| {
+            r.pending_frames() * 1e6 / self.output.sample_rate() as f64
+        })
     }
 }
 

@@ -21,7 +21,10 @@ pub fn parse(text: &str) -> Result<Vec<CueTrack>, String> {
         .into_iter()
         .map(|s| {
             if s.name.len() > CUE_NAME_SIZE || s.name.contains('\0') {
-                return Err(format!("stream {:?}: name longer than {CUE_NAME_SIZE} bytes or with a zero byte", s.name));
+                return Err(format!(
+                    "stream {:?}: name longer than {CUE_NAME_SIZE} bytes or with a zero byte",
+                    s.name
+                ));
             }
             let cues = s
                 .cues
@@ -38,9 +41,17 @@ pub fn parse(text: &str) -> Result<Vec<CueTrack>, String> {
                         .fields
                         .0
                         .into_iter()
-                        .map(|(k, v)| json_to_value(&v).map(|v| (k.clone(), v)).map_err(|e| at(format!("field {k:?}: {e}"))))
+                        .map(|(k, v)| {
+                            json_to_value(&v)
+                                .map(|v| (k.clone(), v))
+                                .map_err(|e| at(format!("field {k:?}: {e}")))
+                        })
                         .collect::<Result<_, _>>()?;
-                    let cue = Cue { duration, kind: c.kind, fields };
+                    let cue = Cue {
+                        duration,
+                        kind: c.kind,
+                        fields,
+                    };
                     // Type and key lengths: the payload encoder checks them.
                     scratch.clear();
                     cue.encode(&mut scratch).map_err(|e| at(e.to_string()))?;
@@ -128,7 +139,10 @@ impl<'de> Deserialize<'de> for Fields {
 
 /// Seconds, a non-negative number, to whole microseconds.
 fn seconds_to_us(v: &Json) -> Result<u64, String> {
-    let seconds = v.as_f64().filter(|s| s.is_finite()).ok_or_else(|| format!("must be a number, got {v}"))?;
+    let seconds = v
+        .as_f64()
+        .filter(|s| s.is_finite())
+        .ok_or_else(|| format!("must be a number, got {v}"))?;
     let us = (seconds * 1e6).round();
     if !(0.0..=u64::MAX as f64).contains(&us) {
         return Err(format!("{seconds} is out of range"));
@@ -156,7 +170,9 @@ fn value_to_json(v: &Value) -> Result<Json, String> {
         Value::String(s) => Json::String(s.clone()),
         Value::Bool(b) => Json::Bool(*b),
         Value::Int(i) => Json::Number((*i).into()),
-        Value::Float(f) => Json::Number(Number::from_f64(*f).ok_or_else(|| format!("float {f} cannot be written to JSON"))?),
+        Value::Float(f) => Json::Number(
+            Number::from_f64(*f).ok_or_else(|| format!("float {f} cannot be written to JSON"))?,
+        ),
         Value::Bytes(b) => {
             let hex: String = b.iter().map(|b| format!("{b:02x}")).collect();
             Json::Object(Map::from_iter([("bytes".to_string(), Json::String(hex))]))
@@ -168,7 +184,10 @@ fn from_hex(hex: &str) -> Result<Vec<u8>, String> {
     if !hex.len().is_multiple_of(2) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(format!("{hex:?} is not an even number of hex digits"));
     }
-    Ok((0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex")).collect())
+    Ok((0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
+        .collect())
 }
 
 /// Microseconds as seconds: the shortest decimal for the `f64` nearest to `us / 10^6` has
@@ -191,7 +210,9 @@ fn to_sheet(tracks: &[CueTrack]) -> Result<Sheet, String> {
                         .iter()
                         .map(|(k, v)| value_to_json(v).map(|v| (k.clone(), v)))
                         .collect::<Result<_, _>>()
-                        .map_err(|e| format!("stream {:?}, cue at {} us: {e}", t.name, c.time_us))?;
+                        .map_err(|e| {
+                            format!("stream {:?}, cue at {} us: {e}", t.name, c.time_us)
+                        })?;
                     Ok(SheetCue {
                         time: us_to_seconds(c.time_us),
                         duration: (c.cue.duration > 0).then(|| us_to_seconds(c.cue.duration)),
@@ -200,10 +221,16 @@ fn to_sheet(tracks: &[CueTrack]) -> Result<Sheet, String> {
                     })
                 })
                 .collect::<Result<_, String>>()?;
-            Ok(SheetStream { name: t.name.clone(), cues })
+            Ok(SheetStream {
+                name: t.name.clone(),
+                cues,
+            })
         })
         .collect::<Result<_, String>>()?;
-    Ok(Sheet { version: VERSION, streams })
+    Ok(Sheet {
+        version: VERSION,
+        streams,
+    })
 }
 
 #[cfg(test)]
@@ -215,7 +242,10 @@ mod tests {
         let tracks = vec![CueTrack {
             name: "cues".into(),
             cues: vec![
-                TimedCue { time_us: 2_500_000, cue: Cue::new("explosion") },
+                TimedCue {
+                    time_us: 2_500_000,
+                    cue: Cue::new("explosion"),
+                },
                 TimedCue {
                     time_us: 1_000_001,
                     cue: Cue {
@@ -238,16 +268,26 @@ mod tests {
         assert!(text.contains("\"f\": 3.0"), "{text}");
         assert!(text.contains("\"bytes\": \"00ff10\""), "{text}");
         let json: Json = serde_json::from_str(&text).unwrap();
-        assert!(json["streams"][0]["cues"][0].get("duration").is_none(), "zero durations are left out");
-        assert!(json["streams"][0]["cues"][0].get("fields").is_none(), "no fields are left out");
+        assert!(
+            json["streams"][0]["cues"][0].get("duration").is_none(),
+            "zero durations are left out"
+        );
+        assert!(
+            json["streams"][0]["cues"][0].get("fields").is_none(),
+            "no fields are left out"
+        );
         assert_eq!(parse(&text).unwrap(), tracks);
     }
 
     #[test]
     fn rejects_bad_input() {
-        let cue = |c: &str| format!(r#"{{"version": 1, "streams": [{{"name": "s", "cues": [{c}]}}]}}"#);
+        let cue =
+            |c: &str| format!(r#"{{"version": 1, "streams": [{{"name": "s", "cues": [{c}]}}]}}"#);
         assert!(parse(&cue(r#"{"time": 1, "type": "t"}"#)).is_ok());
-        let long_name = format!(r#"{{"version": 1, "streams": [{{"name": "{}", "cues": []}}]}}"#, "n".repeat(33));
+        let long_name = format!(
+            r#"{{"version": 1, "streams": [{{"name": "{}", "cues": []}}]}}"#,
+            "n".repeat(33)
+        );
         let bad = [
             r#"{"version": 2, "streams": []}"#.to_string(),
             r#"{"version": 1, "streams": [], "extra": 1}"#.to_string(),
@@ -269,13 +309,37 @@ mod tests {
         for b in bad {
             assert!(parse(&b).is_err(), "{b}");
         }
-        let max_name = format!(r#"{{"version": 1, "streams": [{{"name": "{}", "cues": []}}]}}"#, "n".repeat(32));
+        let max_name = format!(
+            r#"{{"version": 1, "streams": [{{"name": "{}", "cues": []}}]}}"#,
+            "n".repeat(32)
+        );
         assert!(parse(&max_name).is_ok());
-        let t = parse(&cue(r#"{"time": 0.0000004, "type": "t", "fields": {"i": 9223372036854775807, "e": 1e3}}"#)).unwrap();
+        let t = parse(&cue(
+            r#"{"time": 0.0000004, "type": "t", "fields": {"i": 9223372036854775807, "e": 1e3}}"#,
+        ))
+        .unwrap();
         let c = &t[0].cues[0];
         assert_eq!(c.time_us, 0, "rounded to microseconds");
-        assert_eq!(c.cue.fields, [("i".into(), Value::Int(i64::MAX)), ("e".into(), Value::Float(1000.0))]);
-        let nan = Cue { fields: vec![("n".into(), Value::Float(f64::NAN))], ..Cue::new("t") };
-        assert!(write(&[CueTrack { name: "s".into(), cues: vec![TimedCue { time_us: 0, cue: nan }] }]).is_err());
+        assert_eq!(
+            c.cue.fields,
+            [
+                ("i".into(), Value::Int(i64::MAX)),
+                ("e".into(), Value::Float(1000.0))
+            ]
+        );
+        let nan = Cue {
+            fields: vec![("n".into(), Value::Float(f64::NAN))],
+            ..Cue::new("t")
+        };
+        assert!(
+            write(&[CueTrack {
+                name: "s".into(),
+                cues: vec![TimedCue {
+                    time_us: 0,
+                    cue: nan
+                }]
+            }])
+            .is_err()
+        );
     }
 }

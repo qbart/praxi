@@ -1,10 +1,9 @@
 //! Encoder of the motion codec (`docs/features/motion-codec.md#encoder`).
 
 use praxi_format::motion::{
-    self, Layout, MAX_LEVEL, MAX_MV, MB_INTER, MB_INTRA, MB_SKIP, MB_SPLIT, Mv, Plane,
-    TABLE_MB, TABLE_MV, Token, ZIGZAG, block_tokens, class, dequantize,
-    inverse_transform, mv_predictor, plane_qp, predict_block,
-    predict_transform_block, set_field,
+    self, Layout, MAX_LEVEL, MAX_MV, MB_INTER, MB_INTRA, MB_SKIP, MB_SPLIT, Mv, Plane, TABLE_MB,
+    TABLE_MV, Token, ZIGZAG, block_tokens, class, dequantize, inverse_transform, mv_predictor,
+    plane_qp, predict_block, predict_transform_block, set_field,
 };
 use praxi_format::{MotionParams, VideoParams};
 
@@ -151,7 +150,12 @@ impl MotionEncoder {
             tokens.push(slice_tokens);
         }
         frame.keyframe = keyframe;
-        for (p, scale) in frame.scales.iter_mut().enumerate().take(self.layout.planes.len()) {
+        for (p, scale) in frame
+            .scales
+            .iter_mut()
+            .enumerate()
+            .take(self.layout.planes.len())
+        {
             *scale = motion::dequant_scale(plane_qp(self.qp, p, &self.params));
         }
         // Rebuild exactly as decoders will, and predict the next frame from that.
@@ -270,7 +274,11 @@ fn downsample(full: &[f32], pw: usize, ph: usize, out: &mut [u8]) {
     // Per luma coordinate: the two chroma samples it blends and their weights (of 4).
     let taps = |v: usize, n: usize| -> [(usize, f32); 2] {
         let i = (v >> 1) as isize;
-        let (a, b) = if v & 1 == 0 { ((i - 1, 1.0), (i, 3.0)) } else { ((i, 3.0), (i + 1, 1.0)) };
+        let (a, b) = if v & 1 == 0 {
+            ((i - 1, 1.0), (i, 3.0))
+        } else {
+            ((i, 3.0), (i + 1, 1.0))
+        };
         let c = |j: isize| j.clamp(0, n as isize - 1) as usize;
         [(c(a.0), a.1 / 4.0), (c(b.0), b.1 / 4.0)]
     };
@@ -346,7 +354,15 @@ fn downsample(full: &[f32], pw: usize, ph: usize, out: &mut [u8]) {
 /// `y0`) against its prediction: a better guess of the residual's bits than plain absolute
 /// differences, which pick poor vectors on fine texture.
 #[allow(clippy::too_many_arguments)]
-fn satd(layout: &Layout, src: &[u8], reference: &[u8], x0: i32, y0: i32, size: usize, mv: Mv) -> u32 {
+fn satd(
+    layout: &Layout,
+    src: &[u8],
+    reference: &[u8],
+    x0: i32,
+    y0: i32,
+    size: usize,
+    mv: Mv,
+) -> u32 {
     let plane = &layout.planes[0];
     let w = plane.width as usize;
     let mut pred = [0u8; 256];
@@ -500,11 +516,31 @@ fn search_mb(
     }
     let (x0, y0) = ((mx * 16) as i32, (my * 16) as i32);
     let mv = search_block(
-        layout, src, reference, x0, y0, 16, &candidates, pred, lambda, &SEARCH_STEPS,
+        layout,
+        src,
+        reference,
+        x0,
+        y0,
+        16,
+        &candidates,
+        pred,
+        lambda,
+        &SEARCH_STEPS,
     );
     let quadrants = [0, 1, 2, 3].map(|q| {
         let (qx, qy) = (x0 + q % 2 * 8, y0 + q / 2 * 8);
-        search_block(layout, src, reference, qx, qy, 8, &[mv], mv, lambda, &SUB_STEPS)
+        search_block(
+            layout,
+            src,
+            reference,
+            qx,
+            qy,
+            8,
+            &[mv],
+            mv,
+            lambda,
+            &SUB_STEPS,
+        )
     });
     Searched { mv, quadrants }
 }
@@ -633,7 +669,14 @@ impl<'a> SliceCoder<'a> {
         for (sub, mv) in (0..4).zip(mvs) {
             let pred = self.predictor(mx, my, sub, 1);
             bits += mv_bits((mv.0 - pred.0, mv.1 - pred.1));
-            set_field(&mut self.mvs, self.enc.layout.mbs_x, mx, my, sub..sub + 1, *mv);
+            set_field(
+                &mut self.mvs,
+                self.enc.layout.mbs_x,
+                mx,
+                my,
+                sub..sub + 1,
+                *mv,
+            );
         }
         bits
     }

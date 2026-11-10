@@ -1,7 +1,7 @@
 use crate::{
-    AUDIO_NAME_SIZE, CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, ChunkHeader, Compression, Cue,
-    Error, HEADER_SIZE, IndexEntry, MAGIC, Result, STREAM_ENTRY_SIZE, StreamInfo, StreamParams,
-    TextureFormat, VERSION_MAJOR, VERSION_MINOR, planes::encode_sections, to_planes,
+    AUDIO_NAME_SIZE, CHUNK_FLAG_KEYFRAME, CHUNK_HEADER_SIZE, CUE_NAME_SIZE, ChunkHeader,
+    Compression, Cue, Error, HEADER_SIZE, IndexEntry, MAGIC, Result, STREAM_ENTRY_SIZE, StreamInfo,
+    StreamParams, TextureFormat, VERSION_MAJOR, VERSION_MINOR, planes::encode_sections, to_planes,
 };
 use std::io::{Seek, SeekFrom, Write};
 
@@ -31,7 +31,10 @@ pub struct Writer<W: Write + Seek> {
 impl<W: Write + Seek> Writer<W> {
     pub fn new(mut inner: W, streams: Vec<StreamInfo>) -> Result<Writer<W>> {
         if streams.is_empty() || streams.len() > u16::MAX as usize {
-            return Err(Error::Invalid(format!("invalid stream count {}", streams.len())));
+            return Err(Error::Invalid(format!(
+                "invalid stream count {}",
+                streams.len()
+            )));
         }
         for (i, s) in streams.iter().enumerate() {
             if s.time_base.num == 0 || s.time_base.den == 0 {
@@ -45,23 +48,34 @@ impl<W: Write + Seek> Writer<W> {
             if let StreamParams::Cues(c) = &s.params
                 && (c.name.len() > CUE_NAME_SIZE || c.name.contains('\0'))
             {
-                return Err(Error::Invalid(format!("stream {i}: cue stream name too long or has a zero byte")));
+                return Err(Error::Invalid(format!(
+                    "stream {i}: cue stream name too long or has a zero byte"
+                )));
             }
             if let StreamParams::Audio(a) = &s.params {
                 if a.sample_rate == 0 || a.channels == 0 {
-                    return Err(Error::Invalid(format!("stream {i}: zero sample rate or channels")));
+                    return Err(Error::Invalid(format!(
+                        "stream {i}: zero sample rate or channels"
+                    )));
                 }
                 if s.time_base != crate::TimeBase::new(1, a.sample_rate) {
-                    return Err(Error::Invalid(format!("stream {i}: audio time base must be 1/sample_rate")));
+                    return Err(Error::Invalid(format!(
+                        "stream {i}: audio time base must be 1/sample_rate"
+                    )));
                 }
                 if a.channel_mask != 0 && a.channel_mask.count_ones() != a.channels as u32 {
-                    return Err(Error::Invalid(format!("stream {i}: channel mask does not match {} channels", a.channels)));
+                    return Err(Error::Invalid(format!(
+                        "stream {i}: channel mask does not match {} channels",
+                        a.channels
+                    )));
                 }
                 if let Err(e) = a.check_format() {
                     return Err(Error::Invalid(format!("stream {i}: {e}")));
                 }
                 if a.name.len() > AUDIO_NAME_SIZE || a.name.contains('\0') {
-                    return Err(Error::Invalid(format!("stream {i}: audio stream name too long or has a zero byte")));
+                    return Err(Error::Invalid(format!(
+                        "stream {i}: audio stream name too long or has a zero byte"
+                    )));
                 }
             }
         }
@@ -101,7 +115,11 @@ impl<W: Write + Seek> Writer<W> {
     /// picks them on its own, and a Huffman section over a raw or LZ4 one (default
     /// [`DEFAULT_PLANE_MIN_SAVING`]). Clamped to `0..=100`.
     pub fn set_plane_min_saving(&mut self, percent: f64) {
-        self.plane_min_saving = if percent.is_nan() { DEFAULT_PLANE_MIN_SAVING } else { percent.clamp(0.0, 100.0) };
+        self.plane_min_saving = if percent.is_nan() {
+            DEFAULT_PLANE_MIN_SAVING
+        } else {
+            percent.clamp(0.0, 100.0)
+        };
     }
 
     /// Writes one chunk of a video stream. `compression = Some(c)` forces `c`; `None` picks
@@ -117,8 +135,12 @@ impl<W: Write + Seek> Writer<W> {
         compression: Option<Compression>,
     ) -> Result<()> {
         match self.streams.get(stream as usize).map(|s| &s.params) {
-            Some(StreamParams::Cues(_)) => Err(Error::Invalid(format!("stream {stream} is a cue stream, use write_cue"))),
-            Some(StreamParams::Audio(_)) => Err(Error::Invalid(format!("stream {stream} is an audio stream, use write_audio"))),
+            Some(StreamParams::Cues(_)) => Err(Error::Invalid(format!(
+                "stream {stream} is a cue stream, use write_cue"
+            ))),
+            Some(StreamParams::Audio(_)) => Err(Error::Invalid(format!(
+                "stream {stream} is an audio stream, use write_audio"
+            ))),
             _ => self.write_raw(stream, pts, keyframe, payload, compression),
         }
     }
@@ -127,15 +149,24 @@ impl<W: Write + Seek> Writer<W> {
     /// the stream's PCM format, or an ADPCM payload. LZ4 is used when it makes the payload
     /// smaller.
     pub fn write_audio(&mut self, stream: u16, pts: u64, samples: &[u8]) -> Result<()> {
-        let Some(StreamParams::Audio(a)) = self.streams.get(stream as usize).map(|s| &s.params) else {
-            return Err(Error::Invalid(format!("stream {stream} is not an audio stream")));
+        let Some(StreamParams::Audio(a)) = self.streams.get(stream as usize).map(|s| &s.params)
+        else {
+            return Err(Error::Invalid(format!(
+                "stream {stream} is not an audio stream"
+            )));
         };
         let Some(frames) = a.payload_frames(samples) else {
-            return Err(Error::Invalid(format!("stream {stream}: {} bytes is not a valid {} payload", samples.len(), a.format)));
+            return Err(Error::Invalid(format!(
+                "stream {stream}: {} bytes is not a valid {} payload",
+                samples.len(),
+                a.format
+            )));
         };
         let end = self.audio_end[stream as usize];
         if self.last_pts[stream as usize].is_some() && pts < end {
-            return Err(Error::Invalid(format!("stream {stream}: audio chunk at {pts} overlaps the previous one ending at {end}")));
+            return Err(Error::Invalid(format!(
+                "stream {stream}: audio chunk at {pts} overlaps the previous one ending at {end}"
+            )));
         }
         self.write_raw(stream, pts, true, samples, None)?;
         self.audio_end[stream as usize] = pts + frames;
@@ -144,12 +175,19 @@ impl<W: Write + Seek> Writer<W> {
 
     /// Writes one cue starting at `pts` to a cue stream.
     pub fn write_cue(&mut self, stream: u16, pts: u64, cue: &Cue) -> Result<()> {
-        if !matches!(self.streams.get(stream as usize).map(|s| &s.params), Some(StreamParams::Cues(_))) {
-            return Err(Error::Invalid(format!("stream {stream} is not a cue stream")));
+        if !matches!(
+            self.streams.get(stream as usize).map(|s| &s.params),
+            Some(StreamParams::Cues(_))
+        ) {
+            return Err(Error::Invalid(format!(
+                "stream {stream} is not a cue stream"
+            )));
         }
         let mut payload = std::mem::take(&mut self.cue_payload);
         payload.clear();
-        let result = cue.encode(&mut payload).and_then(|()| self.write_raw(stream, pts, true, &payload, None));
+        let result = cue
+            .encode(&mut payload)
+            .and_then(|()| self.write_raw(stream, pts, true, &payload, None));
         self.cue_payload = payload;
         result?;
         if let StreamParams::Cues(c) = &mut self.streams[stream as usize].params {
@@ -175,7 +213,8 @@ impl<W: Write + Seek> Writer<W> {
         // (prefix, block bytes) when the payload can take the byte-plane form.
         let plane_layout = match &info.params {
             StreamParams::Video(v) if v.format != TextureFormat::Motion => {
-                let (prefix, block_bytes) = (v.plane_prefix(keyframe), v.format.block_bytes() as usize);
+                let (prefix, block_bytes) =
+                    (v.plane_prefix(keyframe), v.format.block_bytes() as usize);
                 (payload.len() >= prefix && (payload.len() - prefix).is_multiple_of(block_bytes))
                     .then_some((prefix, block_bytes))
             }
@@ -187,12 +226,21 @@ impl<W: Write + Seek> Writer<W> {
             w.planes[..prefix].copy_from_slice(&payload[..prefix]);
             to_planes(&payload[prefix..], block_bytes, &mut w.planes[prefix..]);
             w.planes_stored.clear();
-            encode_sections(&w.planes, prefix, block_bytes, w.plane_min_saving, &mut w.planes_stored, &mut w.huff);
+            encode_sections(
+                &w.planes,
+                prefix,
+                block_bytes,
+                w.plane_min_saving,
+                &mut w.planes_stored,
+                &mut w.huff,
+            );
         };
         let compression = match compression {
             Some(Compression::Planes) => {
                 let layout = plane_layout.ok_or_else(|| {
-                    Error::Invalid(format!("stream {stream}: byte planes need a video payload of whole blocks"))
+                    Error::Invalid(format!(
+                        "stream {stream}: byte planes need a video payload of whole blocks"
+                    ))
                 })?;
                 planes(self, layout);
                 Compression::Planes
@@ -204,14 +252,19 @@ impl<W: Write + Seek> Writer<W> {
             }
             None => {
                 self.scratch = lz4_flex::block::compress(payload);
-                let mut best = if self.scratch.len() < payload.len() { Compression::Lz4 } else { Compression::None };
+                let mut best = if self.scratch.len() < payload.len() {
+                    Compression::Lz4
+                } else {
+                    Compression::None
+                };
                 if let Some(layout) = plane_layout
                     && self.plane_min_saving < 100.0
                 {
                     planes(self, layout);
                     let other = self.scratch.len().min(payload.len());
                     let limit = other as f64 * (1.0 - self.plane_min_saving / 100.0);
-                    if self.planes_stored.len() < other && self.planes_stored.len() as f64 <= limit {
+                    if self.planes_stored.len() < other && self.planes_stored.len() as f64 <= limit
+                    {
                         best = Compression::Planes;
                     }
                 }
@@ -226,7 +279,15 @@ impl<W: Write + Seek> Writer<W> {
         };
         let stored = buffer.as_deref().unwrap_or(payload);
         let flags = if keyframe { CHUNK_FLAG_KEYFRAME } else { 0 };
-        let result = self.emit(stream, pts, time_us, flags, compression, stored, payload.len() as u32);
+        let result = self.emit(
+            stream,
+            pts,
+            time_us,
+            flags,
+            compression,
+            stored,
+            payload.len() as u32,
+        );
         match (compression, buffer) {
             (Compression::Lz4, Some(b)) => self.scratch = b,
             (Compression::Planes, Some(b)) => self.planes_stored = b,
@@ -239,14 +300,31 @@ impl<W: Write + Seek> Writer<W> {
     /// [`crate::Reader::read_stored`] from a file with the same stream at `chunk.stream`.
     /// Only the stream and decode-time order are checked; the payload is trusted.
     pub fn copy_chunk(&mut self, chunk: &ChunkHeader, stored: &[u8]) -> Result<()> {
-        if let Some(StreamParams::Cues(_)) = self.streams.get(chunk.stream as usize).map(|s| &s.params) {
-            return Err(Error::Invalid(format!("stream {} is a cue stream, use write_cue", chunk.stream)));
+        if let Some(StreamParams::Cues(_)) =
+            self.streams.get(chunk.stream as usize).map(|s| &s.params)
+        {
+            return Err(Error::Invalid(format!(
+                "stream {} is a cue stream, use write_cue",
+                chunk.stream
+            )));
         }
         if stored.len() != chunk.stored_size as usize {
-            return Err(Error::Invalid(format!("{} stored bytes for a chunk of {}", stored.len(), chunk.stored_size)));
+            return Err(Error::Invalid(format!(
+                "{} stored bytes for a chunk of {}",
+                stored.len(),
+                chunk.stored_size
+            )));
         }
         let time_us = self.check_order(chunk.stream, chunk.pts)?;
-        self.emit(chunk.stream, chunk.pts, time_us, chunk.flags, chunk.compression, stored, chunk.raw_size)
+        self.emit(
+            chunk.stream,
+            chunk.pts,
+            time_us,
+            chunk.flags,
+            chunk.compression,
+            stored,
+            chunk.raw_size,
+        )
     }
 
     /// Checks that a chunk of `stream` at `pts` may come next; returns its decode time.
@@ -258,11 +336,15 @@ impl<W: Write + Seek> Writer<W> {
         if let Some(last) = self.last_pts[stream as usize]
             && (pts < last || (pts == last && !is_cue))
         {
-            return Err(Error::Invalid(format!("stream {stream}: pts {pts} after {last} breaks stream order")));
+            return Err(Error::Invalid(format!(
+                "stream {stream}: pts {pts} after {last} breaks stream order"
+            )));
         }
         let time_us = info.decode_time_us(pts);
         if time_us < self.last_time_us {
-            return Err(Error::Invalid(format!("stream {stream}: chunk due at {time_us} us written out of order")));
+            return Err(Error::Invalid(format!(
+                "stream {stream}: chunk due at {time_us} us written out of order"
+            )));
         }
         Ok(time_us)
     }
@@ -296,7 +378,11 @@ impl<W: Write + Seek> Writer<W> {
             StreamParams::Unknown(_) => false,
         };
         if indexed {
-            self.index.push(IndexEntry { stream, pts, offset: self.offset });
+            self.index.push(IndexEntry {
+                stream,
+                pts,
+                offset: self.offset,
+            });
         }
         self.offset += CHUNK_HEADER_SIZE + stored.len() as u64;
         self.streams[stream as usize].chunk_count += 1;

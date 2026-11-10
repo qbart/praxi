@@ -4008,6 +4008,7 @@ name = "praxi"
 version = "0.1.0"
 dependencies = [
  "praxi-format",
+ "serde",
 ]
 
 [[package]]

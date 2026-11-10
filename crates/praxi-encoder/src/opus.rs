@@ -37,11 +37,20 @@ impl Encoder {
         let rate = opus::sample_rate(params.sample_rate).expect("checked");
         let channels = params.channels as usize;
         let l = opus::layout(channels, params.channel_mask);
-        let mut inner = MultistreamEncoder::new(rate, channels, l.streams, l.coupled, &l.mapping, Application::Audio)
-            .map_err(|e| format!("opus encoder: {e}"))?;
+        let mut inner = MultistreamEncoder::new(
+            rate,
+            channels,
+            l.streams,
+            l.coupled,
+            &l.mapping,
+            Application::Audio,
+        )
+        .map_err(|e| format!("opus encoder: {e}"))?;
         let bitrate = NonZeroU32::new(bitrate).ok_or("opus bitrate must not be zero")?;
         inner.set_bitrate(Bitrate::BitsPerSecond(bitrate));
-        inner.set_complexity(10).map_err(|e| format!("opus encoder: {e}"))?;
+        inner
+            .set_complexity(10)
+            .map_err(|e| format!("opus encoder: {e}"))?;
         if let Some(s) = l.lfe_stream
             && let Some(e) = inner.stream_encoder_mut(s)
         {
@@ -80,7 +89,12 @@ impl Encoder {
     /// chunk payload of them to `out`. With `end`, the source is exhausted: the input is
     /// padded with silence so that the decoded output covers its last frame. Returns the
     /// chunk's pts and frame count, or `None` when it has no frames to keep.
-    pub fn chunk(&mut self, samples: &[f32], end: bool, out: &mut Vec<u8>) -> Result<Option<(u64, u64)>, String> {
+    pub fn chunk(
+        &mut self,
+        samples: &[f32],
+        end: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<Option<(u64, u64)>, String> {
         let (ch, n) = (self.channels, self.packet);
         self.input.extend_from_slice(samples);
         self.source_frames += (samples.len() / ch) as u64;
@@ -95,7 +109,11 @@ impl Encoder {
         for i in 0..count {
             let len = self
                 .inner
-                .encode(&self.input[i * n * ch..(i + 1) * n * ch], n, &mut self.scratch)
+                .encode(
+                    &self.input[i * n * ch..(i + 1) * n * ch],
+                    n,
+                    &mut self.scratch,
+                )
                 .map_err(|e| format!("opus encoder: {e}"))?;
             self.out.push(self.scratch[..len].to_vec());
         }

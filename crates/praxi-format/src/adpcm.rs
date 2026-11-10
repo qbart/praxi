@@ -52,7 +52,9 @@ pub struct Encoder {
 
 impl Encoder {
     pub fn new(channels: usize) -> Encoder {
-        Encoder { history: vec![(0, 0); channels] }
+        Encoder {
+            history: vec![(0, 0); channels],
+        }
     }
 
     /// Appends the payload of `samples`, interleaved whole frames, to `out`.
@@ -112,7 +114,8 @@ fn encode_block(x: &[i32], history: &mut (i16, i16)) -> [u8; BLOCK_BYTES] {
 /// Decodes a payload of `channels` channels into `out`, as interleaved samples in
 /// `[-1, 1]`.
 pub fn decode(payload: &[u8], channels: usize, out: &mut Vec<f32>) -> Result<(), &'static str> {
-    let frames = frames(payload, channels).ok_or("ADPCM payload size does not match its frame count")? as usize;
+    let frames = frames(payload, channels)
+        .ok_or("ADPCM payload size does not match its frame count")? as usize;
     let ch = channels;
     out.clear();
     out.resize(frames * ch, 0.0);
@@ -172,7 +175,11 @@ mod tests {
         let mut decoded = Vec::new();
         decode(&whole, 3, &mut decoded).unwrap();
         assert_eq!(decoded.len(), 3000);
-        assert!(snr(&samples, &decoded) > 40.0, "snr {}", snr(&samples, &decoded));
+        assert!(
+            snr(&samples, &decoded) > 40.0,
+            "snr {}",
+            snr(&samples, &decoded)
+        );
 
         // Chunks on block boundaries decode to exactly the same samples.
         let mut enc = Encoder::new(3);
@@ -192,10 +199,16 @@ mod tests {
         for part in samples.chunks(3 * 333) {
             let mut payload = Vec::new();
             enc.encode(part, &mut payload);
-            let history: Vec<i16> = payload[4..16].chunks(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+            let history: Vec<i16> = payload[4..16]
+                .chunks(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                .collect();
             let expected: Vec<i16> = match chunked.len() {
                 0 => vec![0; 6],
-                n => (0..3).flat_map(|c| [chunked[n - 3 + c], chunked[n - 6 + c]]).map(|v| (v * 32768.0) as i16).collect(),
+                n => (0..3)
+                    .flat_map(|c| [chunked[n - 3 + c], chunked[n - 6 + c]])
+                    .map(|v| (v * 32768.0) as i16)
+                    .collect(),
             };
             assert_eq!(history, expected);
             let mut out = Vec::new();
@@ -207,7 +220,9 @@ mod tests {
 
     #[test]
     fn handles_extremes() {
-        let samples: Vec<i16> = (0..64).map(|i| if i % 2 == 0 { i16::MAX } else { i16::MIN }).collect();
+        let samples: Vec<i16> = (0..64)
+            .map(|i| if i % 2 == 0 { i16::MAX } else { i16::MIN })
+            .collect();
         let mut payload = Vec::new();
         Encoder::new(1).encode(&samples, &mut payload);
         let mut out = Vec::new();
@@ -221,8 +236,14 @@ mod tests {
         let mut payload = Vec::new();
         Encoder::new(2).encode(&tone(20, 2), &mut payload);
         let mut out = Vec::new();
-        assert!(decode(&payload[..payload.len() - 1], 2, &mut out).is_err(), "short");
-        assert!(decode(&payload, 1, &mut out).is_err(), "wrong channel count");
+        assert!(
+            decode(&payload[..payload.len() - 1], 2, &mut out).is_err(),
+            "short"
+        );
+        assert!(
+            decode(&payload, 1, &mut out).is_err(),
+            "wrong channel count"
+        );
         let mut zero = payload.clone();
         zero[..4].copy_from_slice(&0u32.to_le_bytes());
         assert!(decode(&zero, 2, &mut out).is_err(), "no frames");

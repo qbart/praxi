@@ -28,7 +28,14 @@ pub fn sample_rate(rate: u32) -> Option<SampleRate> {
 }
 
 /// Speaker pairs coded as stereo streams, in stream order.
-const PAIRS: [(u32, u32); 6] = [(0x1, 0x2), (0x10, 0x20), (0x40, 0x80), (0x200, 0x400), (0x1000, 0x4000), (0x8000, 0x20000)];
+const PAIRS: [(u32, u32); 6] = [
+    (0x1, 0x2),
+    (0x10, 0x20),
+    (0x40, 0x80),
+    (0x200, 0x400),
+    (0x1000, 0x4000),
+    (0x8000, 0x20000),
+];
 const LFE: u32 = 0x8;
 
 /// The multistream layout of a stream.
@@ -48,7 +55,12 @@ pub fn layout(channels: usize, mask: u32) -> Layout {
     let channel_of = |bit: u32| (mask & (bit - 1)).count_ones() as usize;
     let mut pairs = Vec::new();
     if mask != 0 {
-        pairs.extend(PAIRS.iter().filter(|(l, r)| mask & l != 0 && mask & r != 0).map(|&(l, r)| (channel_of(l), channel_of(r))));
+        pairs.extend(
+            PAIRS
+                .iter()
+                .filter(|(l, r)| mask & l != 0 && mask & r != 0)
+                .map(|&(l, r)| (channel_of(l), channel_of(r))),
+        );
     } else if channels == 2 {
         pairs.push((0, 1));
     }
@@ -69,7 +81,12 @@ pub fn layout(channels: usize, mask: u32) -> Layout {
             mono += 1;
         }
     }
-    Layout { streams: coupled + mono, coupled, mapping, lfe_stream }
+    Layout {
+        streams: coupled + mono,
+        coupled,
+        mapping,
+        lfe_stream,
+    }
 }
 
 /// `frames`, `skip` and the packets of a payload, if it is well formed.
@@ -127,11 +144,19 @@ pub struct Decoder {
 
 impl Decoder {
     pub fn new(params: &AudioParams) -> Result<Decoder, String> {
-        let rate = sample_rate(params.sample_rate).ok_or_else(|| format!("{} Hz is not an Opus rate", params.sample_rate))?;
+        let rate = sample_rate(params.sample_rate)
+            .ok_or_else(|| format!("{} Hz is not an Opus rate", params.sample_rate))?;
         let channels = params.channels as usize;
         let l = layout(channels, params.channel_mask);
-        let inner = MultistreamDecoder::new(rate, channels, l.streams, l.coupled, &l.mapping).map_err(|e| format!("opus layout: {e}"))?;
-        Ok(Decoder { inner, channels, max_frames: max_packet_frames(params.sample_rate), next_pts: None, decoded: Vec::new() })
+        let inner = MultistreamDecoder::new(rate, channels, l.streams, l.coupled, &l.mapping)
+            .map_err(|e| format!("opus layout: {e}"))?;
+        Ok(Decoder {
+            inner,
+            channels,
+            max_frames: max_packet_frames(params.sample_rate),
+            next_pts: None,
+            decoded: Vec::new(),
+        })
     }
 
     /// The pts of the chunk that continues this decoder's state, `None` while fresh.
@@ -147,13 +172,17 @@ impl Decoder {
 
     /// Decodes the chunk at `pts` into `out`: its frames, interleaved.
     pub fn decode(&mut self, pts: u64, payload: &[u8], out: &mut Vec<f32>) -> Result<(), String> {
-        let (frames, skip, packets) = parse(payload).ok_or_else(|| format!("{} bytes is not a valid opus payload", payload.len()))?;
+        let (frames, skip, packets) = parse(payload)
+            .ok_or_else(|| format!("{} bytes is not a valid opus payload", payload.len()))?;
         let ch = self.channels;
         self.decoded.clear();
         for packet in packets {
             let start = self.decoded.len();
             self.decoded.resize(start + self.max_frames * ch, 0.0);
-            match self.inner.decode(packet, self.max_frames, &mut self.decoded[start..]) {
+            match self
+                .inner
+                .decode(packet, self.max_frames, &mut self.decoded[start..])
+            {
                 Ok(n) => self.decoded.truncate(start + n * ch),
                 Err(e) => {
                     self.reset();
@@ -164,7 +193,11 @@ impl Decoder {
         let (skip, frames) = (skip as usize, frames as usize);
         if (skip + frames) * ch > self.decoded.len() {
             self.reset();
-            return Err(format!("opus chunk keeps {} frames after {skip} but decodes {}", frames, self.decoded.len() / ch));
+            return Err(format!(
+                "opus chunk keeps {} frames after {skip} but decodes {}",
+                frames,
+                self.decoded.len() / ch
+            ));
         }
         out.clear();
         out.extend_from_slice(&self.decoded[skip * ch..(skip + frames) * ch]);

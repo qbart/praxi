@@ -5,8 +5,10 @@ version.workspace = true
 edition.workspace = true
 
 [features]
+# Cues into game types (docs/features/cue-runtime.md#typed-cues).
+serde = ["dep:serde"]
 # Cue sheets (docs/spec/CUESHEET.md).
-cue-sheet = ["dep:serde", "dep:serde_json"]
+cue-sheet = ["serde", "dep:serde_json"]
 
 [dependencies]
 lz4_flex.workspace = true
