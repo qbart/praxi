@@ -592,8 +592,10 @@ mod tests {
             let frame = player.video_frame(0).unwrap();
             let cpu = praxi_encoder::decode_frame(&player.tracks()[0].params, frame.data).unwrap();
             let worst = gpu.iter().zip(&cpu).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
-            // The sampler decodes sRGB to linear and the target encodes it back.
-            assert!(worst <= 1, "{format}: a channel differs by {worst}");
+            // The sampler decodes sRGB to linear and the target encodes it back. BC1 hardware rounds its
+            // interpolated palette colors its own way (D3D allows it, unlike BC7 and ASTC): a few steps more.
+            let limit = if format == TextureFormat::Bc1 { 4 } else { 1 };
+            assert!(worst <= limit, "{format}: a channel differs by {worst}");
             drawn.push(format);
         }
         eprintln!("drawn: {drawn:?}");

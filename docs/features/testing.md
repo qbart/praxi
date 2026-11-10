@@ -28,7 +28,7 @@ value these tests fail instead, which shows they all ran.
 | Test | Needs |
 |---|---|
 | `praxi-wgpu`: `motion_decoder_matches_reference` | An adapter that runs compute shaders (lavapipe/llvmpipe works). `WGPU_ADAPTER_NAME` picks one. |
-| `praxi-wgpu`: `block_formats_draw_like_the_cpu_decoder` | An adapter with BC or ASTC compression; draws every encoded block format the adapter samples (BC7, BC1, ASTC 4x4, ASTC 6x6) and compares with the CPU decoder. |
+| `praxi-wgpu`: `block_formats_draw_like_the_cpu_decoder` | An adapter with BC or ASTC compression; draws every encoded block format the adapter samples (BC7, BC1, ASTC 4x4, ASTC 6x6) and compares with the CPU decoder: within 1 per channel (the sRGB round trip), BC1 within 4, since GPUs round its interpolated colors their own way. |
 | `praxi-cli`: `tests/cli.rs` | `ffmpeg` and `ffprobe` on `PATH` |
 | `praxi-bevy`: `plays_into_the_image_and_sends_events` | An adapter (the motion clip also needs compute shaders) |
 
