@@ -30,31 +30,30 @@ impl Device {
         self.device.default_output_config().ok().map(|c| c.channels())
     }
 
-    /// Starts a stream that plays the sum of `outputs`: at `outputs[0]`'s rate and channel
-    /// count when the device supports them, otherwise at the device's default
-    /// configuration, each output converted to it.
+    /// Starts a stream that plays the sum of `outputs` at the device's default rate and
+    /// channel count, each output converted to it. A device can accept other rates without
+    /// playing at them, so the outputs' own formats are not asked for.
     pub fn start(&self, outputs: Vec<AudioOutput>, muted: Arc<AtomicBool>) -> Result<Stream, String> {
-        let first = outputs.first().ok_or("no audio outputs")?;
-        let (rate, channels) = (first.sample_rate(), u16::try_from(first.channels()).map_err(|_| "too many channels")?);
+        if outputs.is_empty() {
+            return Err("no audio outputs".into());
+        }
+        let default = self.device.default_output_config().map_err(|e| e.to_string())?;
+        let (rate, channels) = (default.sample_rate(), default.channels());
         let rank = |f: cpal::SampleFormat| match f {
             cpal::SampleFormat::F32 => 0,
             cpal::SampleFormat::I16 => 1,
             cpal::SampleFormat::I32 => 2,
             _ => 3,
         };
-        let native = self
+        let format = self
             .device
             .supported_output_configs()
             .map_err(|e| e.to_string())?
             .filter(|c| c.channels() == channels && (c.min_sample_rate()..=c.max_sample_rate()).contains(&rate))
-            .min_by_key(|c| rank(c.sample_format()));
-        let (config, format) = match native {
-            Some(c) => (cpal::StreamConfig { channels, sample_rate: rate, buffer_size: cpal::BufferSize::Default }, c.sample_format()),
-            None => {
-                let c = self.device.default_output_config().map_err(|e| e.to_string())?;
-                (c.config(), c.sample_format())
-            }
-        };
+            .map(|c| c.sample_format())
+            .min_by_key(|&f| rank(f))
+            .unwrap_or(default.sample_format());
+        let config = default.config();
         let latency_us = Arc::new(AtomicU64::new(0));
         let stream = match format {
             cpal::SampleFormat::F32 => self.build::<f32>(config, outputs, muted, latency_us.clone()),

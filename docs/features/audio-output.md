@@ -23,9 +23,17 @@ included `crates/praxi-viewer/src/audio.rs` by path.
 
 ## Stream format
 
-`start` opens the device at the rate and channel count of `outputs[0]` when the device
-supports them, so the common case converts nothing. Otherwise it opens the device's
-default configuration. Sample formats are `f32`, `i16` or `i32`, preferred in that order.
+`start` opens the device at the rate and channel count of its default configuration: the
+format the sound server or hardware actually runs at. Of the sample formats the device
+supports at that rate and channel count, `f32`, `i16` and `i32` are preferred in that
+order; otherwise the default configuration's own format is used.
+
+It does not ask for `outputs[0]`'s format, even when the device lists it as supported.
+Before, it did, to convert nothing in the common case, but a device can accept a rate it
+does not play at: on Linux, ALSA's `default` device through PipeWire opened at 44.1 kHz
+and played the samples at its own 48 kHz, so 44.1 kHz tracks sounded about 9% high, while
+48 kHz tracks were right. praxi's resampler now converts every track whose rate differs
+from the device's.
 
 Each output is then converted to the stream format on its own, so tracks with different
 rates and channel counts all play (before, only tracks matching track 0 played, and
@@ -46,3 +54,8 @@ The resampler and channel mapping are pure functions, tested without a device: a
 resampled from 48 kHz to 44.1 kHz and back keeps its frequency and amplitude, equal rates
 pass samples through unchanged, the output length follows the rate ratio over many
 callbacks without drift, and every channel mapping above.
+
+The stream format is a manual check on a desktop ([testing.md](testing.md#manual-checks)):
+two files with the same tones at 48 kHz (`--audio-format opus`) and 44.1 kHz
+(`--audio-format adpcm`) must sound the same, and the viewer prints
+`audio 0: converted from 44100 Hz 2 ch` for the second on a 48 kHz device.

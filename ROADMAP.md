@@ -22,6 +22,9 @@ The code is done and tested; these were never run where they matter.
   ([audio-output.md](docs/features/audio-output.md)). An ALSA file capture on a null sink
   runs much faster than real time and showed nothing; listen on a desktop, or record a
   PipeWire virtual sink and check the tones' frequencies.
+  First listen (Linux, PipeWire, RTX 5090): Opus at 48 kHz right, ADPCM at 44.1 kHz pitched
+  high, because the device was opened at 44.1 kHz and played at 48 kHz. `praxi-audio` now
+  always opens the device's default format and resamples; listen again.
 
 ## 2. Opus
 

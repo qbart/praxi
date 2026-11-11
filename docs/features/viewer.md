@@ -89,8 +89,7 @@ adapter, backend and the selected variant of every track at start-up.
   latency from cpal's callback and playback timestamps); `--clock game` keeps the wall
   clock as master.
 - Every audio track is mixed (summed) into one output stream through `praxi-audio`
-  ([audio-output.md](audio-output.md)): at audio track 0's rate and channel count when the
-  device supports them, otherwise at the device's default configuration, each track
+  ([audio-output.md](audio-output.md)) at the device's default configuration, each track
   converted to it. The viewer prints the stream format and which tracks are converted;
   if the device cannot be opened, it prints why and plays without sound.
 - Events are printed to stdout with the position, for example
