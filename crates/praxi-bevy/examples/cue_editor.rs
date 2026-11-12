@@ -27,6 +27,8 @@ struct Args {
 const MAX_EVENTS: usize = 20;
 const RULER_H: f32 = 20.0;
 const LANE_H: f32 = 26.0;
+/// How long an instantaneous cue's marker stays on the video.
+const INSTANT_MARKER_US: u64 = 500_000;
 /// Lane colours, cycled by stream index, as in `praxi-editor`: Cornflower, Periwinkle,
 /// Orchid, Coral, Peach, Gold, Leaf, Turquoise, Cyan.
 const LANE_COLORS: [egui::Color32; 9] = [
@@ -92,6 +94,8 @@ struct Draft {
     name: String,
     fields: Vec<(String, String)>,
     new_key: String,
+    /// The position being dragged in the inspector, applied when the drag ends.
+    position: Option<(f32, f32)>,
 }
 
 #[derive(Resource)]
@@ -109,6 +113,10 @@ struct Editor {
     /// The video's size, for letterboxing.
     video_size: egui::Vec2,
     dirty: bool,
+    /// The selection the position picker is armed for; disarmed when it changes.
+    picking: Option<Selection>,
+    /// A marker being dragged on the video: its cue and position so far.
+    marker_drag: Option<(Selection, (f32, f32))>,
 }
 
 impl Editor {
@@ -127,6 +135,8 @@ impl Editor {
             frame_us: 1,
             video_size: egui::vec2(16.0, 9.0),
             dirty: false,
+            picking: None,
+            marker_drag: None,
         }
     }
 
@@ -148,6 +158,23 @@ impl Editor {
         self.draft = None;
         self.dirty = true;
         video.player().replace_cues(self.tracks.clone());
+    }
+
+    /// Whether the position picker is armed for the selected cue.
+    fn picking(&self) -> bool {
+        self.picking == Some(self.selected) && matches!(self.selected, Selection::Cue(..))
+    }
+
+    /// Sets or removes the selected cue's position on the video.
+    fn set_position(&mut self, video: &mut PraxiVideo, position: Option<(f32, f32)>) {
+        if let Selection::Cue(s, c) = self.selected {
+            let cue = &mut self.tracks[s].cues[c].cue;
+            let before = cue.clone();
+            cue.set_position(position);
+            if *cue != before {
+                self.changed(video);
+            }
+        }
     }
 
     fn save(&mut self) {
@@ -225,16 +252,109 @@ fn ui(mut contexts: EguiContexts, mut editor: ResMut<Editor>, video: Option<Sing
     egui::Panel::bottom("timeline").exact_size(RULER_H + LANE_H * editor.tracks.len().max(1) as f32 + 16.0).show(&mut root, |ui| timeline(ui, editor, video));
     egui::Panel::right("inspector").default_size(320.0).show(&mut root, |ui| inspector(ui, editor, video));
     egui::CentralPanel::default().show(&mut root, |ui| {
-        let avail = ui.available_size();
-        let scale = (avail.x / editor.video_size.x).min(avail.y / editor.video_size.y);
-        let size = editor.video_size * scale;
-        ui.centered_and_justified(|ui| {
-            if let Some(id) = editor.texture {
-                ui.add(egui::Image::new(egui::load::SizedTexture::new(id, size)));
-            }
-        });
+        let panel = ui.available_rect_before_wrap();
+        let scale = (panel.width() / editor.video_size.x).min(panel.height() / editor.video_size.y);
+        let rect = egui::Rect::from_center_size(panel.center(), editor.video_size * scale);
+        ui.allocate_rect(panel, egui::Sense::hover());
+        if let Some(id) = editor.texture {
+            egui::Image::new(egui::load::SizedTexture::new(id, rect.size())).paint_at(ui, rect);
+        }
+        annotations(ui, editor, video, rect, panel);
     });
     Ok(())
+}
+
+/// The cue's type and first non-empty string field, as `praxi-editor` labels it.
+fn label(cue: &Cue) -> String {
+    let text = cue.fields.iter().find_map(|(_, v)| match v {
+        Value::String(s) if !s.is_empty() => Some(s.replace('\n', " ")),
+        _ => None,
+    });
+    match text {
+        Some(t) => format!("{}: {t}", cue.kind),
+        None => cue.kind.clone(),
+    }
+}
+
+fn round3(v: f32) -> f32 {
+    (v * 1000.0).round() / 1000.0
+}
+
+/// Markers of positioned cues on the video, the position picker and marker dragging
+/// (`docs/features/bevy.md#cue-editor-example`).
+fn annotations(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo, rect: egui::Rect, panel: egui::Rect) {
+    let to_screen = |(x, y): (f32, f32)| rect.min + egui::vec2(x * rect.width(), y * rect.height());
+    let to_video = |p: egui::Pos2| {
+        let coord = |v: f32, start: f32, size: f32| round3(((v - start) / size.max(1.0)).clamp(0.0, 1.0));
+        (coord(p.x, rect.left(), rect.width()), coord(p.y, rect.top(), rect.height()))
+    };
+    let picking = editor.picking();
+    if picking {
+        let pick = ui.interact(panel, ui.id().with("pick"), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::Crosshair);
+        if pick.clicked()
+            && let Some(p) = pick.interact_pointer_pos()
+        {
+            editor.picking = None;
+            editor.set_position(video, Some(to_video(p)));
+        }
+    }
+
+    // Positioned cues active at the playhead, and the selected one; selected drawn last.
+    let at = video.player().position().as_micros() as u64;
+    let mut markers = Vec::new();
+    for (s, track) in editor.tracks.iter().enumerate() {
+        for (c, cue) in track.cues.iter().enumerate() {
+            let selected = editor.selected == Selection::Cue(s, c);
+            let end = cue.time_us.saturating_add(if cue.cue.duration > 0 { cue.cue.duration } else { INSTANT_MARKER_US });
+            if !selected && !(cue.time_us <= at && at < end) {
+                continue;
+            }
+            let position = match editor.marker_drag {
+                Some((of, p)) if of == Selection::Cue(s, c) => Some(p),
+                _ => cue.cue.position(),
+            };
+            if let Some(position) = position {
+                markers.push((s, c, selected, position, label(&cue.cue)));
+            }
+        }
+    }
+    markers.sort_by_key(|m| m.2);
+
+    let painter = ui.painter_at(panel);
+    let outline = egui::Stroke::new(1.5, egui::Color32::from_gray(24));
+    let ring = egui::Stroke::new(2.0, ui.visuals().strong_text_color());
+    for (s, c, selected, position, text) in markers {
+        let p = to_screen(position);
+        let r = if selected { 8.0 } else { 6.0 };
+        painter.circle(p, r, LANE_COLORS[s % LANE_COLORS.len()], outline);
+        if selected {
+            painter.circle_stroke(p, r + 3.0, ring);
+        }
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(13.0), egui::Color32::from_gray(235));
+        let text_at = p + egui::vec2(r + 8.0, -galley.size().y / 2.0);
+        painter.rect_filled(egui::Rect::from_min_size(text_at, galley.size()).expand(4.0), 4.0, egui::Color32::from_black_alpha(190));
+        painter.galley(text_at, galley, egui::Color32::WHITE);
+        if picking {
+            continue;
+        }
+        let sense = if selected { egui::Sense::click_and_drag() } else { egui::Sense::click() };
+        let hit = ui.interact(egui::Rect::from_center_size(p, egui::Vec2::splat(r * 2.0 + 8.0)), ui.id().with(("marker", s, c)), sense);
+        if selected {
+            let hit = hit.on_hover_cursor(egui::CursorIcon::Grab);
+            if hit.dragged()
+                && let Some(p) = hit.interact_pointer_pos()
+            {
+                editor.marker_drag = Some((Selection::Cue(s, c), to_video(p)));
+            }
+            if hit.drag_stopped()
+                && let Some((_, p)) = editor.marker_drag.take()
+            {
+                editor.set_position(video, Some(p));
+            }
+        } else if hit.clicked() {
+            editor.selected = Selection::Cue(s, c);
+        }
+    }
 }
 
 fn keys_input(editor: &mut Editor, video: &mut PraxiVideo, keys: &ButtonInput<KeyCode>) {
@@ -249,6 +369,9 @@ fn keys_input(editor: &mut Editor, video: &mut PraxiVideo, keys: &ButtonInput<Ke
     }
     if keys.just_pressed(KeyCode::Delete) {
         delete_selected(editor, video);
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        editor.picking = None;
     }
 }
 
@@ -370,6 +493,7 @@ fn draft_for(editor: &Editor) -> Draft {
         name: String::new(),
         fields: Vec::new(),
         new_key: String::new(),
+        position: None,
     };
     match editor.selected {
         Selection::Cue(s, c) => {
@@ -377,13 +501,20 @@ fn draft_for(editor: &Editor) -> Draft {
             d.start = format!("{:.6}", cue.time_us as f64 / 1e6);
             d.duration = format!("{:.6}", cue.cue.duration as f64 / 1e6);
             d.kind = cue.cue.kind.clone();
+            d.position = cue.cue.position();
             d.fields = cue
                 .cue
                 .fields
                 .iter()
-                .map(|(k, v)| match v {
-                    Value::String(s) => (k.clone(), s.clone()),
-                    other => (k.clone(), format!("{other:?}")),
+                .map(|(k, v)| {
+                    let text = match v {
+                        Value::String(s) => s.clone(),
+                        Value::Int(v) => v.to_string(),
+                        Value::Float(v) => v.to_string(),
+                        Value::Bool(v) => v.to_string(),
+                        Value::Bytes(b) => format!("<{} bytes>", b.len()),
+                    };
+                    (k.clone(), text)
                 })
                 .collect();
         }
@@ -414,6 +545,9 @@ fn inspector(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
                     commit |= ui.text_edit_singleline(text).lost_focus();
                     ui.end_row();
                 }
+                ui.label("Position");
+                position_row(ui, editor, video, &mut draft);
+                ui.end_row();
             });
             ui.separator();
             ui.label("Fields");
@@ -498,6 +632,32 @@ fn inspector(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
     for e in &editor.events {
         ui.monospace(e);
     }
+}
+
+/// "On screen", the `x` / `y` drag values and Pick for the selected cue
+/// (`docs/features/bevy.md#cue-editor-example`).
+fn position_row(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo, draft: &mut Draft) {
+    ui.horizontal(|ui| {
+        let mut on = draft.position.is_some();
+        if ui.checkbox(&mut on, "On screen").changed() {
+            editor.set_position(video, on.then_some((0.5, 0.5)));
+            *draft = draft_for(editor);
+            return;
+        }
+        let Some((x, y)) = &mut draft.position else { return };
+        let drag = |v| egui::DragValue::new(v).range(0.0..=1.0).speed(0.002).fixed_decimals(3);
+        let dx = ui.add(drag(x).prefix("x "));
+        let dy = ui.add(drag(y).prefix("y "));
+        let position = (round3(*x), round3(*y));
+        if dx.drag_stopped() || dy.drag_stopped() || dx.lost_focus() || dy.lost_focus() {
+            editor.set_position(video, Some(position));
+            *draft = draft_for(editor);
+        }
+        let picking = editor.picking();
+        if ui.selectable_label(picking, "Pick").on_hover_text("Click the video to place the cue (Escape cancels)").clicked() {
+            editor.picking = (!picking).then_some(editor.selected);
+        }
+    });
 }
 
 /// Applies the draft to cue `c` of stream `s` if it is valid; reports why not otherwise.
