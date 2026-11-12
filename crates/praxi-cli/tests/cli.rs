@@ -142,7 +142,9 @@ fn encodes_inspects_and_edits_cues() {
     // Cues: export, add, remove, SRT, import.
     let sheet = praxi(&["cues", "export", file_s]);
     assert!(sheet.contains("\"type\": \"b\""), "{sheet}");
-    praxi(&["cues", "add", file_s, "--cue", "0.7=c", "--stream", "gameplay"]);
+    praxi(&["cues", "add", file_s, "--cue", "0.7=c:label=Here;x=0.25;y=1;n=\"3\"", "--stream", "gameplay"]);
+    let added = praxi(&["cues", "export", file_s]);
+    assert!(added.contains("\"x\": 0.25") && added.contains("\"y\": 1,") && added.contains("\"n\": \"3\""), "typed values: {added}");
     praxi(&["cues", "remove", file_s, "--type", "a"]);
     let cues = |path: &Path| {
         let mut reader = Reader::new(BufReader::new(File::open(path).unwrap())).unwrap();

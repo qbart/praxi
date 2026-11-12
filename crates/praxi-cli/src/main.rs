@@ -225,9 +225,31 @@ fn parse_cue(s: &str) -> Result<CueConfig, String> {
     let mut cue = CueConfig::new(time, kind).duration(duration);
     for field in fields.split(';').filter(|f| !f.is_empty()) {
         let (key, value) = field.split_once('=').ok_or_else(|| format!("expected KEY=VALUE, got {field:?}"))?;
-        cue = cue.field(key, value);
+        cue = cue.field(key, parse_value(value)?);
     }
     Ok(cue)
+}
+
+/// A field value typed on the command line: bool, int, float, or string (quoted to force
+/// one) (`docs/features/cues.md#values-on-the-command-line`).
+fn parse_value(s: &str) -> Result<Value, String> {
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        return Ok(Value::String(s[1..s.len() - 1].to_string()));
+    }
+    match s {
+        "true" => return Ok(Value::Bool(true)),
+        "false" => return Ok(Value::Bool(false)),
+        _ => {}
+    }
+    let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        return s.parse().map(Value::Int).map_err(|_| format!("integer {s} out of range"));
+    }
+    let numeric = s.bytes().any(|b| b.is_ascii_digit()) && s.bytes().all(|b| b.is_ascii_digit() || b"+-.eE".contains(&b));
+    Ok(match s.parse::<f64>() {
+        Ok(v) if numeric => Value::Float(v),
+        _ => Value::String(s.to_string()),
+    })
 }
 
 type AnyResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -756,6 +778,44 @@ fn describe_cue(cue: &Cue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_typed_cue_values() {
+        let v = |s| parse_value(s).unwrap();
+        assert_eq!(v("true"), Value::Bool(true));
+        assert_eq!(v("false"), Value::Bool(false));
+        assert_eq!(v("2"), Value::Int(2));
+        assert_eq!(v("-1"), Value::Int(-1));
+        assert_eq!(v("+7"), Value::Int(7));
+        assert_eq!(v("0.25"), Value::Float(0.25));
+        assert_eq!(v(".5"), Value::Float(0.5));
+        assert_eq!(v("-3.5"), Value::Float(-3.5));
+        assert_eq!(v("1e-3"), Value::Float(0.001));
+        assert_eq!(v("99999999999999999999.0"), Value::Float(1e20));
+        for s in ["red", "", "1.2.3", "2024-01-01", "inf", "nan", "-", "e", "1x", "True", "\"", "0x10"] {
+            assert_eq!(v(s), Value::String(s.into()), "{s:?}");
+        }
+        assert_eq!(v("\"42\""), Value::String("42".into()));
+        assert_eq!(v("\"true\""), Value::String("true".into()));
+        assert_eq!(v("\"a\"b\""), Value::String("a\"b".into()));
+        assert_eq!(v("\"\""), Value::String(String::new()));
+        assert!(parse_value("99999999999999999999").is_err());
+
+        let cue = parse_cue("5.5=marker:label=Look here;x=0.5;y=0;power=2;code=\"7\"").unwrap();
+        let fields: Vec<_> = cue.fields.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+        assert_eq!(
+            fields,
+            [
+                ("label", Value::String("Look here".into())),
+                ("x", Value::Float(0.5)),
+                ("y", Value::Int(0)),
+                ("power", Value::Int(2)),
+                ("code", Value::String("7".into())),
+            ]
+        );
+        let cue = Cue { duration: 0, kind: cue.kind, fields: cue.fields };
+        assert_eq!(cue.position(), Some((0.5, 0.0)));
+    }
 
     #[test]
     fn parses_scale_and_fps() {

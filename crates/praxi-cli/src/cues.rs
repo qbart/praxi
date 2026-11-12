@@ -40,9 +40,9 @@ pub enum CuesCmd {
         /// Field holding the subtitle text.
         #[arg(long, default_value = "text")]
         text_key: String,
-        /// String field added to every cue, KEY=VALUE (repeatable).
+        /// Field added to every cue, KEY=VALUE, the value typed as in --cue (repeatable).
         #[arg(long = "field", value_parser = parse_field)]
-        fields: Vec<(String, String)>,
+        fields: Vec<(String, Value)>,
     },
     /// Add cues to a .praxi file, without a cue sheet.
     Add {
@@ -172,7 +172,7 @@ pub fn run(cmd: CuesCmd) -> AnyResult<()> {
                 .into_iter()
                 .map(|s| {
                     let mut fields = vec![(text_key.clone(), Value::String(s.text))];
-                    fields.extend(extra.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))));
+                    fields.extend(extra.iter().cloned());
                     TimedCue { time_us: s.start_us, cue: Cue { duration: s.end_us - s.start_us, kind: kind.clone(), fields } }
                 })
                 .collect();
@@ -197,9 +197,9 @@ pub fn run(cmd: CuesCmd) -> AnyResult<()> {
     }
 }
 
-fn parse_field(s: &str) -> Result<(String, String), String> {
+fn parse_field(s: &str) -> Result<(String, Value), String> {
     match s.split_once('=') {
-        Some((k, v)) if !k.is_empty() => Ok((k.to_string(), v.to_string())),
+        Some((k, v)) if !k.is_empty() => Ok((k.to_string(), crate::parse_value(v)?)),
         _ => Err(format!("expected KEY=VALUE, got {s:?}")),
     }
 }
@@ -295,7 +295,7 @@ mod tests {
             tracks[0].cues[1],
             TimedCue {
                 time_us: 1_500_000,
-                cue: Cue { duration: 250_000, kind: "boom".into(), fields: vec![("power".into(), Value::String("2".into()))] }
+                cue: Cue { duration: 250_000, kind: "boom".into(), fields: vec![("power".into(), Value::Int(2))] }
             }
         );
         assert!(add_cues(&mut tracks, "cues", &[crate::parse_cue("1=x:k=1;k=2").unwrap()]).is_err(), "duplicate key");
