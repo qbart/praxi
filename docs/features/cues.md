@@ -47,8 +47,9 @@ reserved names:
   ([cue-runtime.md](cue-runtime.md#screen-positions));
   `Cue::set_position(Some((x, y)))` writes both fields as floats (clamped to `0..=1`)
   and `set_position(None)` removes them. The fields keep their order; new fields go last.
-- The encoder CLI's `--cue` and `praxi cues add` write string fields, which do not count as
-  a position. Use the editor or a cue sheet (`"x": 0.25, "y": 0.6`).
+- On the command line (`--cue`, `praxi cues add`) a position is `x=0.25;y=0.6`: the values
+  are read as numbers ([typed values](#values-on-the-command-line)). The editors and cue
+  sheets (`"x": 0.25, "y": 0.6`) set positions too.
 - The cue editor shows positioned cues on the video and picks positions with the mouse
   ([cue-editor.md](cue-editor.md#screen-positions)).
 
@@ -80,7 +81,7 @@ reserved names:
 ## Authoring
 
 - Encoder CLI: `--cue TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]` adds a cue to the
-  stream named `cues`. Values given on the command line are strings. See
+  stream named `cues`, with [typed values](#values-on-the-command-line). See
   [encoder.md](encoder.md).
 - Encoder library: any number of cue streams, typed field values.
 - Cue sheets: `praxi cues export` and `praxi cues import` rewrite the cue streams of an
@@ -88,3 +89,25 @@ reserved names:
   cues without a sheet, and `praxi cues srt` converts subtitles to cues
   ([cue-editing.md](cue-editing.md)). The viewer previews sheets live
   ([cue-preview.md](cue-preview.md)).
+
+### Values on the command line
+
+`--cue` (encoder and `praxi cues add`) and `praxi cues srt --field` read each `VALUE` as
+the first of these that matches:
+
+| Value | Type | Examples |
+|---|---|---|
+| `true` or `false` | bool | `loop=true` |
+| An optional `+` or `-` and digits only | int (`i64`; a larger one is an error) | `power=2`, `x=0`, `layer=-1` |
+| Digits, `.`, `e` / `E` and signs, read as an `f64` | float | `x=0.25`, `gain=-3.5`, `t=1e-3` |
+| In double quotes | string, without the quotes | `code="42"`, `flag="true"` |
+| Anything else, including empty | string | `color=red`, `ver=1.2.3`, `date=2024-01-01` |
+
+- Words like `inf` and `nan` are strings: a float needs a digit and no letters but `e`.
+- Quotes are only the outer pair, with no escapes: `"a"b"` is the string `a"b`. In a
+  shell, quote the whole argument: `--cue '1=x:code="42"'`.
+- `;` separates fields and cannot be in a value; use a cue sheet for such text.
+- So `x=0.5;y=0.3` (or `x=0;y=1`) is a position. Before, every value was a string; a game
+  reading `power=2` as a string now gets an int (`get_str` returns `None`), which
+  `CueEvent::parse` into a number type accepts.
+- Cue sheets are unchanged: JSON says the type itself.

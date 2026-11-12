@@ -21,7 +21,7 @@ praxi info intro.praxi
 | `--keyint <N>` | `60` | Frames between keyframes |
 | `--skip-threshold <T>` | `3` | Temporal skip threshold, see [video-codec.md](video-codec.md) |
 | `--plane-min-saving <PCT>` | `8` | Use byte planes for a chunk, and Huffman for a plane, only when they save at least this many percent over the faster form, see [video-codec.md](video-codec.md#decode-cost-and-writer-policy). `0`: always the smallest form; `100`: never byte planes. |
-| `--cue <SPEC>` (repeatable) | | Cue `TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]`, times in seconds, string values ([cues.md](cues.md)) |
+| `--cue <SPEC>` (repeatable) | | Cue `TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]`, times in seconds; values are bools, ints, floats or strings ([cues.md](cues.md#values-on-the-command-line)) |
 | `--scale <WxH>` | source size | Resize to `W` by `H` pixels. Either side may be `-1`: it follows from the other and the source's aspect ratio, rounded to the nearest pixel (at least 1). |
 | `--fps <N[/D]>` | source rate | Resample to this frame rate, `N` or `N/D` frames per second, by dropping or repeating frames |
 | `--frames <N>` | all | Encode only the first `N` frames (after `--fps`) |

@@ -70,8 +70,23 @@ A simple cue editor: the full editor is `praxi-editor` ([cue-editor.md](cue-edit
 - **Inspector** on the right: the selected cue's start, duration, type and string fields
   (add, edit, remove), Delete, and "Set start to playhead". With a stream selected: its
   name, "Add cue at playhead", "Add stream". Below: the last 20 player events.
+- **Screen positions**, as in the full editor
+  ([cue-editor.md](cue-editor.md#screen-positions)):
+  - Inspector: a Position row under Type. "On screen" gives the cue a position at the
+    centre (`0.5, 0.5`) or removes `x` and `y`. When on, `x` and `y` are drag values in
+    `0..=1` (three decimals), applied when the drag ends or the value loses focus, and
+    **Pick** arms the picker. `x` and `y` also stay in the field list, read only.
+  - Picker: while armed, the pointer over the video is a crosshair and a click sets the
+    selected cue's position to the clicked point (clamped to the video) and disarms it.
+    Pick again, Escape or selecting something else disarms it without a change.
+  - Markers: every positioned cue active at the playhead (instantaneous cues for 0.5 s after
+    their start), and the selected cue at any time, is a dot in its lane's colour with a
+    dark outline and a label (type and first string field) on a dark box. The selected
+    cue's dot is larger, with a ring.
+  - Dragging the selected cue's dot moves it; the position is applied on release. Clicking
+    another cue's dot selects that cue.
 - Keys: Space plays or pauses, Left and Right step one frame, Delete removes the selected
-  cue, when no text field has focus.
+  cue, Escape disarms the picker, when no text field has focus.
 - The sheet is `FILE` with the extension `.cues.json` unless given. If it exists, the
   editor starts from it, otherwise from the cues in the file. Every edit plays back at once
   through `replace_cues`. There is no undo.
@@ -93,4 +108,6 @@ The editor example is a manual check. It also runs under Xvfb on lavapipe:
 `Xvfb :77 &`, then `DISPLAY=:77 cue_editor FILE`, with `xdotool` for input (`xdotool
 windowfocus` first, since there is no window manager to give the window keyboard focus)
 and `ffmpeg -f x11grab` for screenshots. Selecting, playing, editing a type, deleting,
-Save and Write into file were checked that way.
+Save and Write into file were checked that way, and so were positions: turning one on,
+picking, dragging a marker, selecting a cue by its marker and saving the position to the
+sheet.

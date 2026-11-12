@@ -50,7 +50,7 @@ The format is specified in [CUESHEET.md](../spec/CUESHEET.md).
 | `praxi cues export FILE [-o SHEET]` | Writes the cues of every cue stream of `FILE` as a cue sheet, to `SHEET` or standard output. Streams and cues are in file order. |
 | `praxi cues import FILE SHEET... -o OUT` | Writes `OUT`: `FILE` with its cue streams replaced by the streams of the sheets, in sheet order then stream order. `OUT` may be `FILE`: the result goes to a temporary file next to it, renamed over it when complete. |
 | `praxi cues srt SRT [-o SHEET]` | Converts SubRip subtitles to a cue sheet with one stream. |
-| `praxi cues add FILE --cue CUE... [--stream NAME] [-o OUT]` | Adds cues to the stream `NAME` (default `cues`) without a sheet. `CUE` is the encoder's syntax, `TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]` ([encoder.md](encoder.md)), field values are strings. If several streams have that name the first gets the cues; if none has it, a new stream is added after the others. |
+| `praxi cues add FILE --cue CUE... [--stream NAME] [-o OUT]` | Adds cues to the stream `NAME` (default `cues`) without a sheet. `CUE` is the encoder's syntax, `TIME[+DURATION]=TYPE[:KEY=VALUE[;KEY=VALUE...]]` ([encoder.md](encoder.md)), with [typed values](cues.md#values-on-the-command-line). If several streams have that name the first gets the cues; if none has it, a new stream is added after the others. |
 | `praxi cues remove FILE [--stream NAME] [--type TYPE] [--from T] [--to T] [-o OUT]` | Removes the cues matching every filter given: in a stream named `NAME`, of type `TYPE`, starting at `T` seconds or later (`--from`), starting before `T` (`--to`). At least one filter is required. Streams left without cues are removed. |
 
 `cues add` and `cues remove` write `OUT`, by default `FILE` itself, through the same
@@ -60,6 +60,7 @@ imported from an edited sheet:
 
 ```sh
 praxi cues add intro.praxi --cue 2.5=explosion:power=0.8 --cue "4+2.5=light.flash:color=red"
+praxi cues add intro.praxi --stream markers --cue "5.5=marker:label=Look here;x=0.5;y=0.5"
 praxi cues remove intro.praxi --type explosion --from 2 --to 3
 ```
 
@@ -70,7 +71,7 @@ praxi cues remove intro.praxi --type explosion --from 2 --to 3
 | `--stream <NAME>` | `subtitles` | Name of the stream. |
 | `--type <TYPE>` | `subtitle` | Type of every cue. |
 | `--text-key <KEY>` | `text` | Field holding the subtitle text. |
-| `--field <KEY=VALUE>` (repeatable) | | A string field added to every cue after the text, for example `lang=en`. |
+| `--field <KEY=VALUE>` (repeatable) | | A field added to every cue after the text, for example `lang=en`, with [typed values](cues.md#values-on-the-command-line). |
 
 Subtitles are not special to praxi: the converter only produces generic cues that start and
 end with each subtitle and carry its text. The text keeps its line breaks (`\n`) and any
