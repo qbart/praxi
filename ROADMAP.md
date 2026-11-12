@@ -4,9 +4,9 @@ Work in order, top to bottom. Each item gets a spec in `docs/features/` before c
 (AGENTS.md); file format changes go to `docs/spec/`. Done items move to the milestones in
 [docs/features/overview.md](docs/features/overview.md#milestones).
 
-Done so far (M7 to M9): cue editing after encoding, BC1, manual test targets, decode-ahead
-of several frames, `praxi-audio`, Opus audio, the Bevy cue editor and consuming cues at
-runtime.
+Done so far (M7 to M10): cue editing after encoding, BC1, manual test targets, decode-ahead
+of several frames, `praxi-audio`, Opus audio, the Bevy cue editor, consuming cues at
+runtime, typed command-line values and positions in the Bevy cue editor.
 
 ## 1. Checks on real machines
 
@@ -53,12 +53,14 @@ Done ([cue-runtime.md](docs/features/cue-runtime.md)).
 
 ## 4. Cue authoring follow-ups
 
-- [ ] **Positions in the Bevy cue editor**: the Position row, Pick, markers on the video and
-  dragging, as in `praxi-editor` ([cue-editor.md](docs/features/cue-editor.md#screen-positions)).
-- [ ] **Typed values on the command line**: `--cue` and `praxi cues add` store every value
-  as a string, so `x=0.5;y=0.3` is not a position. Read numbers and `true` / `false` as
-  typed values (with a way to force a string, for example quotes), keeping cue sheets as
-  they are.
+Done.
+
+- [x] **Positions in the Bevy cue editor**: the Position row, Pick, markers on the video and
+  dragging, as in `praxi-editor` ([bevy.md](docs/features/bevy.md#cue-editor-example));
+  checked under Xvfb.
+- [x] **Typed values on the command line**: `--cue`, `praxi cues add` and `cues srt
+  --field` read bools, ints and floats, quotes force a string
+  ([cues.md](docs/features/cues.md#values-on-the-command-line)).
 
 ## Not scheduled
 

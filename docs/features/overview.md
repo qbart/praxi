@@ -111,6 +111,9 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
 10. **M9** Cues at runtime: every cue in memory at open, typed cues with serde, active and
     upcoming cues, cue positions mapped to the drawn video, typed cue messages in Bevy, and
     a `cue_game` example ([cue-runtime.md](cue-runtime.md)).
+11. **M10** Cue authoring follow-ups: typed values on the command line, so `x=0.5;y=0.3`
+    is a position ([cues.md](cues.md#values-on-the-command-line)), and positions in the
+    Bevy cue editor ([bevy.md](bevy.md#cue-editor-example)).
 
 ## Next
 
