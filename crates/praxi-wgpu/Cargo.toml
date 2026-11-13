@@ -3,6 +3,7 @@ name = "praxi-wgpu"
 description = "Texture upload and drawing of praxi video for wgpu engines"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true

@@ -3,18 +3,19 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
+rust-version = "1.98"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/qbart/praxi"
 homepage = "https://github.com/qbart/praxi"
 
 [workspace.dependencies]
-praxi = { path = "crates/praxi", version = "0.1.0" }
-praxi-format = { path = "crates/praxi-format", version = "0.1.0" }
-praxi-encoder = { path = "crates/praxi-encoder", version = "0.1.0" }
-praxi-wgpu = { path = "crates/praxi-wgpu", version = "0.1.0" }
-praxi-audio = { path = "crates/praxi-audio", version = "0.1.0" }
+praxi = { path = "crates/praxi", version = "0.1.1" }
+praxi-format = { path = "crates/praxi-format", version = "0.1.1" }
+praxi-encoder = { path = "crates/praxi-encoder", version = "0.1.1" }
+praxi-wgpu = { path = "crates/praxi-wgpu", version = "0.1.1" }
+praxi-audio = { path = "crates/praxi-audio", version = "0.1.1" }
 lz4_flex = "0.14"
 # Opus in pure Rust; the encoder adds the "analysis" feature.
 opus1 = { version = "0.3.0", default-features = false, features = ["std", "heap"] }

@@ -3,6 +3,7 @@ name = "praxi"
 description = "Video player for games: GPU block-compressed frames, events, variants"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -18,3 +19,6 @@ cue-sheet = ["serde", "praxi-format/cue-sheet"]
 [dependencies]
 praxi-format.workspace = true
 serde = { workspace = true, optional = true }
+
+[package.metadata.docs.rs]
+all-features = true

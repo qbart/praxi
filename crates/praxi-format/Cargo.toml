@@ -3,6 +3,7 @@ name = "praxi-format"
 description = "Reader and writer for the PRAXI container format"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -21,3 +22,6 @@ lz4_flex.workspace = true
 opus1.workspace = true
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+
+[package.metadata.docs.rs]
+all-features = true
