@@ -28,13 +28,13 @@ without changing the version; readers ignore unknown fields.
     "plane_min_saving": 8.0
   },
   "machine": {
-    "os": "Pop!_OS 24.04 LTS",
+    "os": "Linux (Pop!_OS 24.04)",
     "kernel": "7.1.5-76070105-generic",
     "arch": "x86_64",
     "cpu": "AMD Ryzen AI 9 HX 370 w/ Radeon 890M",
     "physical_cores": 12,
     "logical_cores": 24,
-    "cpu_mhz": 2000,
+    "cpu_mhz": 2109,
     "memory_bytes": 47244640256,
     "praxi_version": "0.1.1"
   },
@@ -92,7 +92,7 @@ any of them missing.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `os` | string | OS name and version, such as `Pop!_OS 24.04 LTS`, `macOS 15.1 Sequoia` or `Windows 11 Pro`. |
+| `os` | string | OS name and version, as `sysinfo` reports it, such as `Linux (Pop!_OS 24.04)`, `macOS 15.1 Sequoia` or `Windows 11 Pro`. |
 | `kernel` | string | Kernel version. |
 | `arch` | string | CPU architecture as Rust names it: `x86_64`, `aarch64`. |
 | `cpu` | string | CPU model (brand string). |

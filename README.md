@@ -16,7 +16,7 @@ sounds all come from cues stored in the video file.*
 
 ## Features
 
-- **Cheap decode.** A 1080p frame decodes in 0.6-1.5 ms on one CPU core and stays
+- **Cheap decode.** A 1080p frame decodes in 0.6-1.5 ms on one laptop CPU core and stays
   compressed in VRAM. The motion codec decodes on the GPU and reaches BC7's quality at
   about a sixth of its size.
 - **One file for every platform.** A video can hold several texture formats (BC7 or BC1
@@ -188,7 +188,8 @@ Big Buck Bunny, 1080p60 (`make bench`, first 3 s):
 | ASTC 8x8 | 18.4 MB/s | 34.0 dB |
 | motion, `qp` 16 | 8.9 MB/s | 41.1 dB |
 
-Block formats decode in 0.6-1.5 ms per frame on one core. praxi trades file size for
+Block formats decode in 0.6-1.5 ms per frame on one core of an AMD Ryzen AI 9 HX 370
+(laptop, Linux); `praxi bench` records the machine with its results. praxi trades file size for
 decode cost; it does not compete with H.264 or AV1 on size
 ([overview.md](docs/features/overview.md#non-goals)).
 
