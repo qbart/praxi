@@ -1,0 +1,9 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = "4.4"
+reloadable = false
+
+[libraries]
+linux.x86_64 = "res://addons/praxi/bin/libpraxi_godot.linux.x86_64.so"
+macos.arm64 = "res://addons/praxi/bin/libpraxi_godot.macos.arm64.dylib"
+windows.x86_64 = "res://addons/praxi/bin/praxi_godot.windows.x86_64.dll"

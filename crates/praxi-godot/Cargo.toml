@@ -1,0 +1,22 @@
+[package]
+name = "praxi-godot"
+description = "Godot 4 extension playing praxi video (docs/features/godot.md)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+# A Godot addon, shipped as a zip with the release binaries, not a Rust library.
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+praxi.workspace = true
+# Built against Godot 4.4's API: loads in 4.4 and later.
+godot = { version = "0.5", features = ["api-4-4"] }
+
+[dev-dependencies]
+praxi-encoder.workspace = true

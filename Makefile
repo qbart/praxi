@@ -2,7 +2,7 @@ SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
-.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game package publish tag crates release-ready
+.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game package publish tag crates release-ready godot-addon
 
 # The workspace version (docs/features/releasing.md).
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -58,6 +58,22 @@ $(CUE_GAME): $(BENCH_INPUT)
 
 cue-game: $(CUE_GAME)
 	cargo run --release -p praxi-bevy --example cue_game -- $(CUE_GAME) crates/praxi-bevy/examples/cue_game.cues.json
+
+# The Godot addon for this machine (docs/features/godot.md#addon).
+GODOT_ADDON := target/godot/addons/praxi
+ifeq ($(shell uname -s),Darwin)
+GODOT_LIB := libpraxi_godot.dylib
+GODOT_LIB_NAME := libpraxi_godot.macos.arm64.dylib
+else
+GODOT_LIB := libpraxi_godot.so
+GODOT_LIB_NAME := libpraxi_godot.linux.x86_64.so
+endif
+
+godot-addon:
+	cargo build --release -p praxi-godot
+	mkdir -p $(GODOT_ADDON)/bin
+	cp crates/praxi-godot/praxi.gdextension crates/praxi-godot/README.md LICENSE-MIT LICENSE-APACHE $(GODOT_ADDON)/
+	cp target/release/$(GODOT_LIB) $(GODOT_ADDON)/bin/$(GODOT_LIB_NAME)
 
 # Releasing (docs/features/releasing.md).
 package:
