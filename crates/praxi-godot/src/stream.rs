@@ -49,8 +49,8 @@ impl VideoStreamPraxi {
     #[func]
     fn set_looping(&mut self, looping: bool) {
         self.looping = looping;
-        if let Some(mut p) = self.current() {
-            p.bind_mut().set_looping(looping);
+        if let Some(p) = self.current() {
+            p.bind().set_looping(looping);
         }
     }
 

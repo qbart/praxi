@@ -16,7 +16,8 @@ crate-type = ["cdylib"]
 [dependencies]
 praxi.workspace = true
 # Built against Godot 4.4's API: loads in 4.4 and later.
-godot = { version = "0.5", features = ["api-4-4"] }
+# experimental-threads: VideoStreamPlayer calls is_playing() and is_paused() from the audio thread.
+godot = { version = "0.5", features = ["api-4-4", "experimental-threads"] }
 
 [dev-dependencies]
 praxi-encoder.workspace = true
