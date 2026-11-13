@@ -81,7 +81,8 @@ These need a desktop and are not covered by tests:
 - The Bevy cue editor (`cargo run --release -p praxi-bevy --example cue_editor -- FILE`),
   also under Xvfb ([bevy.md](bevy.md#tests)).
 - The cue game (`make cue-game`), also under Xvfb
-  ([cue-runtime.md](cue-runtime.md#example-game)).
+  ([cue-runtime.md](cue-runtime.md#example-game)), and its sound on a file with audio
+  ([bevy.md](bevy.md#audio)).
 - Sound from the viewer and the editor, including converted tracks
   ([audio-output.md](audio-output.md)).
 - GPU decode time on real hardware: `motion_timing` ([motion-codec.md](motion-codec.md#tools)).

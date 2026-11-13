@@ -114,6 +114,10 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
 11. **M10** Cue authoring follow-ups: typed values on the command line, so `x=0.5;y=0.3`
     is a position ([cues.md](cues.md#values-on-the-command-line)), and positions in the
     Bevy cue editor ([bevy.md](bevy.md#cue-editor-example)).
+12. **M11** Bevy audio and observable cues: `PraxiAudioPlugin` plays the audio tracks
+    through Bevy's audio with the video's clock following the sound
+    ([bevy.md](bevy.md#audio)), and `PraxiEvent` / `PraxiCue<T>` are entity events that
+    observers see as they happen ([bevy.md](bevy.md#cues-as-they-happen)).
 
 ## Next
 

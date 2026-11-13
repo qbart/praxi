@@ -4,9 +4,10 @@ Work in order, top to bottom. Each item gets a spec in `docs/features/` before c
 (AGENTS.md); file format changes go to `docs/spec/`. Done items move to the milestones in
 [docs/features/overview.md](docs/features/overview.md#milestones).
 
-Done so far (M7 to M10): cue editing after encoding, BC1, manual test targets, decode-ahead
+Done so far (M7 to M11): cue editing after encoding, BC1, manual test targets, decode-ahead
 of several frames, `praxi-audio`, Opus audio, the Bevy cue editor, consuming cues at
-runtime, typed command-line values and positions in the Bevy cue editor.
+runtime, typed command-line values, positions in the Bevy cue editor, Bevy audio and
+observable cues.
 
 ## 1. Checks on real machines
 
@@ -26,6 +27,11 @@ The code is done and tested; these were never run where they matter.
   high, because the device was opened at 44.1 kHz and played at 48 kHz. `praxi-audio` now
   always opens the device's default format and resamples; listen again. This is also the
   listening check of Opus audio ([audio.md](docs/features/audio.md#opus)).
+- [ ] **Sound in Bevy**: `cue_game` on the tone files (`PraxiAudio`,
+  [bevy.md](docs/features/bevy.md#audio)): the tones play at the same pitch as in the
+  viewer, M mutes, and seeking and looping stay smooth. Checked under Xvfb on an ALSA
+  device here: the clock follows the audio at real speed with an estimated latency of
+  85-96 ms, but nothing was listened to.
 
 ## Not scheduled
 
