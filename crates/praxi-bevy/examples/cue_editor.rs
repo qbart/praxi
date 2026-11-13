@@ -417,10 +417,10 @@ fn top_bar(ui: &mut egui::Ui, editor: &mut Editor, video: &mut PraxiVideo) {
         let player = video.player();
         ui.monospace(format!("{:8.3} / {:.3} s", player.position().as_secs_f64(), player.duration().as_secs_f64()));
         ui.separator();
-        if ui.button("Save").on_hover_text(editor.sheet.display().to_string()).clicked() {
+        if ui.button("Save cues to JSON").on_hover_text(format!("Write the cues to {}; the .praxi file is not changed", editor.sheet.display())).clicked() {
             editor.save();
         }
-        if ui.button("Write into file").on_hover_text(editor.file.display().to_string()).clicked() {
+        if ui.button("Write cues into .praxi").on_hover_text(format!("Replace the cues stored in {}; the JSON is not changed", editor.file.display())).clicked() {
             editor.write_into_file(video);
         }
         ui.separator();

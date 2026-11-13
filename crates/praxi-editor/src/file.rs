@@ -1,4 +1,4 @@
-//! A file the editor can close while its player still holds it, so that "Write into file"
+//! A file the editor can close while its player still holds it, so that "Write cues into .praxi"
 //! can rename over it on Windows (`docs/features/cue-editor.md#saving`).
 
 use std::fs::File;

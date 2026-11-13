@@ -149,7 +149,7 @@ struct Editor {
     file: PathBuf,
     sheet: PathBuf,
     player: FilePlayer,
-    /// The player's file, closed before "Write into file".
+    /// The player's file, closed before "Write cues into .praxi".
     player_file: SharedFile,
     caps: Capabilities,
     video: VideoView,
@@ -539,10 +539,10 @@ impl Editor {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if ui.button("Save").on_hover_text(format!("Write {} (Ctrl+S)", self.sheet.display())).clicked() {
+            if ui.button("Save cues to JSON").on_hover_text(format!("Write the cues to {}; the .praxi file is not changed (Ctrl+S)", self.sheet.display())).clicked() {
                 self.save();
             }
-            if ui.button("Write into file").on_hover_text(format!("Replace the cues in {} (Ctrl+Shift+S)", self.file.display())).clicked() {
+            if ui.button("Write cues into .praxi").on_hover_text(format!("Replace the cues stored in {}; the JSON is not changed (Ctrl+Shift+S)", self.file.display())).clicked() {
                 self.write_into_file();
             }
             ui.separator();
@@ -787,7 +787,7 @@ impl Editor {
             ui.heading("Unsaved changes");
             ui.label(format!("Save the cues to {} before closing?", self.sheet.display()));
             ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
+                if ui.button("Save to JSON").clicked() {
                     choice = Some(0);
                 }
                 if ui.button("Discard").clicked() {
