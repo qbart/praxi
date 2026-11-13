@@ -66,11 +66,15 @@ Packages contain the crate's sources, tests and examples; `praxi-bevy` also ship
 - `make publish`: refuses unless the working tree is clean, the tag `v$(VERSION)` (the
   workspace version) exists, and nothing that goes into the crates (`crates/`,
   `Cargo.toml`, `Cargo.lock`) changed since that tag; docs and the Makefile may have, then runs `make check` and
-  `cargo publish --workspace`, which publishes the crates in dependency order and waits for
-  each to be available before the next. Needs `cargo login` first.
+  publishes the crates one by one in dependency order with `cargo publish -p`, which waits
+  for each to be available before the next. A crate whose version is already on crates.io
+  (asked from `https://crates.io/api/v1/crates/CRATE/VERSION`) is skipped, so after an
+  error, such as crates.io's rate limit on new crates (`429 Too Many Requests`, "try again
+  after ..."), running `make publish` again continues where it stopped. Needs
+  `cargo login` first.
 - `make publish-CRATE` (for example `make publish-praxi-format`): publishes one crate with
   `cargo publish -p CRATE`, with the same clean tree and tag checks as `make publish`, but
-  without `make check`. Crates must go in the order of the table above, as each needs the
+  without `make check`; it skips the crate too if its version is already published. Crates must go in the order of the table above, as each needs the
   praxi crates it depends on to be on crates.io already; `make crates` prints that order.
   Use it to resume a `make publish` that stopped part way, or to publish one by one.
 - `make package-CRATE`: `cargo publish -p CRATE --dry-run`. For a crate whose praxi
