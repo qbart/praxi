@@ -58,6 +58,7 @@ var frames := 0
 var failed := ""
 var paused_at := 0.0
 var step := 0
+var first: Texture2D
 var wait_until := 0
 
 func check(ok: bool, what: String) -> void:
@@ -76,7 +77,7 @@ func _initialize() -> void:
 	player = VideoStreamPlayer.new()
 	player.stream = stream
 	# VideoStreamPlayer draws the texture it gets here, so it must exist before any frame.
-	var first = player.get_video_texture()
+	first = player.get_video_texture()
 	check(first != null and first.get_width() == 64 and first.get_height() == 32, "texture when the stream is set: %s" % [first])
 	player.autoplay = true  # starts when it enters the tree, after _initialize
 	root.add_child(player)
