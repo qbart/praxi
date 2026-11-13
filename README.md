@@ -53,6 +53,12 @@ playing file.*
 
 ## Install
 
+Download `praxi`, `praxi-viewer` and `praxi-editor` for Linux x86_64, macOS Apple Silicon
+or Windows x64 from [Releases](https://github.com/qbart/praxi/releases). The macOS
+binaries are not signed: run `xattr -d com.apple.quarantine praxi*` after unpacking.
+
+Or build them with cargo:
+
 ```sh
 cargo install praxi-cli praxi-viewer praxi-editor
 ```
