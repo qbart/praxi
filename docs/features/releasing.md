@@ -67,6 +67,13 @@ Packages contain the crate's sources, tests and examples; `praxi-bevy` also ship
   `v$(VERSION)` (the workspace version), then runs `make check` and
   `cargo publish --workspace`, which publishes the crates in dependency order and waits for
   each to be available before the next. Needs `cargo login` first.
+- `make publish-CRATE` (for example `make publish-praxi-format`): publishes one crate with
+  `cargo publish -p CRATE`, with the same clean tree and tag checks as `make publish`, but
+  without `make check`. Crates must go in the order of the table above, as each needs the
+  praxi crates it depends on to be on crates.io already; `make crates` prints that order.
+  Use it to resume a `make publish` that stopped part way, or to publish one by one.
+- `make package-CRATE`: `cargo publish -p CRATE --dry-run`. For a crate whose praxi
+  dependencies are not on crates.io yet, this fails; `make package` checks them together.
 - `make tag`: creates the annotated tag `v$(VERSION)` on `HEAD` and pushes it.
 
 ## Release binaries
