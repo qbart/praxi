@@ -1,7 +1,9 @@
 # Testing
 
-There is no CI for now ([ROADMAP.md](../../ROADMAP.md)); every check runs by hand from the
-repository root.
+Every check runs from the repository root with the make targets below. CI runs `make
+check` and `make check-windows` on every push to `main` and every pull request
+([benchmarks.md](benchmarks.md#ci)); it has ffmpeg only in the bench job and no GPU, so the
+tests that need them skip there.
 
 ## Make targets
 

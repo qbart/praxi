@@ -24,47 +24,11 @@ The code is done and tested; these were never run where they matter.
   PipeWire virtual sink and check the tones' frequencies.
   First listen (Linux, PipeWire, RTX 5090): Opus at 48 kHz right, ADPCM at 44.1 kHz pitched
   high, because the device was opened at 44.1 kHz and played at 48 kHz. `praxi-audio` now
-  always opens the device's default format and resamples; listen again.
-
-## 2. Opus
-
-- [x] `opus1` chosen: pure Rust, with an encoder, so praxi encodes Opus itself.
-- [x] `--audio-format opus` ([audio.md](docs/features/audio.md#opus)): format 0.10 with
-  sample format `4` ([PRAXI.md](docs/spec/PRAXI.md#opus-payload)), encoder, player decode
-  with 200 ms pre-roll after seeks and seamless loops, tests. Stereo is 3.3 times smaller
-  than `adpcm`.
-- [ ] Listen to it on a real device, with the sound check above.
-
-## 3. Consuming cues at runtime
-
-Done ([cue-runtime.md](docs/features/cue-runtime.md)).
-
-- [x] Typed fields: `CueEvent::parse::<T>()` with serde (feature `serde`), errors naming
-  the cue and field.
-- [x] Dispatch by type: `parse` into an enum whose variants are the cue types, then
-  `match`; unknown types are a distinct error or a `#[serde(other)]` variant.
-- [x] Active cues: `Player::active_cues()`. The player now reads every cue at open.
-- [x] Lookahead: `Player::upcoming_cues(within)`, across the loop seam when looping.
-- [x] Bevy: `PraxiCuePlugin<T>` sends `PraxiCue<T>` messages.
-- [x] Positions at runtime: `praxi_wgpu::Rect::point` / `position`,
-  `praxi_bevy::position_on_sprite` / `position_in_rect`.
-- [x] An example game: `cue_game` in `praxi-bevy` (`make cue-game`) with subtitles, a
-  speech bubble, camera shake, markers and sounds announced ahead; checked under Xvfb.
-
-## 4. Cue authoring follow-ups
-
-Done.
-
-- [x] **Positions in the Bevy cue editor**: the Position row, Pick, markers on the video and
-  dragging, as in `praxi-editor` ([bevy.md](docs/features/bevy.md#cue-editor-example));
-  checked under Xvfb.
-- [x] **Typed values on the command line**: `--cue`, `praxi cues add` and `cues srt
-  --field` read bools, ints and floats, quotes force a string
-  ([cues.md](docs/features/cues.md#values-on-the-command-line)).
+  always opens the device's default format and resamples; listen again. This is also the
+  listening check of Opus audio ([audio.md](docs/features/audio.md#opus)).
 
 ## Not scheduled
 
-- **CI on Forgejo**: check the workflow since the editor joined it; run `make check`.
 - **Real hardware**: GPU decode time of the motion codec on discrete and integrated GPUs
   (`motion_timing`), macOS, a phone (ASTC).
 - **More block formats**: BC4/BC5 for one- and two-channel content, ASTC 5x5.

@@ -79,7 +79,7 @@ bench-baseline`).
 
 | Job | Steps |
 |---|---|
-| `test` | `cargo clippy` and `cargo test` for the workspace, with `praxi-viewer` built without the `audio` feature (no ALSA on the runner). |
+| `test` | Installs `pkg-config` and `libasound2-dev` (ALSA, for cpal in `praxi-audio`), Rust with clippy and the `x86_64-pc-windows-gnu` target, then runs `make check` and `make check-windows` ([testing.md](testing.md#make-targets)): the same checks as on a developer machine. |
 | `bench` | Installs ffmpeg, `make samples`, `make bench`, uploads `target/bench.json` as an artifact. |
 
 The jobs run on a runner with the `docker` label, in the runner's default image, and
