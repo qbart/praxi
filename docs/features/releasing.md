@@ -63,8 +63,9 @@ Packages contain the crate's sources, tests and examples; `praxi-bevy` also ship
 
 - `make package`: `cargo publish --workspace --dry-run`. Packages and builds every crate
   as crates.io would, with unpublished praxi crates resolved from the workspace.
-- `make publish`: refuses unless the working tree is clean and `HEAD` is tagged
-  `v$(VERSION)` (the workspace version), then runs `make check` and
+- `make publish`: refuses unless the working tree is clean, the tag `v$(VERSION)` (the
+  workspace version) exists, and nothing that goes into the crates (`crates/`,
+  `Cargo.toml`, `Cargo.lock`) changed since that tag; docs and the Makefile may have, then runs `make check` and
   `cargo publish --workspace`, which publishes the crates in dependency order and waits for
   each to be available before the next. Needs `cargo login` first.
 - `make publish-CRATE` (for example `make publish-praxi-format`): publishes one crate with

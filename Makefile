@@ -80,7 +80,8 @@ crates:
 
 release-ready:
 	@test -z "$$(git status --porcelain)" || { echo "working tree not clean"; exit 1; }
-	@git tag --points-at HEAD | grep -qx "v$(VERSION)" || { echo "HEAD is not tagged v$(VERSION); run make tag"; exit 1; }
+	@git rev-parse -q --verify "refs/tags/v$(VERSION)" > /dev/null || { echo "no tag v$(VERSION); run make tag"; exit 1; }
+	@git diff --quiet "v$(VERSION)" HEAD -- crates Cargo.toml Cargo.lock || { echo "the crates changed since v$(VERSION)"; exit 1; }
 
 publish-%: release-ready
 	@echo " $(CRATES) " | grep -q " $* " || { echo "unknown crate $*; one of: $(CRATES)"; exit 1; }
