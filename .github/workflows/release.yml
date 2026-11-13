@@ -41,7 +41,7 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cargo build --release --locked --target ${{ matrix.target }} -p praxi-cli -p praxi-viewer -p praxi-editor
+        run: cargo build --release --locked --target ${{ matrix.target }} -p praxi-cli -p praxi-viewer -p praxi-editor -p praxi-godot
 
       - name: Package
         shell: bash
@@ -61,6 +61,14 @@ jobs:
             tar czf "dist/$name.tar.gz" "$name"
           fi
           ls -l dist
+          # The Godot extension library, named as praxi.gdextension expects (docs/features/godot.md#addon).
+          mkdir godot
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu) cp "target/${{ matrix.target }}/release/libpraxi_godot.so" godot/libpraxi_godot.linux.x86_64.so ;;
+            aarch64-apple-darwin) cp "target/${{ matrix.target }}/release/libpraxi_godot.dylib" godot/libpraxi_godot.macos.arm64.dylib ;;
+            x86_64-pc-windows-msvc) cp "target/${{ matrix.target }}/release/praxi_godot.dll" godot/praxi_godot.windows.x86_64.dll ;;
+          esac
+          ls -l godot
 
       - uses: actions/upload-artifact@v4
         with:
@@ -68,13 +76,45 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  release:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: godot-lib-${{ matrix.target }}
+          path: godot/*
+          if-no-files-found: error
+
+  godot-addon:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: godot-lib-*
+          path: addon/addons/praxi/bin
+          merge-multiple: true
+
+      - name: Package
+        run: |
+          cp crates/praxi-godot/praxi.gdextension crates/praxi-godot/README.md LICENSE-MIT LICENSE-APACHE addon/addons/praxi/
+          mkdir dist
+          (cd addon && zip -r "../dist/praxi-godot-${GITHUB_REF_NAME}.zip" addons)
+          unzip -l dist/*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: praxi-godot
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [build, godot-addon]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: praxi-*
           path: dist
           merge-multiple: true
 
