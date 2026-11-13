@@ -51,8 +51,18 @@ decode). Then for each variant:
   LZ4, applying the delta). Mean, 95th percentile and maximum of all advances, in
   milliseconds. The file is read through the OS page cache; there is no GPU upload.
 - **Encode time**: wall-clock seconds of the encode, all variants together.
+- **Machine**: what the times were measured on, read at the start of the run with the
+  `sysinfo` crate (`docs/spec/BENCH.md#machine`): OS name and version, kernel, CPU
+  architecture, CPU model, physical and logical cores, the CPU clock when the run started
+  (cores scale their clock, so this is a hint, not the clock during decoding), memory, and
+  the praxi version. Fields the OS does not report are left out. The bench decodes on the
+  CPU only; GPU times come from the `motion_timing` example, which prints the adapter
+  (name, vendor and device ids, device type, backend, driver and driver version).
 
-Results are printed as a table and, with `--json`, written to a file.
+Results are printed as a table, after a `machine:` line, and, with `--json`, written to a
+file.
+
+Decode times in docs are quoted with the machine they were measured on.
 
 ## Baseline comparison
 
@@ -65,7 +75,9 @@ With `--baseline`, the results are compared with a JSON file from an earlier run
   not be lower by more than `--max-psnr-drop`. Variants new in this run are reported
   without a check.
 - Decode times depend on the machine, so they are only reported, as a ratio to the
-  baseline. They never fail the run.
+  baseline. They never fail the run. When the baseline's CPU model or OS differs from this
+  run's, or the baseline has no `machine`, the comparison says so above the table: the
+  ratios then compare machines as much as code.
 - Each failed check prints a line starting with `regression:`, and the command exits with
   status 1 after writing `--json`.
 

@@ -27,6 +27,17 @@ without changing the version; readers ignore unknown fields.
     "skip_threshold": 3,
     "plane_min_saving": 8.0
   },
+  "machine": {
+    "os": "Pop!_OS 24.04 LTS",
+    "kernel": "7.1.5-76070105-generic",
+    "arch": "x86_64",
+    "cpu": "AMD Ryzen AI 9 HX 370 w/ Radeon 890M",
+    "physical_cores": 12,
+    "logical_cores": 24,
+    "cpu_mhz": 2000,
+    "memory_bytes": 47244640256,
+    "praxi_version": "0.1.1"
+  },
   "encode_seconds": 21.3,
   "variants": [
     {
@@ -55,6 +66,7 @@ without changing the version; readers ignore unknown fields.
 | `settings.keyint` | integer | Frames between keyframes. |
 | `settings.skip_threshold` | integer | Temporal skip threshold. |
 | `settings.plane_min_saving` | number | Byte-plane policy in percent (`--plane-min-saving`). Missing in older files, read as `0`. |
+| `machine` | object | The machine the run measured ([Machine](#machine)). Missing in older files. |
 | `encode_seconds` | number | Wall-clock encode time, all variants. |
 | `variants` | array | One object per variant, in `--variant` order. |
 
@@ -72,6 +84,23 @@ without changing the version; readers ignore unknown fields.
 | `decode_ms.mean` | number | Mean time of one player `advance`, decoding one frame, in ms. |
 | `decode_ms.p95` | number | 95th percentile (nearest rank) of the same. |
 | `decode_ms.max` | number | Maximum of the same. |
+
+### Machine
+
+Every field is optional: a field the OS does not report is left out, and readers accept
+any of them missing.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `os` | string | OS name and version, such as `Pop!_OS 24.04 LTS`, `macOS 15.1 Sequoia` or `Windows 11 Pro`. |
+| `kernel` | string | Kernel version. |
+| `arch` | string | CPU architecture as Rust names it: `x86_64`, `aarch64`. |
+| `cpu` | string | CPU model (brand string). |
+| `physical_cores` | integer | Physical cores. |
+| `logical_cores` | integer | Logical cores (hardware threads). |
+| `cpu_mhz` | integer | Clock of the first core when the run started, in MHz. |
+| `memory_bytes` | integer | Total memory. |
+| `praxi_version` | string | Version of the `praxi` tool that ran. |
 
 Numbers are written with full precision. Comparison rules are in
 [benchmarks.md](../features/benchmarks.md#baseline-comparison).
