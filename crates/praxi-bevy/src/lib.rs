@@ -320,6 +320,9 @@ mod tests {
     /// A headless app with the render plugins and the praxi plugin, once the renderer is
     /// ready; `None` without an adapter.
     fn app() -> Option<App> {
+        // Bevy's renderer panics without an adapter, so look for one first.
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        bevy::tasks::block_on(instance.request_adapter(&Default::default())).ok()?;
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
