@@ -29,6 +29,9 @@ Published, in dependency order:
 | `praxi-viewer` | Binary `praxi-viewer`: plays files in a window |
 | `praxi-editor` | Binary `praxi-editor`: cue timeline editor |
 
+`praxi-godot` is not published (`publish = false`): it ships as a Godot addon zip with the
+release binaries ([godot.md](godot.md#addon)).
+
 The command line tool, the viewer and the editor are three separate binaries, so the tool
 stays free of window and GPU dependencies:
 
@@ -102,6 +105,10 @@ remote. It builds `praxi`, `praxi-viewer` and `praxi-editor` in release mode
   ALSA (`libasound.so.2`) and a Vulkan or GL driver at run time.
 - The macOS binaries are not signed. Gatekeeper blocks binaries downloaded with a browser;
   `xattr -d com.apple.quarantine praxi*` allows them.
+- Each runner also builds the Godot extension library (`praxi-godot`,
+  [godot.md](godot.md#addon)). The release job assembles them into one
+  `praxi-godot-vX.Y.Z.zip` holding `addons/praxi/` for all three platforms, attached to
+  the release and listed in `SHA256SUMS`.
 - Started by hand (`workflow_dispatch`), the workflow builds the archives as workflow
   artifacts without making a release, to check the builds before tagging.
 - The workflow uses only `actions/checkout`, `actions/upload-artifact`,
