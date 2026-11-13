@@ -42,8 +42,11 @@ Every crate has, besides `name`, `version` and `description`:
 
 - `license = "MIT OR Apache-2.0"` from the workspace, with `LICENSE-MIT` and
   `LICENSE-APACHE` at the repository root.
+- `repository = "https://github.com/qbart/praxi"` and `homepage` (the same) from the
+  workspace. The repository is mirrored from the private Forgejo remote (`origin`) to the
+  `github` remote, which is public.
 - `readme = "README.md"`: a short README per crate (what it is, a usage example, links to
-  the docs). Images are only in the repository README, as the repository is not public.
+  the docs). Images are only in the repository README.
 - `keywords` and `categories` for crates.io search.
 - Dependencies on other praxi crates through `[workspace.dependencies]` with both `path`
   and `version`, so the published manifest points at crates.io.
@@ -66,3 +69,4 @@ Packages contain the crate's sources, tests and examples; `praxi-bevy` also ship
 1. Set `[workspace.package] version` and the versions in `[workspace.dependencies]`.
 2. Commit and push; `make check` and `make package` pass.
 3. `make tag`, then `make publish`.
+4. Push `main` and the tag to GitHub: `git push github main v$(VERSION)`.
