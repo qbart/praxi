@@ -179,7 +179,10 @@ make cue-game    # the 10 s Big Buck Bunny sample with crates/praxi-bevy/example
 
 - The video is a sprite fitted to the window, letterboxed, and refitted on resize. It
   starts playing, looping. Space plays or pauses, Left / Right seek 2 s, L toggles
-  looping, Escape quits.
+  looping, M mutes, Escape quits.
+- The video plays its audio tracks with `PraxiAudio` ([bevy.md](bevy.md#audio)), and its
+  clock follows the sound, so cues fire when they are heard. The Big Buck Bunny sample has
+  no audio; any file with audio works, for example the tone files of the sound check.
 - With a sheet, its cues replace the file's (`replace_cues`), so the example runs on any
   file.
 - Cue types, read through a `GameCue` enum and `PraxiCuePlugin<GameCue>`:
@@ -191,8 +194,12 @@ make cue-game    # the 10 s Big Buck Bunny sample with crates/praxi-bevy/example
   | `marker` | `label`, position | A ring (gizmo circles) at the position with its label, while active; instantaneous markers from `PraxiCue<GameCue>` for 1 s. |
   | `sound` | `name` | Listed in the HUD as "preloading NAME in 1.2 s" from `upcoming_cues(2 s)`, then "playing NAME" for 2 s (no audio is played). |
 
-- A HUD at the top left shows the playhead, the play state, the types of the active cues
-  and the sounds.
+- Typed cues and player events are observed on the video entity
+  ([bevy.md](bevy.md#cues-as-they-happen)): shakes, instantaneous markers and sounds start
+  in an observer of `PraxiCue<GameCue>` as the cue fires, and an observer of `PraxiEvent`
+  ends shakes and clears markers and sounds on seeks and loops.
+- A HUD at the top left shows the playhead, the play state, the audio (tracks, whether the
+  clock follows it and the latency), the types of the active cues and the sounds.
 - Overlays (bubbles, markers) are `Text2d` entities kept per cue id, in world space, so
   they move with the video when it shakes. Seeking and looping clear the instantaneous
   markers and the sounds played.

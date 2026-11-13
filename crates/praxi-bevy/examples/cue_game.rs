@@ -8,8 +8,8 @@ use bevy::render::renderer::RenderAdapter;
 use bevy::sprite::Anchor;
 use clap::Parser;
 use praxi_bevy::praxi::format::cue_sheet;
-use praxi_bevy::praxi::{CueEvent, Event};
-use praxi_bevy::{PraxiCue, PraxiCuePlugin, PraxiEvent, PraxiPlugin, PraxiSystems, PraxiVideo, position_on_sprite};
+use praxi_bevy::praxi::{Clock, CueEvent, Event};
+use praxi_bevy::{PraxiAudio, PraxiAudioPlugin, PraxiCue, PraxiCuePlugin, PraxiEvent, PraxiPlugin, PraxiSystems, PraxiVideo, position_on_sprite};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -68,12 +68,12 @@ fn main() -> AppExit {
             primary_window: Some(Window { title: format!("praxi cue game: {}", args.file.display()), resolution: (1280, 720).into(), ..default() }),
             ..default()
         }))
-        .add_plugins((PraxiPlugin, PraxiCuePlugin::<GameCue>::default()))
+        .add_plugins((PraxiPlugin, PraxiCuePlugin::<GameCue>::default(), PraxiAudioPlugin))
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(Game { file: args.file, tracks, ..default() })
         .add_systems(Startup, setup)
         .add_systems(Update, (input, fit_video).before(PraxiSystems::Advance))
-        .add_systems(Update, (react, shake_camera, overlays, hud).chain().after(PraxiSystems::Cues))
+        .add_systems(Update, (shake_camera, overlays, hud).chain().after(PraxiSystems::Cues))
         .run()
 }
 
@@ -119,7 +119,8 @@ fn setup(mut commands: Commands, adapter: Res<RenderAdapter>, mut images: ResMut
     if let Err(e) = video.player().play() {
         eprintln!("{e}");
     }
-    commands.spawn((Sprite::from_image(video.image.clone()), video));
+    // Cues and events are observed on the video as they happen, before the systems above run.
+    commands.spawn((Sprite::from_image(video.image.clone()), video, PraxiAudio::default())).observe(react).observe(reset);
 
     let text = |size: f32| (TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(Color::WHITE));
     commands.spawn((
@@ -147,8 +148,11 @@ fn setup(mut commands: Commands, adapter: Res<RenderAdapter>, mut images: ResMut
         });
 }
 
-fn input(keys: Res<ButtonInput<KeyCode>>, mut videos: Query<&mut PraxiVideo>, mut exit: MessageWriter<AppExit>) {
-    let Ok(mut video) = videos.single_mut() else { return };
+fn input(keys: Res<ButtonInput<KeyCode>>, mut videos: Query<(&mut PraxiVideo, &mut PraxiAudio)>, mut exit: MessageWriter<AppExit>) {
+    let Ok((mut video, mut audio)) = videos.single_mut() else { return };
+    if keys.just_pressed(KeyCode::KeyM) {
+        audio.volume = if audio.volume > 0.0 { 0.0 } else { 1.0 };
+    }
     let player = video.player();
     let seek = |player: &mut praxi_bevy::FilePlayer, secs: f64| {
         let to = (player.position().as_secs_f64() + secs).clamp(0.0, player.duration().as_secs_f64());
@@ -188,36 +192,36 @@ fn fit_video(windows: Query<&Window>, game: Res<Game>, mut sprites: Query<&mut S
     }
 }
 
-/// Starts shakes, instantaneous markers and sounds from the typed cues, and ends shakes.
-fn react(mut cues: MessageReader<PraxiCue<GameCue>>, mut events: MessageReader<PraxiEvent>, mut game: ResMut<Game>) {
-    for c in cues.read() {
-        match &c.cue {
-            GameCue::Shake { strength, frequency } => {
-                game.shakes.insert(c.id, (*strength, *frequency, c.time, c.duration));
-            }
-            GameCue::Marker { label } if c.duration.is_zero() => {
-                if let Some(position) = c.position {
-                    game.flashes.push((c.id, label.clone(), position, c.time + INSTANT_MARKER));
-                }
-            }
-            GameCue::Sound { name } => {
-                game.played.insert(0, (name.clone(), c.time));
-                game.played.truncate(4);
-            }
-            GameCue::Subtitle { .. } | GameCue::Marker { .. } => {}
+/// Starts shakes, instantaneous markers and sounds from the typed cues.
+fn react(c: On<PraxiCue<GameCue>>, mut game: ResMut<Game>) {
+    match &c.cue {
+        GameCue::Shake { strength, frequency } => {
+            game.shakes.insert(c.id, (*strength, *frequency, c.time, c.duration));
         }
+        GameCue::Marker { label } if c.duration.is_zero() => {
+            if let Some(position) = c.position {
+                game.flashes.push((c.id, label.clone(), position, c.time + INSTANT_MARKER));
+            }
+        }
+        GameCue::Sound { name } => {
+            game.played.insert(0, (name.clone(), c.time));
+            game.played.truncate(4);
+        }
+        GameCue::Subtitle { .. } | GameCue::Marker { .. } => {}
     }
-    for e in events.read() {
-        match &e.event {
-            Event::CueEnd { id, .. } => {
-                game.shakes.remove(id);
-            }
-            Event::Seeked { .. } | Event::Looped => {
-                game.flashes.clear();
-                game.played.clear();
-            }
-            _ => {}
+}
+
+/// Ends shakes, and clears markers and sounds on seeks and loops.
+fn reset(e: On<PraxiEvent>, mut game: ResMut<Game>) {
+    match &e.event {
+        Event::CueEnd { id, .. } => {
+            game.shakes.remove(id);
         }
+        Event::Seeked { .. } | Event::Looped => {
+            game.flashes.clear();
+            game.played.clear();
+        }
+        _ => {}
     }
 }
 
@@ -329,8 +333,8 @@ fn parse(c: &CueEvent) -> Option<GameCue> {
 }
 
 /// Playhead, active cues, sounds coming up and sounds played.
-fn hud(game: Res<Game>, mut videos: Query<&mut PraxiVideo>, mut hud: Query<&mut Text, With<Hud>>) {
-    let (Ok(mut video), Ok(mut text)) = (videos.single_mut(), hud.single_mut()) else { return };
+fn hud(game: Res<Game>, mut videos: Query<(&mut PraxiVideo, &PraxiAudio)>, mut hud: Query<&mut Text, With<Hud>>) {
+    let (Ok((mut video, audio)), Ok(mut text)) = (videos.single_mut(), hud.single_mut()) else { return };
     let player = video.player();
     let now = player.position();
     let state = match (player.is_playing(), player.looping()) {
@@ -339,6 +343,14 @@ fn hud(game: Res<Game>, mut videos: Query<&mut PraxiVideo>, mut hud: Query<&mut 
         (false, _) => "paused",
     };
     let mut s = format!("{:.2} / {:.2} s  {state}\n", now.as_secs_f64(), player.duration().as_secs_f64());
+    s += &match (player.audio_tracks().len(), player.clock()) {
+        (0, _) => "audio: none\n".to_string(),
+        (n, Clock::Audio { latency, .. }) => format!("audio: {n} tracks, clock on audio, latency {} ms\n", latency.as_millis()),
+        (n, Clock::Game) => format!("audio: {n} tracks, clock on game time\n"),
+    };
+    if audio.volume == 0.0 {
+        s += "muted\n";
+    }
     let active: Vec<&str> = player.active_cues().map(|c| c.kind.as_str()).collect();
     s += &format!("active: {}\n", if active.is_empty() { "-".into() } else { active.join(", ") });
     for (until, c) in player.upcoming_cues(LOOKAHEAD) {
@@ -351,6 +363,6 @@ fn hud(game: Res<Game>, mut videos: Query<&mut PraxiVideo>, mut hud: Query<&mut 
             s += &format!("playing {name}\n");
         }
     }
-    s += "\nSpace play/pause  Left/Right seek 2 s  L loop  Esc quit";
+    s += "\nSpace play/pause  Left/Right seek 2 s  L loop  M mute  Esc quit";
     text.0 = s;
 }
