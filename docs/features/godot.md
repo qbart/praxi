@@ -172,19 +172,26 @@ as in the Bevy example.
 
 ## Tests
 
-`crates/praxi-godot/tests/godot.rs` runs Godot headless (`GODOT`, or `godot` on `PATH`;
-skipped otherwise, failing under `PRAXI_TEST_STRICT`, [testing.md](testing.md)). It builds
-the extension, writes a temporary project with the addon, a generated `.praxi` (BC7, a
-stereo track, cues with fields and positions) and a test script, and runs
-`godot --headless --path PROJECT --script test.gd`:
+`crates/praxi-godot/tests/godot.rs` runs Godot headless (`GODOT`, or `godot` / `godot4` on
+`PATH`; skipped otherwise, failing under `PRAXI_TEST_STRICT`, [testing.md](testing.md)).
+It builds the extension, writes a temporary project with the addon, the
+`.godot/extension_list.cfg` the editor would write, a generated `.praxi` (64x32 BC7, 2 s at
+30 fps, a stereo 48 kHz tone, a marker cue with a position and duration and an instant
+`camera.shake` cue with float, int and bool fields) and a test script, and runs
+`godot --headless --max-fps 60 --path PROJECT --script res://test.gd`. Headless Godot mixes
+audio only in real time, so the test runs paced at 60 fps (about 4 s) rather than with
+`--fixed-fps`. Steps follow the playback position:
 
-- `load()` returns a `VideoStreamPraxi`; with `formats = ["bc7"]` (the headless renderer
-  reports no texture formats), `play()` plays, and after updates the texture has the
-  video's size and format.
-- `cue` and `cue_ended` arrive with the fields, types and positions of the file, in order;
-  `active_cues()` and `upcoming_cues()` agree with them.
-- Seeking, pausing, stopping and `looping` behave as in the table above.
-- The playback reports the audio track's channels and rate, and hands audio to
-  `mix_audio`.
+- `load()` returns a `VideoStreamPraxi` of the clip's length; with `formats = ["bc7"]`
+  (the headless renderer reports no texture formats), a `VideoStreamPlayer` with
+  `autoplay` plays it.
+- At 0.6 s: `active_cues()` lists the marker, `upcoming_cues(1.0)` the shake with a
+  positive `until`, the texture has the video's size, and the master bus peaks above
+  -40 dB (the tone is -14 dB), so audio reached `mix_audio`.
+- At 1.3 s: `cue` (marker, with its fields, times and `Vector2` position), `cue_ended`
+  (the marker's id) and `cue` (shake, `null` position, typed fields) arrived in that order.
+- Seeking to 0.2 s lands there; pausing holds the position for 10 frames; with `looping`
+  the `looped` signal arrives while the player keeps playing; `stop()` stops it.
 
-The script prints `PASS` or the failed check, and the test asserts on Godot's output.
+The script prints `PASS` or `FAIL: <check>`. The test passes only on `PASS` with no
+`SCRIPT ERROR` in Godot's output, so a script that stops early cannot pass.

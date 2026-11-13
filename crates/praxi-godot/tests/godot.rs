@@ -57,6 +57,8 @@ var events := []
 var frames := 0
 var failed := ""
 var paused_at := 0.0
+var step := 0
+var wait_until := 0
 
 func check(ok: bool, what: String) -> void:
 	if not ok and failed == "":
@@ -68,30 +70,35 @@ func _initialize() -> void:
 	if failed != "":
 		return
 	stream.formats = PackedStringArray(["bc7"])
-	var pb = stream._instantiate_playback()
-	check(pb._get_channels() == 2 and pb._get_mix_rate() == 48000, "audio %d ch %d Hz" % [pb._get_channels(), pb._get_mix_rate()])
-	check(is_equal_approx(pb._get_length(), 2.0), "length %f" % pb._get_length())
 	stream.cue.connect(func(id, t, fields, time, duration, position): events.append(["cue", id, t, fields, time, duration, position]))
 	stream.cue_ended.connect(func(id): events.append(["end", id]))
 	stream.looped.connect(func(): events.append(["looped"]))
 	player = VideoStreamPlayer.new()
 	player.stream = stream
+	player.autoplay = true  # starts when it enters the tree, after _initialize
 	root.add_child(player)
-	player.play()
+	check(is_equal_approx(player.get_stream_length(), 2.0), "length %f" % player.get_stream_length())
 
 func _process(_delta: float) -> bool:
-	if failed != "" or player == null:
-		return finish()
+	if player == null:
+		check(false, "setup did not finish")
 	frames += 1
+	check(frames < 1500, "timed out in step %d" % step)
+	if failed != "":
+		return finish()
 	var pos := player.stream_position
-	if frames == 40:
+	if step == 0 and pos >= 0.6:
 		var active = stream.active_cues()
 		check(active.size() == 1 and active[0].type == "marker", "active at %f: %s" % [pos, active])
 		var upcoming = stream.upcoming_cues(1.0)
 		check(upcoming.size() == 1 and upcoming[0].type == "camera.shake" and upcoming[0].until > 0.0, "upcoming at %f: %s" % [pos, upcoming])
 		var tex = player.get_video_texture()
 		check(tex != null and tex.get_width() == 64 and tex.get_height() == 32, "texture %s" % [tex])
-	elif frames == 90:
+		# The clip's tone peaks at 0.2 (-14 dB); silence is -200 dB.
+		var peak := AudioServer.get_bus_peak_volume_left_db(0, 0)
+		check(peak > -40.0, "audio on the master bus: %f dB" % peak)
+		step = 1
+	elif step == 1 and pos >= 1.3:
 		check(events.size() == 3, "events at %f: %s" % [pos, events])
 		if events.size() == 3:
 			var marker = events[0]
@@ -103,19 +110,23 @@ func _process(_delta: float) -> bool:
 			check(shake[0] == "cue" and shake[2] == "camera.shake" and shake[6] == null, "shake %s" % [shake])
 			check(typeof(shake[3].strength) == TYPE_FLOAT and shake[3].count == 3 and typeof(shake[3].count) == TYPE_INT and shake[3].flag == true, "shake fields %s" % [shake[3]])
 		player.stream_position = 0.2
-	elif frames == 92:
-		check(pos >= 0.2 and pos < 0.3, "after seeking to 0.2: %f" % pos)
+		step = 2
+	elif step == 2:
+		check(pos >= 0.2 and pos < 0.4, "after seeking to 0.2: %f" % pos)
 		player.paused = true
 		paused_at = pos
-	elif frames == 102:
+		wait_until = frames + 10
+		step = 3
+	elif step == 3 and frames >= wait_until:
 		check(is_equal_approx(pos, paused_at), "paused at %f, now %f" % [paused_at, pos])
 		player.paused = false
 		stream.looping = true
-	elif frames == 250:
-		check(events.has(["looped"]), "looped: %s" % [events])
+		step = 4
+	elif step == 4 and events.has(["looped"]):
 		check(player.is_playing() and pos < 1.0, "playing after the loop at %f" % pos)
 		player.stop()
-	elif frames == 252:
+		step = 5
+	elif step == 5:
 		check(not player.is_playing(), "stopped")
 		return finish()
 	return false
@@ -154,7 +165,7 @@ fn plays_in_godot() {
     clip(&project.join("clip.praxi"));
 
     let mut child = Command::new(&godot)
-        .args(["--headless", "--fixed-fps", "60", "--path"])
+        .args(["--headless", "--max-fps", "60", "--path"])
         .arg(&project)
         .args(["--script", "res://test.gd"])
         .stdout(Stdio::piped())
@@ -173,5 +184,6 @@ fn plays_in_godot() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     std::fs::remove_dir_all(&project).ok();
-    assert!(stdout.lines().any(|l| l == "PASS"), "Godot output:\n{stdout}\n{stderr}");
+    let passed = stdout.lines().any(|l| l == "PASS") && !stderr.contains("SCRIPT ERROR") && !stdout.contains("SCRIPT ERROR");
+    assert!(passed, "Godot output:\n{stdout}\n{stderr}");
 }
