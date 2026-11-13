@@ -1,5 +1,8 @@
 //! Godot 4 extension playing praxi files in `VideoStreamPlayer` (`docs/features/godot.md`).
 
+// `#[derive(GodotClass)]` expands `base: base` in its generated `init`.
+#![allow(clippy::redundant_field_names)]
+
 mod file;
 mod playback;
 mod stream;

@@ -128,7 +128,7 @@ impl VideoStreamPlaybackPraxi {
         let caps = Capabilities::new(accepted.clone()).max_audio_channels(2);
         let file = BufReader::with_capacity(256 * 1024, GodotFile::open(path)?);
         let player = Player::open(file, &caps).map_err(|e| e.to_string())?;
-        if player.tracks().first().is_none() {
+        if player.tracks().is_empty() {
             return Err(format!("no video variant in a format Godot can show here ({accepted:?})"));
         }
         Ok(player)

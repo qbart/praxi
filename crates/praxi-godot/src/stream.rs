@@ -90,7 +90,7 @@ impl IResourceFormatLoader for ResourceFormatLoaderPraxi {
     }
 
     fn handles_type(&self, type_: StringName) -> bool {
-        type_ == StringName::from(TYPE) || type_ == StringName::from("VideoStream")
+        type_ == TYPE || type_ == "VideoStream"
     }
 
     fn get_resource_type(&self, path: GString) -> GString {
