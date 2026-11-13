@@ -2,7 +2,7 @@ SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
-.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game package publish tag
+.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game package publish tag crates release-ready
 
 # The workspace version (docs/features/releasing.md).
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -68,8 +68,24 @@ tag:
 	git tag -a v$(VERSION) -m "praxi $(VERSION)"
 	git push origin v$(VERSION)
 
-publish:
-	@test -z "$$(git status --porcelain)" || { echo "working tree not clean"; exit 1; }
-	@git tag --points-at HEAD | grep -qx "v$(VERSION)" || { echo "HEAD is not tagged v$(VERSION); run make tag"; exit 1; }
+publish: release-ready
 	$(MAKE) check
 	cargo publish --workspace
+
+# Crates in publishing order: each after the praxi crates it depends on.
+CRATES := praxi-format praxi praxi-encoder praxi-wgpu praxi-audio praxi-bevy praxi-cli praxi-viewer praxi-editor
+
+crates:
+	@echo $(CRATES)
+
+release-ready:
+	@test -z "$$(git status --porcelain)" || { echo "working tree not clean"; exit 1; }
+	@git tag --points-at HEAD | grep -qx "v$(VERSION)" || { echo "HEAD is not tagged v$(VERSION); run make tag"; exit 1; }
+
+publish-%: release-ready
+	@echo " $(CRATES) " | grep -q " $* " || { echo "unknown crate $*; one of: $(CRATES)"; exit 1; }
+	cargo publish -p $*
+
+package-%:
+	@echo " $(CRATES) " | grep -q " $* " || { echo "unknown crate $*; one of: $(CRATES)"; exit 1; }
+	cargo publish -p $* --dry-run
