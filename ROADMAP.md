@@ -13,6 +13,29 @@ step with the picture (estimated latency 92 ms), mutes, seeks and loops smoothly
 not a priority: "Write cues into .praxi" works on Linux and type-checks for Windows
 (`make check-windows`), and is assumed to work there.
 
+## 1. Seeking cost
+
+A seek decodes every frame from the preceding keyframe to the target: with the default
+`--keyint 60`, up to 59 extra frames, an estimated 50-100 ms for a 1080p motion-codec seek
+([motion-codec.md](docs/features/motion-codec.md#coded-frames),
+[video-codec.md](docs/features/video-codec.md#keyframe-interval)). Today the only control is
+`--keyint N` (frames between keyframes, for every variant), plus the motion encoder's
+keyframes at scene cuts. Each needs a spec in `docs/features/` first.
+
+- [ ] **More keyframes where they matter, from encoder parameters**:
+  - `--keyint` in seconds as well as frames (`--keyint 0.5s`), so the seek cost does not
+    change with the frame rate;
+  - `--keyframe-at TIME` (repeatable): keyframes at chosen times, such as chapter starts
+    and loop points, so seeking there decodes one frame;
+  - keyframes at cue starts (`--keyframes-at-cues`, optionally per cue stream), so a game
+    that seeks to its own markers seeks instantly.
+- [ ] **Measure it**: `praxi bench` and `praxi info` report the worst and mean seek cost
+  (frames and milliseconds to decode) per variant, next to the size a shorter `keyint`
+  costs, so the trade-off is visible when choosing parameters.
+- [ ] **Fast seek in the player**: a seek mode that lands on the nearest keyframe instead of
+  the exact frame (`SeekMode::Keyframe`), for scrubbing and skipping, where precision
+  matters less than speed.
+
 ## Not scheduled
 
 - **Real hardware**: GPU decode time of the motion codec on discrete and integrated GPUs
