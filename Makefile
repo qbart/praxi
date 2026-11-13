@@ -70,7 +70,7 @@ tag:
 
 publish: release-ready
 	$(MAKE) check
-	cargo publish --workspace
+	@for crate in $(CRATES); do $(MAKE) --no-print-directory publish-$$crate || exit 1; done
 
 # Crates in publishing order: each after the praxi crates it depends on.
 CRATES := praxi-format praxi praxi-encoder praxi-wgpu praxi-audio praxi-bevy praxi-cli praxi-viewer praxi-editor
@@ -83,9 +83,12 @@ release-ready:
 	@git rev-parse -q --verify "refs/tags/v$(VERSION)" > /dev/null || { echo "no tag v$(VERSION); run make tag"; exit 1; }
 	@git diff --quiet "v$(VERSION)" HEAD -- crates Cargo.toml Cargo.lock || { echo "the crates changed since v$(VERSION)"; exit 1; }
 
+# Whether $(VERSION) of crate $1 is in the crates.io index (index.crates.io/pr/ax/praxi-format).
+published = curl -sf -A "praxi-release" "https://index.crates.io/$(shell echo $1 | cut -c1-2)/$(shell echo $1 | cut -c3-4)/$1" | grep -q '"vers":"$(VERSION)"'
+
 publish-%: release-ready
 	@echo " $(CRATES) " | grep -q " $* " || { echo "unknown crate $*; one of: $(CRATES)"; exit 1; }
-	cargo publish -p $*
+	@if $(call published,$*); then echo "$* $(VERSION) is already published, skipping"; else cargo publish -p $*; fi
 
 package-%:
 	@echo " $(CRATES) " | grep -q " $* " || { echo "unknown crate $*; one of: $(CRATES)"; exit 1; }

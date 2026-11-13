@@ -68,7 +68,7 @@ Packages contain the crate's sources, tests and examples; `praxi-bevy` also ship
   `Cargo.toml`, `Cargo.lock`) changed since that tag; docs and the Makefile may have, then runs `make check` and
   publishes the crates one by one in dependency order with `cargo publish -p`, which waits
   for each to be available before the next. A crate whose version is already on crates.io
-  (asked from `https://crates.io/api/v1/crates/CRATE/VERSION`) is skipped, so after an
+  (in the sparse index, `https://index.crates.io/`, which cargo reads) is skipped, so after an
   error, such as crates.io's rate limit on new crates (`429 Too Many Requests`, "try again
   after ..."), running `make publish` again continues where it stopped. Needs
   `cargo login` first.
