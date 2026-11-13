@@ -118,8 +118,9 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
     through Bevy's audio with the video's clock following the sound
     ([bevy.md](bevy.md#audio)), and `PraxiEvent` / `PraxiCue<T>` are entity events that
     observers see as they happen ([bevy.md](bevy.md#cues-as-they-happen)).
-13. **0.1.0** First release: crates.io metadata, dual MIT / Apache-2.0 license, a README
-    per crate, `make package`, `make tag` and `make publish` ([releasing.md](releasing.md)).
+13. **0.1.1** First release (0.1.0 was tagged but not published): crates.io metadata, dual MIT / Apache-2.0 license, a README
+    per crate, `make package`, `make tag` and `make publish`, release binaries for Linux, macOS and Windows built on GitHub
+    ([releasing.md](releasing.md)).
 
 ## Next
 

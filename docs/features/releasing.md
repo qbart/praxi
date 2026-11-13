@@ -9,7 +9,7 @@ How praxi is versioned, tagged and published to [crates.io](https://crates.io).
 - Crate versions follow semver. While the major version is `0`, a minor version may break
   the API.
 - The file format has its own version ([PRAXI.md](../spec/PRAXI.md), 0.10 at release
-  0.1.0). A crate release lists the format version it reads and writes in the README;
+  0.1.1). A crate release lists the format version it reads and writes in the README;
   crate and format versions are not tied.
 - A release is the commit tagged `vX.Y.Z` (annotated) with the workspace version `X.Y.Z`.
 
@@ -47,7 +47,12 @@ Every crate has, besides `name`, `version` and `description`:
   `gh` remote, which is public.
 - `readme = "README.md"`: a short README per crate (what it is, a usage example, links to
   the docs). Images are only in the repository README.
+- `rust-version = "1.98"` from the workspace: the highest minimum Rust version among the
+  dependencies (`opus1`), checked with `cargo +1.98 check --workspace --all-targets`.
 - `keywords` and `categories` for crates.io search.
+- `[package.metadata.docs.rs] all-features = true` in `praxi`, `praxi-format` and
+  `praxi-bevy`, so docs.rs documents the feature-gated APIs (cue parsing, cue sheets,
+  audio).
 - Dependencies on other praxi crates through `[workspace.dependencies]` with both `path`
   and `version`, so the published manifest points at crates.io.
 
@@ -89,6 +94,11 @@ remote. It builds `praxi`, `praxi-viewer` and `praxi-editor` in release mode
   artifacts without making a release, to check the builds before tagging.
 - The workflow uses only `actions/checkout`, `actions/upload-artifact`,
   `actions/download-artifact` and the `gh` CLI on the runner.
+
+## Versions released
+
+- 0.1.0: tagged, never published (the release binaries workflow did not exist yet).
+- 0.1.1: the first release on crates.io and GitHub.
 
 ## Release steps
 
