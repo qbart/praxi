@@ -4,6 +4,11 @@ description = "Bevy plugin playing praxi video"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["audio"]
+# Plays the videos' audio through Bevy's audio (docs/features/bevy.md#audio).
+audio = ["bevy/bevy_audio"]
+
 [dependencies]
 praxi = { workspace = true, features = ["cue-sheet"] }
 praxi-wgpu.workspace = true

@@ -1,5 +1,7 @@
 //! Plays praxi files in Bevy through `praxi-wgpu` (`docs/features/bevy.md`).
 
+#[cfg(feature = "audio")]
+mod audio;
 mod file;
 
 use bevy::asset::RenderAssetUsages;
@@ -20,6 +22,8 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(feature = "audio")]
+pub use audio::{PraxiAudio, PraxiAudioDecoder, PraxiAudioPlugin, PraxiAudioSource, PraxiAudioTrack};
 pub use praxi;
 
 /// The player type of a [`PraxiVideo`].
@@ -56,8 +60,9 @@ pub enum PraxiSystems {
     Cues,
 }
 
-/// A player event of the video on `entity`.
-#[derive(Message, Debug, Clone)]
+/// A player event of the video on `entity`, sent as a message and triggered on `entity`
+/// (`docs/features/bevy.md#cues-as-they-happen`).
+#[derive(Message, EntityEvent, Debug, Clone)]
 pub struct PraxiEvent {
     pub entity: Entity,
     pub event: praxi::Event,
@@ -73,15 +78,16 @@ impl<T> Default for PraxiCuePlugin<T> {
     }
 }
 
-impl<T: DeserializeOwned + Send + Sync + 'static> Plugin for PraxiCuePlugin<T> {
+impl<T: DeserializeOwned + Clone + Send + Sync + 'static> Plugin for PraxiCuePlugin<T> {
     fn build(&self, app: &mut App) {
         app.add_message::<PraxiCue<T>>().add_systems(Update, parse_cues::<T>.in_set(PraxiSystems::Cues));
     }
 }
 
-/// A cue of the video on `entity`, parsed into `T`.
-#[derive(Message, Debug, Clone)]
-pub struct PraxiCue<T> {
+/// A cue of the video on `entity`, parsed into `T`, sent as a message and triggered on
+/// `entity`.
+#[derive(Message, EntityEvent, Debug, Clone)]
+pub struct PraxiCue<T: Send + Sync + 'static> {
     pub entity: Entity,
     /// Matches the `id` of its `CueEnd` in [`PraxiEvent`].
     pub id: u64,
@@ -95,17 +101,20 @@ pub struct PraxiCue<T> {
 
 /// Parses the cues among this frame's [`PraxiEvent`]s; unknown cue types are skipped,
 /// malformed cues reported.
-fn parse_cues<T: DeserializeOwned + Send + Sync + 'static>(
+fn parse_cues<T: DeserializeOwned + Clone + Send + Sync + 'static>(
     mut events: MessageReader<PraxiEvent>,
     videos: Query<&PraxiVideo>,
     mut cues: MessageWriter<PraxiCue<T>>,
+    mut commands: Commands,
 ) {
     for PraxiEvent { entity, event } in events.read() {
         let Event::Cue(c) = event else { continue };
         match c.parse::<T>() {
             Ok(cue) => {
                 let (id, stream, time, duration, position) = (c.id, c.stream, c.time, c.duration, c.position());
-                cues.write(PraxiCue { entity: *entity, id, stream, time, duration, position, cue });
+                let cue = PraxiCue { entity: *entity, id, stream, time, duration, position, cue };
+                commands.trigger(cue.clone());
+                cues.write(cue);
             }
             Err(e) if e.is_unknown_type() => {}
             Err(e) => {
@@ -142,6 +151,8 @@ pub struct PraxiVideo {
     gpu: Option<Gpu>,
     /// Frames drawn into `gpu.target`, for the copy into `image`.
     version: u64,
+    /// Counts the players `reopen` made; their audio outputs are new.
+    generation: u64,
 }
 
 /// The renderer and the texture the video is drawn into.
@@ -168,6 +179,7 @@ impl PraxiVideo {
             caps,
             gpu: None,
             version: 0,
+            generation: 0,
         })
     }
 
@@ -199,6 +211,7 @@ impl PraxiVideo {
         }
         self.player = SyncCell::new(player);
         self.file = file;
+        self.generation += 1;
         Ok(())
     }
 }
@@ -213,7 +226,7 @@ fn open_player(path: &Path, caps: &Capabilities) -> Result<(FilePlayer, SharedFi
     Ok((player, file))
 }
 
-fn advance(time: Res<Time>, mut videos: Query<(Entity, &mut PraxiVideo)>, mut events: MessageWriter<PraxiEvent>) {
+fn advance(time: Res<Time>, mut videos: Query<(Entity, &mut PraxiVideo)>, mut events: MessageWriter<PraxiEvent>, mut commands: Commands) {
     for (entity, mut video) in &mut videos {
         let player = video.player.get();
         if let Err(e) = player.advance(time.delta()) {
@@ -221,7 +234,9 @@ fn advance(time: Res<Time>, mut videos: Query<(Entity, &mut PraxiVideo)>, mut ev
             player.pause();
         }
         while let Some(event) = player.poll_event() {
-            events.write(PraxiEvent { entity, event });
+            let event = PraxiEvent { entity, event };
+            commands.trigger(event.clone());
+            events.write(event);
         }
     }
 }

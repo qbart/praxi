@@ -143,7 +143,7 @@ helpers map it to where the video is drawn.
 
 ## Bevy: typed cue messages
 
-`PraxiCuePlugin::<T>` (with `T: DeserializeOwned + Send + Sync + 'static`, usually the
+`PraxiCuePlugin::<T>` (with `T: DeserializeOwned + Clone + Send + Sync + 'static`, usually the
 game's cue enum) sends every cue that parses into `T` as a `PraxiCue<T>` message:
 
 ```rust
