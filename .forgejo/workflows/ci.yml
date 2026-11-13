@@ -10,18 +10,16 @@ jobs:
     runs-on: docker
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
+      - name: Install Rust and ALSA
         run: |
-          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy
+          apt-get update
+          apt-get install -y --no-install-recommends pkg-config libasound2-dev
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy --target x86_64-pc-windows-gnu
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: Clippy
-        run: |
-          cargo clippy --workspace --exclude praxi-viewer --exclude praxi-editor --all-targets -- -D warnings
-          cargo clippy -p praxi-viewer -p praxi-editor --no-default-features --all-targets -- -D warnings
-      - name: Test
-        run: |
-          cargo test --workspace --exclude praxi-viewer --exclude praxi-editor
-          cargo test -p praxi-viewer -p praxi-editor --no-default-features
+      - name: Check
+        run: make check
+      - name: Check Windows
+        run: make check-windows
 
   bench:
     runs-on: docker
