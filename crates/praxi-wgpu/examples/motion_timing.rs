@@ -14,7 +14,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None))?;
     let info = adapter.get_info();
-    println!("adapter: {} ({:?})", info.name, info.backend);
+    // The hardware the times are measured on (docs/features/benchmarks.md#measurements).
+    println!(
+        "adapter: {} (vendor {:#06x}, device {:#06x}, {:?}, {:?}), driver {} {}",
+        info.name, info.vendor, info.device, info.device_type, info.backend, info.driver, info.driver_info
+    );
     if !praxi_wgpu::supports_motion(&adapter) {
         return Err("the adapter cannot run the motion decoder".into());
     }

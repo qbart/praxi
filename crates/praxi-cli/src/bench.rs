@@ -54,8 +54,78 @@ pub struct Results {
     pub fps_den: u32,
     pub frames: u64,
     pub settings: Settings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<Machine>,
     pub encode_seconds: f64,
     pub variants: Vec<VariantResult>,
+}
+
+/// What a run measured on (`docs/spec/BENCH.md#machine`); fields the OS does not report are `None`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Machine {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub physical_cores: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logical_cores: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_mhz: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub praxi_version: Option<String>,
+}
+
+impl Machine {
+    /// The machine this process runs on.
+    pub fn current() -> Machine {
+        use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+        let sys = System::new_with_specifics(
+            RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing().with_frequency()).with_memory(MemoryRefreshKind::nothing().with_ram()),
+        )
+        .ok();
+        let cpus = sys.as_ref().map_or(&[][..], |s| s.cpus());
+        let text = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        Machine {
+            os: text(System::long_os_version().ok()),
+            kernel: text(System::kernel_version().ok()),
+            arch: Some(std::env::consts::ARCH.to_string()),
+            cpu: text(cpus.first().map(|c| c.brand().to_string())),
+            physical_cores: System::physical_core_count().ok().map(|n| n as u32),
+            logical_cores: (!cpus.is_empty()).then_some(cpus.len() as u32),
+            cpu_mhz: cpus.first().map(|c| c.frequency()).filter(|&f| f > 0),
+            memory_bytes: sys.as_ref().map(|s| s.total_memory()).filter(|&m| m > 0),
+            praxi_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        }
+    }
+}
+
+impl std::fmt::Display for Machine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts = Vec::new();
+        parts.extend(self.cpu.clone());
+        match (self.physical_cores, self.logical_cores) {
+            (Some(p), Some(l)) => parts.push(format!("{p} cores / {l} threads")),
+            (None, Some(l)) => parts.push(format!("{l} threads")),
+            (Some(p), None) => parts.push(format!("{p} cores")),
+            (None, None) => {}
+        }
+        parts.extend(self.cpu_mhz.map(|m| format!("{m} MHz at start")));
+        parts.extend(self.memory_bytes.map(|m| format!("{:.0} GiB", m as f64 / (1u64 << 30) as f64)));
+        parts.extend(self.os.clone());
+        parts.extend(self.kernel.as_ref().map(|k| format!("kernel {k}")));
+        parts.extend(self.arch.clone());
+        parts.extend(self.praxi_version.as_ref().map(|v| format!("praxi {v}")));
+        if parts.is_empty() { write!(f, "unknown") } else { write!(f, "{}", parts.join(", ")) }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,6 +173,8 @@ impl Drop for Encoded {
 
 pub fn bench(args: BenchArgs) -> AnyResult<()> {
     let baseline = args.baseline.as_deref().map(read_results).transpose()?;
+    let machine = Machine::current();
+    eprintln!("machine: {machine}");
     let p = source(&args.input, &args.video)?;
     let frame_bytes = p.width as usize * p.height as usize * 4;
     let encoded = Encoded {
@@ -244,6 +316,7 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
             skip_threshold: args.video.skip_threshold,
             plane_min_saving: args.video.plane_min_saving,
         },
+        machine: Some(machine),
         encode_seconds,
         variants,
     };
@@ -377,6 +450,9 @@ fn decode_ms(times: &mut [Duration]) -> DecodeMs {
 }
 
 fn print_results(r: &Results) {
+    if let Some(m) = &r.machine {
+        println!("machine: {m}");
+    }
     println!(
         "{} frames of {}x{} @ {}/{} fps, encoded in {:.1} s",
         r.frames, r.width, r.height, r.fps_num, r.fps_den, r.encode_seconds
@@ -422,6 +498,9 @@ pub fn compare(baseline: &Results, new: &Results, max_size_increase: f64, max_ps
         )
         .into());
     }
+    if let Some(note) = machine_note(baseline.machine.as_ref(), new.machine.as_ref()) {
+        println!("{note}");
+    }
     println!("{:<9} {:>9} {:>9} {:>12}", "baseline", "bytes", "PSNR dB", "decode mean");
     let mut regressions = Vec::new();
     for b in &baseline.variants {
@@ -452,6 +531,16 @@ pub fn compare(baseline: &Results, new: &Results, max_size_increase: f64, max_ps
     Ok(regressions)
 }
 
+/// A warning when decode times of the two runs come from different machines.
+fn machine_note(baseline: Option<&Machine>, new: Option<&Machine>) -> Option<String> {
+    let key = |m: &Machine| (m.cpu.clone(), m.os.clone());
+    match (baseline, new) {
+        (None, _) => Some("note: the baseline does not say which machine it was measured on; decode ratios may compare machines".into()),
+        (Some(b), Some(n)) if key(b) != key(n) => Some(format!("note: decode ratios compare machines: baseline on {b}")),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,6 +555,7 @@ mod tests {
             fps_den: 1,
             frames: 10,
             settings: Settings { quality: "fast".into(), rdo: 0.0, keyint: 60, skip_threshold: 3, plane_min_saving: 8.0 },
+            machine: Some(Machine { cpu: Some("Test CPU".into()), os: Some("Test OS".into()), logical_cores: Some(8), ..Machine::default() }),
             encode_seconds: 1.0,
             variants: vec![VariantResult {
                 format: "bc7".into(),
@@ -526,5 +616,32 @@ mod tests {
         let mut times: Vec<Duration> = (1..=20).map(Duration::from_millis).collect();
         let d = decode_ms(&mut times);
         assert_eq!((d.mean, d.p95, d.max), (10.5, 19.0, 20.0));
+    }
+
+    #[test]
+    fn machine_is_optional_and_compared() {
+        let mut r = results();
+        let mut value = serde_json::to_value(&r).unwrap();
+        assert_eq!(value["machine"], serde_json::json!({ "os": "Test OS", "cpu": "Test CPU", "logical_cores": 8 }));
+        value.as_object_mut().unwrap().remove("machine");
+        let old: Results = serde_json::from_value(value).unwrap();
+        assert_eq!(old.machine, None);
+        let partial: Machine = serde_json::from_value(serde_json::json!({ "cpu": "X" })).unwrap();
+        assert_eq!(partial.cpu.as_deref(), Some("X"));
+
+        assert!(machine_note(r.machine.as_ref(), r.machine.as_ref()).is_none());
+        assert!(machine_note(None, r.machine.as_ref()).is_some());
+        let base = r.machine.clone();
+        r.machine.as_mut().unwrap().cpu = Some("Other CPU".into());
+        assert!(machine_note(base.as_ref(), r.machine.as_ref()).unwrap().contains("Test CPU"));
+    }
+
+    #[test]
+    fn current_machine_has_the_basics() {
+        let m = Machine::current();
+        assert_eq!(m.arch.as_deref(), Some(std::env::consts::ARCH));
+        assert_eq!(m.praxi_version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        assert!(m.logical_cores.is_some_and(|n| n > 0), "{m:?}");
+        assert!(!m.to_string().is_empty());
     }
 }

@@ -23,3 +23,5 @@ praxi-encoder.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# Machine info in benchmark results (docs/spec/BENCH.md#machine).
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
