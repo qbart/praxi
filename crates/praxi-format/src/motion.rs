@@ -767,10 +767,10 @@ impl Frame {
             return Err("alpha tables without an alpha plane".into());
         }
         let mut at = HEADER_SIZE;
-        for t in 0..TABLES {
+        for (t, table) in self.tables.iter_mut().enumerate() {
             if mask & 1 << t == 0 {
                 if keyframe {
-                    self.tables[t] = None;
+                    *table = None;
                 }
                 continue;
             }
@@ -783,7 +783,7 @@ impl Frame {
                 lens[2 * i] = b & 15;
                 lens[2 * i + 1] = b >> 4;
             }
-            self.tables[t] = single_table(&lens)?.map(Box::new);
+            *table = single_table(&lens)?.map(Box::new);
         }
         let Some(sizes) = payload.get(at..at + 4 * slices as usize) else {
             return Err("motion payload ends in its slice sizes".into());
