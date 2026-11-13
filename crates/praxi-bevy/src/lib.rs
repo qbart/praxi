@@ -348,10 +348,23 @@ mod tests {
             bevy::mesh::MeshPlugin,
             PraxiPlugin,
             PraxiCuePlugin::<TestCue>::default(),
-        ))
-        .init_resource::<ClearColor>()
+        ));
+        #[cfg(feature = "audio")]
+        app.add_plugins((bevy::audio::AudioPlugin::default(), PraxiAudioPlugin));
+        app.init_resource::<ClearColor>()
         .init_resource::<Seen>()
-        .add_systems(Update, collect.after(PraxiSystems::Cues));
+        .init_resource::<Observed>()
+        .add_systems(Update, collect.after(PraxiSystems::Cues))
+        .add_observer(|e: On<PraxiEvent>, mut seen: ResMut<Observed>| {
+            if matches!(e.event, praxi::Event::Cue(_)) {
+                seen.events.push(e.entity);
+            }
+        })
+        .add_observer(|c: On<PraxiCue<TestCue>>, seen: Res<Seen>, mut observed: ResMut<Observed>| {
+            // Triggered before the message is read: the collecting system has not seen it yet.
+            let messages = seen.1.iter().filter(|m| m.id == c.id).count();
+            observed.cues.push((c.entity, messages));
+        });
         while app.plugins_state() == PluginsState::Adding {
             bevy::tasks::tick_global_task_pools_on_main_thread();
         }
@@ -371,6 +384,15 @@ mod tests {
     /// Every [`PraxiEvent`] and [`PraxiCue`] so far.
     #[derive(Resource, Default)]
     struct Seen(Vec<PraxiEvent>, Vec<PraxiCue<TestCue>>);
+
+    /// What the observers saw: the videos of cue events, and of typed cues with how many
+    /// messages of that cue had been read then; and cues seen by an entity observer.
+    #[derive(Resource, Default)]
+    struct Observed {
+        events: Vec<Entity>,
+        cues: Vec<(Entity, usize)>,
+        on_entity: usize,
+    }
 
     fn collect(mut events: MessageReader<PraxiEvent>, mut cues: MessageReader<PraxiCue<TestCue>>, mut seen: ResMut<Seen>) {
         seen.0.extend(events.read().cloned());
@@ -395,6 +417,10 @@ mod tests {
 
     fn clip(path: &Path, variant: VariantConfig) {
         let config = EncoderConfig::new(40, 24, 10, 1).variant(variant).keyint(4).cue(0.25, "boom");
+        encode(path, config);
+    }
+
+    fn encode(path: &Path, config: EncoderConfig) {
         let mut enc = Encoder::new(std::fs::File::create(path).unwrap(), config).unwrap();
         for t in 0..8u32 {
             let frame: Vec<u8> = (0..40 * 24).flat_map(|i| [(i % 40 * 6 + t * 9) as u8, (i / 40 * 10) as u8, 90, 255]).collect();
@@ -428,7 +454,10 @@ mod tests {
                 world.resource_scope(|_, mut images: Mut<Assets<Image>>| PraxiVideo::open(&path, &adapter, &mut images)).unwrap();
             video.player().play().unwrap();
             let image = video.image.id();
-            let entity = world.spawn(video).id();
+            let entity = world
+                .spawn(video)
+                .observe(|_: On<PraxiCue<TestCue>>, mut observed: ResMut<Observed>| observed.on_entity += 1)
+                .id();
             for _ in 0..10 {
                 app.update();
             }
@@ -442,8 +471,57 @@ mod tests {
             let typed: Vec<_> = seen.1.iter().filter(|c| c.entity == entity).collect();
             assert_eq!(typed.len(), 1, "{name}: one typed cue: {:?}", seen.1);
             assert_eq!((typed[0].cue.clone(), typed[0].time), (TestCue::Boom, Duration::from_millis(250)));
+            let observed = app.world().resource::<Observed>();
+            assert_eq!(observed.events.iter().filter(|&&e| e == entity).count(), 1, "{name}: observed cue event");
+            assert_eq!(observed.cues.iter().filter(|c| c.0 == entity).collect::<Vec<_>>(), [&(entity, 0)], "{name}: observed before read");
+            assert_eq!(observed.on_entity, 1, "{name}: the entity observer");
+            app.world_mut().resource_mut::<Observed>().on_entity = 0;
             app.world_mut().despawn(entity);
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(feature = "audio")]
+    #[test]
+    fn audio_plays_from_children_and_drives_the_clock() {
+        use praxi::Clock;
+        use praxi_encoder::{AudioTrackConfig, SampleFormat};
+        let Some(mut app) = app() else {
+            return skip("no adapter");
+        };
+        let path = std::env::temp_dir().join(format!("praxi-bevy-audio-{}.praxi", std::process::id()));
+        let samples = (0..2 * 9600).map(|i| (i % 50) as f32 / 100.0).collect();
+        let track = AudioTrackConfig::from_samples("main", 48_000, 2, samples).format(SampleFormat::F32);
+        encode(&path, EncoderConfig::new(40, 24, 10, 1).variant(VariantConfig::motion()).variant(VariantConfig::bc7()).audio(track));
+        let adapter = app.world().resource::<RenderAdapter>().clone();
+        let world = app.world_mut();
+        let video = world.resource_scope(|_, mut images: Mut<Assets<Image>>| PraxiVideo::open(&path, &adapter, &mut images)).unwrap();
+        let entity = world.spawn((video, PraxiAudio { volume: 0.5, ..Default::default() })).id();
+        app.update();
+
+        let tracks = |app: &mut App| {
+            let mut q = app.world_mut().query::<(&ChildOf, &PraxiAudioTrack, &bevy::audio::AudioPlayer<PraxiAudioSource>)>();
+            q.iter(app.world()).filter(|(c, ..)| c.parent() == entity).map(|(_, t, _)| t.track).collect::<Vec<_>>()
+        };
+        let clock = |app: &mut App| app.world_mut().get_mut::<PraxiVideo>(entity).unwrap().player().clock();
+        assert_eq!(tracks(&mut app), [0], "one child per audio track");
+        assert!(matches!(clock(&mut app), Clock::Audio { track: 0, .. }), "{:?}", clock(&mut app));
+        let latency = Duration::from_millis(30);
+        app.world_mut().get_mut::<PraxiAudio>(entity).unwrap().latency = Some(latency);
+        app.update();
+        assert_eq!(clock(&mut app), Clock::Audio { track: 0, latency });
+
+        app.world_mut().get_mut::<PraxiVideo>(entity).unwrap().reopen().unwrap();
+        app.update();
+        app.update();
+        assert_eq!(tracks(&mut app), [0], "replaced after reopen");
+
+        app.world_mut().entity_mut(entity).remove::<PraxiAudio>();
+        app.update();
+        assert_eq!(tracks(&mut app), Vec::<usize>::new(), "removed");
+        assert_eq!(clock(&mut app), Clock::Game);
+        app.world_mut().despawn(entity);
+        app.update();
+        std::fs::remove_file(&path).unwrap();
     }
 }

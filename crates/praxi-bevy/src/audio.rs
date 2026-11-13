@@ -234,3 +234,67 @@ fn detach(
     }
     commands.entity(entity).try_remove::<Playing>();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use praxi::{Capabilities, Player, TextureFormat};
+    use praxi_encoder::{AudioTrackConfig, Encoder, EncoderConfig, SampleFormat, VariantConfig};
+    use std::io::Cursor;
+
+    /// The `i`th sample of the test track: a ramp, different per channel.
+    fn sample(i: usize) -> f32 {
+        (i % 200) as f32 / 400.0 - (i % 2) as f32 * 0.5
+    }
+
+    /// A 0.5 s clip with a stereo 48 kHz `f32` track, playing.
+    fn player() -> Player<Cursor<Vec<u8>>> {
+        let samples: Vec<f32> = (0..48_000).map(sample).collect();
+        let track = AudioTrackConfig::from_samples("main", 48_000, 2, samples).format(SampleFormat::F32);
+        let config = EncoderConfig::new(8, 8, 10, 1).variant(VariantConfig::bc7()).audio(track);
+        let mut enc = Encoder::new(Cursor::new(Vec::new()), config).unwrap();
+        for _ in 0..5 {
+            enc.push_frame(&[128; 8 * 8 * 4]).unwrap();
+        }
+        let bytes = enc.finish().unwrap().0.into_inner();
+        Player::open(Cursor::new(bytes), &Capabilities::new([TextureFormat::Bc7])).unwrap()
+    }
+
+    #[test]
+    fn decoder_plays_the_output_then_silence() {
+        let mut player = player();
+        let source = PraxiAudioSource::new(player.audio_output(0).unwrap());
+        let mut decoder = source.decoder();
+        assert_eq!((decoder.channels().get(), decoder.sample_rate().get()), (2, 48_000));
+        assert_eq!((decoder.total_duration(), decoder.current_span_len()), (None, None));
+
+        let block = BLOCK_FRAMES * 2;
+        assert!(decoder.by_ref().take(block).all(|s| s == 0.0), "silence before play");
+        player.play().unwrap();
+        player.advance(Duration::from_millis(10)).unwrap();
+        // The next block is read from the output's start.
+        let heard: Vec<f32> = decoder.by_ref().take(4000).collect();
+        let expected: Vec<f32> = (0..4000).map(sample).collect();
+        assert_eq!(heard, expected);
+
+        player.pause();
+        decoder.by_ref().take(block - 4000 % block).for_each(drop);
+        assert!(decoder.by_ref().take(48_000).all(|s| s == 0.0), "silence while paused, and no end");
+    }
+
+    #[test]
+    fn decoder_estimates_latency_from_bursts() {
+        let player = player();
+        let source = PraxiAudioSource::new(player.audio_output(0).unwrap());
+        let mut decoder = source.decoder();
+        assert_eq!(source.estimated_latency(), None);
+        // Two device callbacks of 1024 frames, 10 ms apart.
+        for _ in 0..2 {
+            decoder.by_ref().take(1024 * 2).for_each(drop);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        decoder.by_ref().take(2).for_each(drop);
+        // 1024 frames (whole blocks) per burst, two bursts queued: 2048 frames at 48 kHz.
+        assert_eq!(source.estimated_latency(), Some(Duration::from_micros(2 * 1024 * 1_000_000u64 / 48_000)));
+    }
+}
