@@ -1,0 +1,14 @@
+; The praxi Godot example (docs/features/godot.md#example-project). Run `make godot-example`.
+
+config_version=5
+
+[application]
+
+config/name="praxi cue game"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.4")
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720

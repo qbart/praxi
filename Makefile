@@ -2,7 +2,7 @@ SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
-.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game package publish tag crates release-ready godot-addon
+.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game package publish tag crates release-ready godot-addon godot-example
 
 # The workspace version (docs/features/releasing.md).
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -74,6 +74,18 @@ godot-addon:
 	mkdir -p $(GODOT_ADDON)/bin
 	cp crates/praxi-godot/praxi.gdextension crates/praxi-godot/README.md LICENSE-MIT LICENSE-APACHE $(GODOT_ADDON)/
 	cp target/release/$(GODOT_LIB) $(GODOT_ADDON)/bin/$(GODOT_LIB_NAME)
+
+# The Godot example on the cue game file and its cues (docs/features/godot.md#example-project).
+GODOT ?= godot
+GODOT_EXAMPLE := examples/godot
+
+godot-example: godot-addon $(CUE_GAME)
+	mkdir -p $(GODOT_EXAMPLE)/addons/praxi $(GODOT_EXAMPLE)/.godot
+	cp -r $(GODOT_ADDON)/. $(GODOT_EXAMPLE)/addons/praxi/
+	cargo run --release -p praxi-cli -- cues import $(CUE_GAME) crates/praxi-bevy/examples/cue_game.cues.json -o $(GODOT_EXAMPLE)/intro.praxi
+	# Godot loads the extensions listed here; the editor writes it when it scans the project.
+	echo 'res://addons/praxi/praxi.gdextension' > $(GODOT_EXAMPLE)/.godot/extension_list.cfg
+	$(GODOT) --path $(GODOT_EXAMPLE)
 
 # Releasing (docs/features/releasing.md).
 package:

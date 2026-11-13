@@ -165,9 +165,14 @@ Field values convert as: string to `String`, integer to `int`, float to `float`,
 the cues of `crates/praxi-bevy/examples/cue_game.cues.json`, with Space, arrows, L and M
 as in the Bevy example.
 
-- `make godot-example` builds the addon, copies it into the project, encodes the sample
-  with BC7 and the cue sheet into `examples/godot/intro.praxi`, and opens the project
-  with `godot` (`GODOT` overrides the binary).
+- `make godot-example` builds the addon, copies it into the project, writes the cue game
+  file (`make cue-game`'s BC7 and motion encode of the sample; Godot plays the BC7 variant)
+  with the cue sheet imported to `examples/godot/intro.praxi`, writes
+  `.godot/extension_list.cfg`, and runs the project with `godot` (`GODOT=... make
+  godot-example` overrides the binary).
+- Subtitles, markers and camera shakes are read from `active_cues()` every frame, so they
+  follow seeking; instant markers and sounds come from the `cue` signal, and the HUD lists
+  sounds starting within 2 s from `upcoming_cues(2.0)`, as the Bevy example preloads them.
 - The addon and `intro.praxi` are build output, ignored by git.
 
 ## Tests
