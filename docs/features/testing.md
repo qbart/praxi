@@ -75,8 +75,8 @@ tests.
 These need a desktop and are not covered by tests:
 
 - The viewer window: playback, keys, audio (`praxi-viewer FILE`).
-- The editor on a desktop: timeline input, inspector, saving, "Write into file" on
-  Windows ([cue-editor.md](cue-editor.md)).
+- The editor on a desktop: timeline input, inspector, saving, "Write into file"
+  ([cue-editor.md](cue-editor.md)); on Windows it is only type-checked.
 - The `cutscene` example (`cargo run -p praxi-wgpu --example cutscene -- FILE`).
 - The Bevy cue editor (`cargo run --release -p praxi-bevy --example cue_editor -- FILE`),
   also under Xvfb ([bevy.md](bevy.md#tests)).

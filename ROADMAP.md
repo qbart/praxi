@@ -11,13 +11,10 @@ observable cues.
 
 ## 1. Checks on real machines
 
-The code is done and tested; these were never run where they matter.
+The code is done and tested; these were never run where they matter. Windows is not a
+priority: "Write into file" works on Linux and type-checks for Windows (`make check-windows`),
+and is assumed to work there.
 
-- [ ] **Editor "Write into file" on Windows**: releases the file, renames over it and
-  reopens it at the same position, retrying while antivirus holds the new file
-  ([cue-editor.md](docs/features/cue-editor.md#saving)). Checked on Linux under Xvfb and
-  type-checked for Windows (`make check-windows`); run the editor and the Bevy cue editor
-  on Windows and write cues into a playing file.
 - [ ] **Sound on a real device**: the viewer and the editor through `praxi-audio`, with a
   track the device plays natively and one that is resampled and mapped
   ([audio-output.md](docs/features/audio-output.md)). An ALSA file capture on a null sink
