@@ -126,10 +126,12 @@ formats above.
 
 ## Video
 
-Video track 0 is shown. Each `_update` that decodes a new frame (`VideoFrame::index`
-changed) copies its blocks into an `Image` (`Image.create_from_data` with the format above,
-no mipmaps) and updates an `ImageTexture` with it; the first frame, or a size change,
-creates the texture. The texture keeps the video's size. The copy costs one memcpy of the
+Video track 0 is shown. Opening the file creates an `ImageTexture` of the track's size and
+format, black until the first frame: `VideoStreamPlayer` takes the playback's texture once,
+when its stream is set, and draws that object from then on. Each `_update` that decodes a
+new frame (`VideoFrame::index` changed) copies its blocks into an `Image`
+(`Image.create_from_data` with the format above, no mipmaps) and updates that texture in
+place. The texture keeps the video's size. The copy costs one memcpy of the
 frame's blocks (about 2 MB for 1080p BC7) per new frame. Other video tracks are ignored.
 
 Colors: BC and ASTC data is sRGB-encoded, which is what Godot expects of a texture drawn
@@ -190,8 +192,9 @@ audio only in real time, so the test runs paced at 60 fps (about 4 s) rather tha
 - `load()` returns a `VideoStreamPraxi` of the clip's length; with `formats = ["bc7"]`
   (the headless renderer reports no texture formats), a `VideoStreamPlayer` with
   `autoplay` plays it.
+- Setting the stream gives the player a texture of the video's size before any frame.
 - At 0.6 s: `active_cues()` lists the marker, `upcoming_cues(1.0)` the shake with a
-  positive `until`, the texture has the video's size, and the master bus peaks above
+  positive `until`, the texture is the same object, updated in place, and the master bus peaks above
   -40 dB (the tone is -14 dB), so audio reached `mix_audio`.
 - At 1.3 s: `cue` (marker, with its fields, times and `Vector2` position), `cue_ended`
   (the marker's id) and `cue` (shake, `null` position, typed fields) arrived in that order.

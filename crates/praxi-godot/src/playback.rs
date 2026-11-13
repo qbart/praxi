@@ -166,6 +166,11 @@ impl VideoStreamPlaybackPraxi {
         match Self::open_player(path, formats) {
             Ok(mut player) => {
                 player.set_looping(looping);
+                // VideoStreamPlayer takes the texture once, when the stream is set, so it
+                // exists from the start, black until the first frame, and is updated in place.
+                let p = &player.tracks()[0].params;
+                let image = image_format(p.format).and_then(|f| Image::create_empty(p.width as i32, p.height as i32, false, f));
+                *self.texture.lock().unwrap_or_else(|e| e.into_inner()) = image.and_then(|i| ImageTexture::create_from_image(&i));
                 let mut state = self.state();
                 state.player = Some(player);
                 state.select_audio_track(0);

@@ -75,6 +75,9 @@ func _initialize() -> void:
 	stream.looped.connect(func(): events.append(["looped"]))
 	player = VideoStreamPlayer.new()
 	player.stream = stream
+	# VideoStreamPlayer draws the texture it gets here, so it must exist before any frame.
+	var first = player.get_video_texture()
+	check(first != null and first.get_width() == 64 and first.get_height() == 32, "texture when the stream is set: %s" % [first])
 	player.autoplay = true  # starts when it enters the tree, after _initialize
 	root.add_child(player)
 	check(is_equal_approx(player.get_stream_length(), 2.0), "length %f" % player.get_stream_length())
@@ -93,7 +96,7 @@ func _process(_delta: float) -> bool:
 		var upcoming = stream.upcoming_cues(1.0)
 		check(upcoming.size() == 1 and upcoming[0].type == "camera.shake" and upcoming[0].until > 0.0, "upcoming at %f: %s" % [pos, upcoming])
 		var tex = player.get_video_texture()
-		check(tex != null and tex.get_width() == 64 and tex.get_height() == 32, "texture %s" % [tex])
+		check(tex != null and tex == first, "the same texture, updated in place: %s" % [tex])
 		# The clip's tone peaks at 0.2 (-14 dB); silence is -200 dB.
 		var peak := AudioServer.get_bus_peak_volume_left_db(0, 0)
 		check(peak > -40.0, "audio on the master bus: %f dB" % peak)
