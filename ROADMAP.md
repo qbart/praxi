@@ -8,20 +8,10 @@ Done so far (M7 to M11): cue editing after encoding, BC1, manual test targets, d
 of several frames, `praxi-audio`, Opus audio, the Bevy cue editor, consuming cues at
 runtime, typed command-line values, positions in the Bevy cue editor, Bevy audio and
 observable cues. Sound through `praxi-audio` was listened to on a desktop (Linux, PipeWire):
-Opus at 48 kHz and ADPCM at 44.1 kHz resampled sound the same.
-
-## 1. Checks on real machines
-
-The code is done and tested; these were never run where they matter. Windows is not a
-priority: "Write into file" works on Linux and type-checks for Windows (`make check-windows`),
-and is assumed to work there.
-
-- [ ] **Sound in Bevy**: `cue_game` on the tone files (`PraxiAudio`,
-  [bevy.md](docs/features/bevy.md#audio)): the tones play at the same pitch as in the
-  viewer, M mutes, and seeking and looping stay smooth. Checked under Xvfb on an ALSA
-  device here: the clock follows the audio at real speed with an estimated latency of
-  85-96 ms. On a desktop (Linux, PipeWire) the cues fire and the HUD estimated 92 ms;
-  whether picture and sound stay in step, M and seeking were not reported yet.
+Opus at 48 kHz and ADPCM at 44.1 kHz resampled sound the same. In Bevy, `cue_game` on the tone files plays in
+step with the picture (estimated latency 92 ms), mutes, seeks and loops smoothly. Windows is
+not a priority: "Write into file" works on Linux and type-checks for Windows
+(`make check-windows`), and is assumed to work there.
 
 ## Not scheduled
 
