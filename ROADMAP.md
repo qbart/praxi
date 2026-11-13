@@ -7,35 +7,25 @@ Work in order, top to bottom. Each item gets a spec in `docs/features/` before c
 Done so far (M7 to M11): cue editing after encoding, BC1, manual test targets, decode-ahead
 of several frames, `praxi-audio`, Opus audio, the Bevy cue editor, consuming cues at
 runtime, typed command-line values, positions in the Bevy cue editor, Bevy audio and
-observable cues. Sound through `praxi-audio` was listened to on a desktop (Linux, PipeWire):
+observable cues, the Godot runtime. Sound through `praxi-audio` was listened to on a desktop (Linux, PipeWire):
 Opus at 48 kHz and ADPCM at 44.1 kHz resampled sound the same. In Bevy, `cue_game` on the tone files plays in
 step with the picture (estimated latency 92 ms), mutes, seeks and loops smoothly. Windows is
 not a priority: "Write cues into .praxi" works on Linux and type-checks for Windows
 (`make check-windows`), and is assumed to work there.
 
-## 1. Godot runtime
+## 1. Godot runtime: what is left
 
-Play praxi files in Godot 4 the way `praxi-bevy` does in Bevy: a GDExtension crate
-(`praxi-godot`, on [godot-rust](https://github.com/godot-rust/gdext)) that Godot games
-add without writing Rust. Spec in `docs/features/godot.md` first.
+`praxi-godot` plays files in `VideoStreamPlayer` with audio, cues as signals and an
+example project ([godot.md](docs/features/godot.md)). Checked in headless Godot 4.7.2 (test)
+and under Xvfb on lavapipe (example). Still open:
 
-- [ ] **`VideoStreamPraxi`**: a `VideoStream` / `VideoStreamPlayback` pair, so the built-in
-  `VideoStreamPlayer` node plays `.praxi` files: play, pause, seek, loop, `stream_position`,
-  and a resource loader for the `.praxi` extension so files can be dropped into the editor.
-- [ ] **Frames as compressed textures**: each new frame uploaded as an `Image` in its block
-  format (`FORMAT_BPTC_RGBA` for BC7, `FORMAT_DXT1` for BC1, `FORMAT_ASTC_4x4` and
-  `FORMAT_ASTC_8x8`) into a `Texture2D` updated in place, chosen by what the rendering
-  device supports. Godot has no ASTC 6x6 image format, so files need another variant.
-- [ ] **Audio**: the player's audio tracks mixed through `VideoStreamPlayback`'s audio
-  (`mix_audio`), with the video clock following what is heard, as in Bevy.
-- [ ] **Cues as signals**: `cue(id, type, fields: Dictionary, time, duration, position)` and
-  `cue_ended(id)` signals on a `PraxiCues` node next to the player, plus `active_cues()`
-  and `upcoming_cues(within)`, so GDScript reacts to cues as they happen.
-- [ ] **Example project**: a Godot project like `cue_game` (subtitles, markers, camera
-  shake from cues), built for Linux, macOS and Windows by the release workflow along with
-  the extension libraries.
+- [ ] **Run it on a desktop**: the example (`make godot-example`) in a Godot editor on
+  real hardware, with sound; and the release workflow's macOS and Windows libraries.
+- [ ] **Audio clock**: the video follows the game clock; following what is heard needs
+  Godot's output latency and when `VideoStreamPlayer` mixes.
 - [ ] **Motion codec**: GPU decoding through Godot's `RenderingDevice` compute shaders,
   ported from `praxi-wgpu`; until then, files need a block-format variant.
+- [ ] **More video tracks**: only track 0 is shown.
 
 ## 2. C API and Unity
 

@@ -29,7 +29,7 @@ sounds all come from cues stored in the video file.*
   with screen positions, "what is active now" and "what starts soon" queries for preloading.
   Edit them after encoding without re-encoding the video.
 - **Tools.** A command line encoder, a GPU viewer and a timeline cue editor.
-- **Engines.** A `wgpu` integration and a Bevy plugin.
+- **Engines.** A Bevy plugin, a Godot addon and a `wgpu` integration.
 
 ![The praxi cue editor: video preview, cue inspector, and a timeline of cue streams over the audio waveform](docs/images/editor.jpg)
 
@@ -43,6 +43,7 @@ playing file.*
 |---|---|
 | [`praxi`](crates/praxi) | The player library: open a file, advance it every frame, read events, frames and audio |
 | [`praxi-bevy`](crates/praxi-bevy) | Bevy 0.20 plugin: video into an `Image`, audio, events and cues as observable events |
+| [`praxi-godot`](crates/praxi-godot) | Godot 4.4+ addon: `.praxi` files in `VideoStreamPlayer`, cues as signals (from GDScript, C# or C++) |
 | [`praxi-wgpu`](crates/praxi-wgpu) | Texture upload and drawing for engines on `wgpu` 30 |
 | [`praxi-encoder`](crates/praxi-encoder) | Encoder library: RGBA frames, audio and cues to `.praxi` |
 | [`praxi-format`](crates/praxi-format) | Container reader and writer, cue sheets |
@@ -151,6 +152,31 @@ examples from a checkout:
 make cue-game                                                        # the cutscene above
 cargo run --release -p praxi-bevy --example cue_editor -- intro.praxi   # a Bevy + egui cue editor
 ```
+
+## In Godot
+
+Download `praxi-godot-vX.Y.Z.zip` from [Releases](https://github.com/qbart/praxi/releases)
+and copy its `addons/praxi/` into your project (Godot 4.4 or newer). `.praxi` files then
+play in the built-in `VideoStreamPlayer`:
+
+```gdscript
+func _ready():
+    var stream: VideoStreamPraxi = load("res://intro.praxi")
+    stream.looping = true                       # seamless
+    stream.cue.connect(_on_cue)
+    $VideoStreamPlayer.stream = stream
+    $VideoStreamPlayer.play()
+
+func _on_cue(id, type, fields, time, duration, position):
+    if type == "camera.shake":
+        $Camera2D.shake(fields.strength)
+```
+
+`stream.active_cues()` and `stream.upcoming_cues(seconds)` answer what is on now and what
+starts soon. Godot shows BC7, BC1, ASTC 4x4 and ASTC 8x8 variants. The example project
+(`make godot-example`) is the cue game above in Godot:
+
+![The Godot example: Big Buck Bunny in a VideoStreamPlayer with a marker and a speech bubble from cues](docs/images/godot.jpg)
 
 ## In any engine
 

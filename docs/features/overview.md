@@ -123,6 +123,9 @@ machine is recorded in the baseline's `machine`).
 13. **0.1.1** First release (0.1.0 was tagged but not published): crates.io metadata, dual MIT / Apache-2.0 license, a README
     per crate, `make package`, `make tag` and `make publish`, release binaries for Linux, macOS and Windows built on GitHub
     ([releasing.md](releasing.md)).
+14. **M12** Godot runtime: `praxi-godot`, a GDExtension for Godot 4.4+ that plays `.praxi`
+    files in `VideoStreamPlayer` with block-compressed textures, audio and cues as signals,
+    an example project, and the addon zip in releases ([godot.md](godot.md)).
 
 ## Next
 
