@@ -10,7 +10,7 @@ runtime, typed command-line values, positions in the Bevy cue editor, Bevy audio
 observable cues. Sound through `praxi-audio` was listened to on a desktop (Linux, PipeWire):
 Opus at 48 kHz and ADPCM at 44.1 kHz resampled sound the same. In Bevy, `cue_game` on the tone files plays in
 step with the picture (estimated latency 92 ms), mutes, seeks and loops smoothly. Windows is
-not a priority: "Write into file" works on Linux and type-checks for Windows
+not a priority: "Write cues into .praxi" works on Linux and type-checks for Windows
 (`make check-windows`), and is assumed to work there.
 
 ## Not scheduled

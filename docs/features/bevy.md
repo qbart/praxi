@@ -119,8 +119,8 @@ cargo run --release -p praxi-bevy --example cue_editor -- intro.praxi [intro.cue
 
 A simple cue editor: the full editor is `praxi-editor` ([cue-editor.md](cue-editor.md)).
 
-- **Top bar**: play/pause, frame back and forward, position and duration, Save (writes the
-  sheet), Write into file (writes the cues into the file through `release_file`,
+- **Top bar**: play/pause, frame back and forward, position and duration, Save cues to JSON (writes the
+  sheet), Write cues into .praxi (writes the cues into the file through `release_file`,
   `replace_cues_in_file` and `reopen`), and the last status message.
 - **Video** in the middle, letterboxed.
 - **Timeline** at the bottom: a ruler and one lane per cue stream. Cues with a duration
@@ -175,6 +175,6 @@ The editor example is a manual check. It also runs under Xvfb on lavapipe:
 `Xvfb :77 &`, then `DISPLAY=:77 cue_editor FILE`, with `xdotool` for input (`xdotool
 windowfocus` first, since there is no window manager to give the window keyboard focus)
 and `ffmpeg -f x11grab` for screenshots. Selecting, playing, editing a type, deleting,
-Save and Write into file were checked that way, and so were positions: turning one on,
+Save cues to JSON and Write cues into .praxi were checked that way, and so were positions: turning one on,
 picking, dragging a marker, selecting a cue by its marker and saving the position to the
 sheet.

@@ -48,7 +48,7 @@ the viewer.
 
 ## Window
 
-- **Toolbar**: Save, Write into file, Undo, Redo, Add stream, Snap to frames (on by
+- **Toolbar**: Save cues to JSON, Write cues into .praxi, Undo, Redo, Add stream, Snap to frames (on by
   default), and the save state.
 - **Video**: track 0 and the tracks blended over it, letterboxed. Under it, the transport:
   play/pause, previous and next frame, position and duration, loop, mute.
@@ -135,8 +135,8 @@ Keys act when no text field has focus.
 | Delete | Delete the selected cue |
 | Ctrl+D | Duplicate the selected cue at the playhead |
 | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y | Undo, redo |
-| Ctrl+S | Save the sheet |
-| Ctrl+Shift+S | Write into file |
+| Ctrl+S | Save cues to JSON (the sheet) |
+| Ctrl+Shift+S | Write cues into .praxi |
 
 ## Editing model
 
@@ -155,15 +155,17 @@ Keys act when no text field has focus.
 
 ## Saving
 
-- **Save** writes the sheet with `cue_sheet::write`.
-- **Write into file** writes `FILE` with its cue streams replaced, through a temporary file
+- **Save cues to JSON** writes the sheet with `cue_sheet::write`. `FILE` is not changed.
+  The button names the destination so the two ways of saving cannot be confused; its
+  tooltip gives the sheet's path.
+- **Write cues into .praxi** writes `FILE` with its cue streams replaced, through a temporary file
   renamed over it, exactly like `praxi cues import FILE SHEET -o FILE`. It does not save
-  the sheet. Windows refuses to rename over a file that is open, so the editor first
+  the sheet; the tooltip says so. Windows refuses to rename over a file that is open, so the editor first
   closes its player's file, writes, then opens the file again (the new one, or the old one
   if writing failed) and restores the position, play state, loop and audio output. Cues
   active at the playhead are emitted again.
 - The title shows the file, the sheet and `*` when the document differs from the last saved
-  or written state. Closing the window with unsaved changes asks to save, discard or
+  or written state. Closing the window with unsaved changes asks to save the cues to JSON, discard or
   cancel.
 
 ## Library

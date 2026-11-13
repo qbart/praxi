@@ -63,7 +63,7 @@ python3 tools/wm_close.py $(xdotool search --pid $! | tail -1)   # the close but
 There is no window manager, so `tools/wm_close.py` sends `WM_DELETE_WINDOW` as a window
 manager's close button does. Checked this way: the editor's close dialog (no dialog
 without changes; Cancel keeps the window, Discard closes without saving, Save writes the
-sheet and closes), the editor's "Write into file", cue positions (annotations on the video,
+sheet and closes), the editor's "Write cues into .praxi", cue positions (annotations on the video,
 Pick, dragging a marker, selecting by marker, saved `x` / `y`), the Bevy cue editor
 ([bevy.md](bevy.md#tests)) and the cue game example (a full loop recorded at 5 fps:
 subtitles, the positioned bubble, markers, the shake, sounds announced ahead; Space and
@@ -75,7 +75,7 @@ tests.
 These need a desktop and are not covered by tests:
 
 - The viewer window: playback, keys, audio (`praxi-viewer FILE`).
-- The editor on a desktop: timeline input, inspector, saving, "Write into file"
+- The editor on a desktop: timeline input, inspector, saving, "Write cues into .praxi"
   ([cue-editor.md](cue-editor.md)); on Windows it is only type-checked.
 - The `cutscene` example (`cargo run -p praxi-wgpu --example cutscene -- FILE`).
 - The Bevy cue editor (`cargo run --release -p praxi-bevy --example cue_editor -- FILE`),

@@ -96,7 +96,7 @@ temporal skip) and are recorded in [bench/baseline.json](../../bench/baseline.js
 7. **M6** Motion codec: transform coding with motion compensation, about 1/6 of BC7's size
    at equal PSNR, entropy decoded on CPU slices in parallel and reconstructed on the GPU,
    playable in the viewer, editor and `cutscene` ([motion-codec.md](motion-codec.md)).
-8. **M7** Formats, tests and decoding: `praxi cues add` / `remove` and "Write into file"
+8. **M7** Formats, tests and decoding: `praxi cues add` / `remove` and "Write cues into .praxi"
    that releases the player's file ([cue-editing.md](cue-editing.md),
    [cue-editor.md](cue-editor.md)); BC1 at about half of BC7's size
    ([texture-variants.md](texture-variants.md)); `make test`, `check`, `test-strict` and
