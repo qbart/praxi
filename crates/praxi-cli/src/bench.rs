@@ -174,7 +174,6 @@ impl Drop for Encoded {
 pub fn bench(args: BenchArgs) -> AnyResult<()> {
     let baseline = args.baseline.as_deref().map(read_results).transpose()?;
     let machine = Machine::current();
-    eprintln!("machine: {machine}");
     let p = source(&args.input, &args.video)?;
     let frame_bytes = p.width as usize * p.height as usize * 4;
     let encoded = Encoded {
