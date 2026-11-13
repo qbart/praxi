@@ -20,7 +20,8 @@ and is assumed to work there.
   [bevy.md](docs/features/bevy.md#audio)): the tones play at the same pitch as in the
   viewer, M mutes, and seeking and looping stay smooth. Checked under Xvfb on an ALSA
   device here: the clock follows the audio at real speed with an estimated latency of
-  85-96 ms. On a desktop the cues fire; the sound, M and seeking were not reported yet.
+  85-96 ms. On a desktop (Linux, PipeWire) the cues fire and the HUD estimated 92 ms;
+  whether picture and sound stay in step, M and seeking were not reported yet.
 
 ## Not scheduled
 
