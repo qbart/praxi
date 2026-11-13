@@ -29,7 +29,8 @@ App::new()
   `replace_cues` and the rest of the player API ([player.md](player.md)).
 - Every `Update`, the plugin advances each video's player by Bevy's `Time` delta and
   sends each player event as a `PraxiEvent { entity, event }` message, in the system set
-  `PraxiSystems::Advance`. Read them with `MessageReader<PraxiEvent>`.
+  `PraxiSystems::Advance`. Read them with `MessageReader<PraxiEvent>`, or observe them as
+  they happen ([below](#cues-as-they-happen)).
 - `PraxiCuePlugin::<T>` also sends cues parsed into a game type as `PraxiCue<T>` messages
   (`PraxiSystems::Cues`), and `position_on_sprite` / `position_in_rect` map cue positions
   to where the video is shown ([cue-runtime.md](cue-runtime.md)). The `cue_game` example
@@ -40,8 +41,9 @@ App::new()
 - In the render world, before the frame is drawn, the plugin copies that texture into the
   `Image`'s GPU texture when a new frame was drawn. The copy stays on the GPU. The image
   asset is `RENDER_WORLD` only, so the main world keeps no pixels.
-- Audio is not played: Bevy's audio cannot take a stream from `AudioOutput` without its
-  own decoder. The player's clock runs on Bevy's time.
+- Audio plays through Bevy's audio with `PraxiAudioPlugin` and a `PraxiAudio` component
+  ([below](#audio)). Without them the player's clock runs on Bevy's time and nothing is
+  heard.
 - `PraxiVideo::release_file()` closes the player's file, so that the file can be replaced
   (for example by writing cues into it), and `PraxiVideo::reopen()` opens it again at the
   same position, play state and loop setting, as the editor does
@@ -49,6 +51,65 @@ App::new()
 
 The player is not `Sync`, so the component holds it in a `SyncCell`: systems that query
 `&mut PraxiVideo` get it; `&PraxiVideo` cannot reach it.
+
+## Cues as they happen
+
+`PraxiEvent` and `PraxiCue<T>` are also entity events on the video's entity, triggered when
+the player emits them, besides being sent as messages:
+
+```rust
+commands.spawn((video, PraxiAudio::default())).observe(|cue: On<PraxiCue<GameCue>>, mut shake: ResMut<Shake>| {
+    if let GameCue::Shake { strength } = cue.cue { shake.start(strength) }
+});
+app.add_observer(|e: On<PraxiEvent>| { /* every event of every video */ });
+```
+
+- Observers run as soon as the system that triggered them ends: `PraxiEvent` after
+  `PraxiSystems::Advance`, `PraxiCue<T>` after `PraxiSystems::Cues`, before any other
+  system that frame and without ordering the game's systems after the plugin's. Messages
+  stay for systems that read them in a batch.
+- An observer on the video entity (`.observe(...)`) sees that video's events; a global
+  observer (`app.add_observer`) sees every video's. Events of one `advance` are triggered
+  in the player's order: cue ends before starts at the same time, `Seeked` and `Looped`
+  where the player puts them ([cues.md](cues.md#player-behaviour)).
+- With [audio](#audio) and its clock, a cue fires in the frame where its time is heard.
+
+## Audio
+
+```rust
+app.add_plugins((DefaultPlugins, PraxiPlugin, PraxiAudioPlugin));
+commands.spawn((video, PraxiAudio::default()));
+```
+
+The `audio` feature (default on) turns on Bevy's `bevy_audio`. Bevy's `AudioPlugin` (in
+`DefaultPlugins`) must be added; `PraxiAudioPlugin` registers praxi's audio source with it.
+
+- `PraxiAudio` (component on a `PraxiVideo` entity) plays the video's audio tracks:
+  - `volume: f32`: linear gain of every track, default `1.0`; changes apply at once.
+  - `clock: bool`, default `true`: the video follows what is heard
+    (`Clock::Audio` on track 0, [audio.md](audio.md#audio-master-clock)), so frames and
+    cues stay in step with the sound. `false` keeps the clock on Bevy's time, audio
+    following it.
+  - `latency: Option<Duration>`: how long after a sample is read it is heard. `None`
+    (default) estimates it (below).
+- Each audio track of the player (`audio_tracks()`) plays from a child entity of the video
+  with an `AudioPlayer<PraxiAudioSource>` and a `PraxiAudioTrack { track }` component, so
+  despawning the video stops its sound. Tracks the player has disabled
+  (`set_audio_track_enabled`) play silence; the player picks layout variants as usual.
+- `PraxiAudioSource` is an asset wrapping an `AudioOutput`. Its decoder is a rodio source
+  at the track's rate and channel count that reads the output in blocks of 256 frames and
+  plays silence when the output has nothing (paused, finished, not decoded yet), so it
+  never ends. Bevy's mixer (rodio) converts rate and channels to the device.
+- **Latency estimate**: the device pulls samples in bursts, one buffer per callback. The
+  source measures a burst as the frames read with less than 2 ms between blocks, and the
+  estimate is two bursts (the buffer being played and the one just filled). Bevy does not
+  expose the device's timestamps, so this is an estimate; set `latency` when it is known.
+- Removing `PraxiAudio` despawns the children and sets `Clock::Game`. `reopen()` gives the
+  player new outputs, so the children are replaced.
+- Without an audio device Bevy plays nothing and nothing reads the outputs; with `clock`
+  the player then runs on Bevy's time ([audio.md](audio.md#audio-master-clock): audio
+  behind the clock).
+- `praxi-audio` (cpal) is not used: Bevy owns the device.
 
 ## Cue editor example
 
@@ -94,6 +155,12 @@ A simple cue editor: the full editor is `praxi-editor` ([cue-editor.md](cue-edit
   editable.
 
 ## Tests
+
+`PraxiAudioSource` is tested without a device: its decoder returns the samples of the
+output in order at the track's rate and channel count, silence while paused, and never
+ends. The headless app test below also checks that `PraxiAudio` spawns one child per
+audio track and sets the audio clock, that removing it restores `Clock::Game`, and that
+global and entity observers see `PraxiEvent` and `PraxiCue<T>`.
 
 `praxi-bevy` has a headless test that runs the plugin in a Bevy app without a window
 (`MinimalPlugins`, `WindowPlugin` with no primary window, `AssetPlugin`, `RenderPlugin`,

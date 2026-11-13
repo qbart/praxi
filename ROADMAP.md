@@ -34,7 +34,5 @@ The code is done and tested; these were never run where they matter.
 - **More block formats**: BC4/BC5 for one- and two-channel content, ASTC 5x5.
 - **Motion codec**: 4x4 transforms and deblocking at lower bitrates; `praxi encode --psnr`.
 - **Godot integration**.
-- **Audio in `praxi-bevy`**: Bevy's audio cannot take `AudioOutput` samples without a
-  custom source.
 - **CPU fallback** for GPUs without a file's formats (not planned while playback is
   GPU-only).
