@@ -37,7 +37,21 @@ add without writing Rust. Spec in `docs/features/godot.md` first.
 - [ ] **Motion codec**: GPU decoding through Godot's `RenderingDevice` compute shaders,
   ported from `praxi-wgpu`; until then, files need a block-format variant.
 
-## 2. Seeking cost
+## 2. C API and Unity
+
+A C API for engines that cannot call Rust, shaped by its first user, a Unity plugin. Specs
+in `docs/features/` first.
+
+- [ ] **`praxi-ffi`**: a C library and header (`praxi.h`) over the player: open from a
+  path or from read/seek callbacks, advance, events, frames, audio outputs readable from
+  the audio thread, cues with their fields. Explicit ownership (every handle has a free
+  function), errors as codes plus a message, no Rust panics across the boundary.
+- [ ] **Unity plugin**: a C# package over `praxi-ffi` (P/Invoke): frames into
+  `Texture2D` in their compressed format, audio through `OnAudioFilterRead`, cues as C#
+  events. Built for Linux, macOS and Windows by the release workflow.
+- [ ] Unreal and custom C++ engines use the same header; a godot-cpp runtime could too.
+
+## 3. Seeking cost
 
 A seek decodes every frame from the preceding keyframe to the target: with the default
 `--keyint 60`, up to 59 extra frames, an estimated 50-100 ms for a 1080p motion-codec seek
