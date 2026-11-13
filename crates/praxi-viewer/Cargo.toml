@@ -3,6 +3,10 @@ name = "praxi-viewer"
 description = "GPU viewer for praxi files"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["video", "viewer", "gamedev", "praxi"]
+categories = ["multimedia::video", "game-development"]
 
 [features]
 default = ["audio"]

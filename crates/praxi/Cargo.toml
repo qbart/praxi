@@ -3,6 +3,10 @@ name = "praxi"
 description = "Video player for games: GPU block-compressed frames, events, variants"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["video", "gamedev", "player", "cutscene", "texture"]
+categories = ["multimedia::video", "game-development"]
 
 [features]
 # Cues into game types (docs/features/cue-runtime.md#typed-cues).

@@ -3,6 +3,10 @@ name = "praxi-audio"
 description = "Audio output for the praxi viewer and editor"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["audio", "video", "cpal", "praxi"]
+categories = ["multimedia::audio"]
 
 [dependencies]
 praxi.workspace = true

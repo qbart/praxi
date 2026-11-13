@@ -3,6 +3,10 @@ name = "praxi-wgpu"
 description = "Texture upload and drawing of praxi video for wgpu engines"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["video", "wgpu", "gamedev", "texture"]
+categories = ["multimedia::video", "rendering", "game-development"]
 
 [dependencies]
 praxi.workspace = true

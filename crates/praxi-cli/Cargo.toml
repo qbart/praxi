@@ -3,6 +3,10 @@ name = "praxi-cli"
 description = "praxi command line tool"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["video", "encoder", "gamedev", "cli", "praxi"]
+categories = ["command-line-utilities", "multimedia::encoding", "multimedia::video"]
 
 [[bin]]
 name = "praxi"

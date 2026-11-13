@@ -2,7 +2,10 @@ SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
-.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game
+.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game package publish tag
+
+# The workspace version (docs/features/releasing.md).
+VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
 build:
 	cargo build --release
@@ -55,3 +58,18 @@ $(CUE_GAME): $(BENCH_INPUT)
 
 cue-game: $(CUE_GAME)
 	cargo run --release -p praxi-bevy --example cue_game -- $(CUE_GAME) crates/praxi-bevy/examples/cue_game.cues.json
+
+# Releasing (docs/features/releasing.md).
+package:
+	cargo publish --workspace --dry-run
+
+tag:
+	@test -z "$$(git status --porcelain)" || { echo "working tree not clean"; exit 1; }
+	git tag -a v$(VERSION) -m "praxi $(VERSION)"
+	git push origin v$(VERSION)
+
+publish:
+	@test -z "$$(git status --porcelain)" || { echo "working tree not clean"; exit 1; }
+	@git tag --points-at HEAD | grep -qx "v$(VERSION)" || { echo "HEAD is not tagged v$(VERSION); run make tag"; exit 1; }
+	$(MAKE) check
+	cargo publish --workspace

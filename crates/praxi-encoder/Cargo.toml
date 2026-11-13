@@ -3,6 +3,10 @@ name = "praxi-encoder"
 description = "Encoder for praxi video files (BC7, ASTC)"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["video", "encoder", "bc7", "astc", "gamedev"]
+categories = ["multimedia::encoding", "multimedia::video", "game-development"]
 
 [dependencies]
 praxi-format.workspace = true

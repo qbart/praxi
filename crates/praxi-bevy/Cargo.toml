@@ -3,6 +3,10 @@ name = "praxi-bevy"
 description = "Bevy plugin playing praxi video"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["bevy", "video", "gamedev", "cutscene", "plugin"]
+categories = ["game-development", "multimedia::video"]
 
 [features]
 default = ["audio"]
