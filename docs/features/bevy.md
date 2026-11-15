@@ -209,7 +209,7 @@ were drawn, the latest drawn frame was copied into the image's GPU texture and t
 cue arrived as a `PraxiEvent` and, through `PraxiCuePlugin`, as one `PraxiCue<T>` of an
 enum `T`. The copied pixels are not read back. A second test opens a BC7 clip with
 `mipmaps` (when the adapter samples BC) and checks that the image has the full chain of
-levels and that the smallest level, read back after a few updates, is opaque: the chain
+levels and that the smallest level, read back after a few updates, is opaque (alpha above 240; BC7 rounds it) and not black: the chain
 was drawn from the frames, not left uninitialized. Without an adapter it
 skips, as the other GPU tests do ([testing.md](testing.md)).
 

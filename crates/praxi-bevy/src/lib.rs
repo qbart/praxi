@@ -3,9 +3,10 @@
 #[cfg(feature = "audio")]
 mod audio;
 mod file;
+mod mipmaps;
 
 use bevy::asset::RenderAssetUsages;
-use bevy::image::Image;
+use bevy::image::{Image, ImageSampler};
 use bevy::platform::cell::SyncCell;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
@@ -13,6 +14,7 @@ use bevy::render::renderer::{RenderAdapter, RenderDevice, RenderQueue};
 use bevy::render::texture::GpuImage;
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use file::SharedFile;
+use mipmaps::Mipmaps;
 use praxi::{Capabilities, Event, Player};
 use praxi_wgpu::{Rect, VideoRenderer};
 use serde::de::DeserializeOwned;
@@ -139,6 +141,15 @@ pub fn position_on_sprite((x, y): (f32, f32), size: Vec2, anchor: Vec2, transfor
     transform.transform_point(local.extend(0.0))
 }
 
+/// How [`PraxiVideo::open_with`] opens a video.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PraxiVideoOptions {
+    /// Gives the image a full mip chain, drawn from each new frame, and a trilinear
+    /// sampler, for video shown small or at an angle in 3D. Off by default: each new frame
+    /// costs a few more GPU passes (`docs/features/bevy.md#mipmaps`).
+    pub mipmaps: bool,
+}
+
 /// A praxi file playing into an [`Image`].
 #[derive(Component)]
 pub struct PraxiVideo {
@@ -166,11 +177,21 @@ impl PraxiVideo {
     /// Opens `path` with the texture formats `adapter` supports, paused at the first frame,
     /// and adds its image to `images`.
     pub fn open(path: &Path, adapter: &RenderAdapter, images: &mut Assets<Image>) -> Result<PraxiVideo, String> {
+        PraxiVideo::open_with(path, adapter, images, PraxiVideoOptions::default())
+    }
+
+    /// [`PraxiVideo::open`] with `options`.
+    pub fn open_with(path: &Path, adapter: &RenderAdapter, images: &mut Assets<Image>, options: PraxiVideoOptions) -> Result<PraxiVideo, String> {
         let caps = praxi_wgpu::capabilities(adapter, None)?;
         let (player, file) = open_player(path, &caps)?;
         let video = player.tracks()[0].params;
         let size = wgpu::Extent3d { width: video.width, height: video.height, depth_or_array_layers: 1 };
-        let image = Image::new_uninit(size, wgpu::TextureDimension::D2, FORMAT, RenderAssetUsages::RENDER_WORLD);
+        let mut image = Image::new_uninit(size, wgpu::TextureDimension::D2, FORMAT, RenderAssetUsages::RENDER_WORLD);
+        if options.mipmaps {
+            image.texture_descriptor.mip_level_count = mipmaps::levels(video.width, video.height);
+            image.texture_descriptor.usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+            image.sampler = ImageSampler::linear();
+        }
         Ok(PraxiVideo {
             image: images.add(image),
             player: SyncCell::new(player),
@@ -285,11 +306,13 @@ fn draw(device: Option<Res<RenderDevice>>, queue: Option<Res<RenderQueue>>, mut 
     }
 }
 
-/// Video textures to copy into images, and the version last copied into each.
+/// Video textures to copy into images, the version last copied into each, and the mip
+/// pipeline once an image has mipmaps.
 #[derive(Resource, Default)]
 struct Copies {
     pending: Vec<(AssetId<Image>, wgpu::Texture, u64)>,
     copied: HashMap<AssetId<Image>, u64>,
+    mipmaps: Option<Mipmaps>,
 }
 
 fn extract(videos: Extract<Query<&PraxiVideo>>, mut copies: ResMut<Copies>) {
@@ -309,8 +332,12 @@ fn copy(mut copies: ResMut<Copies>, images: Res<RenderAssets<GpuImage>>, device:
         if copies.copied.get(id) == Some(version) {
             continue;
         }
-        let encoder = encoder.get_or_insert_with(|| device.wgpu_device().create_command_encoder(&Default::default()));
+        let device = device.wgpu_device();
+        let encoder = encoder.get_or_insert_with(|| device.create_command_encoder(&Default::default()));
         encoder.copy_texture_to_texture(texture.as_image_copy(), image.texture.as_image_copy(), texture.size());
+        if image.texture.mip_level_count() > 1 {
+            copies.mipmaps.get_or_insert_with(|| Mipmaps::new(device, FORMAT)).record(device, encoder, &image.texture);
+        }
         copies.copied.insert(*id, *version);
     }
     if let Some(encoder) = encoder {
@@ -479,6 +506,51 @@ mod tests {
             app.world_mut().despawn(entity);
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn mipmaps_are_drawn_from_the_frames() {
+        let Some(mut app) = app() else {
+            return skip("no adapter");
+        };
+        let adapter = app.world().resource::<RenderAdapter>().clone();
+        if !praxi_wgpu::supported_formats(adapter.features()).contains(&praxi::TextureFormat::Bc7) {
+            return skip("the adapter does not sample BC7");
+        }
+        let path = std::env::temp_dir().join(format!("praxi-bevy-mips-{}.praxi", std::process::id()));
+        clip(&path, VariantConfig::bc7());
+        let world = app.world_mut();
+        let options = PraxiVideoOptions { mipmaps: true };
+        let mut video = world.resource_scope(|_, mut images: Mut<Assets<Image>>| PraxiVideo::open_with(&path, &adapter, &mut images, options)).unwrap();
+        video.player().play().unwrap();
+        let image = video.image.id();
+        let entity = world.spawn(video).id();
+        for _ in 0..4 {
+            app.update();
+        }
+        let render = app.sub_app(RenderApp).world();
+        let texture = render.resource::<RenderAssets<GpuImage>>().get(image).unwrap().texture.clone();
+        assert_eq!(texture.mip_level_count(), 6, "40x24: 40, 20, 10, 5, 2, 1");
+        let device = app.world().resource::<RenderDevice>().wgpu_device().clone();
+        let queue = app.world().resource::<RenderQueue>();
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let last = wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 5, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All };
+        let to = wgpu::TexelCopyBufferInfo { buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: None } };
+        encoder.copy_texture_to_buffer(last, to, wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 });
+        queue.submit([encoder.finish()]);
+        buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let pixel = buffer.slice(..4).get_mapped_range().expect("mapped").to_vec();
+        assert!(pixel[3] > 240, "the smallest level is drawn, opaque: {pixel:?}");
+        assert!(pixel[..3].iter().any(|&c| c > 0), "and not black: {pixel:?}");
+        app.world_mut().despawn(entity);
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[cfg(feature = "audio")]
