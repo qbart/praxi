@@ -150,7 +150,7 @@ mesh it is just a material texture, at any rotation:
 
 ```rust
 let material = materials.add(StandardMaterial { base_color_texture: Some(video.image.clone()), unlit: true, ..default() });
-commands.spawn((Mesh3d(meshes.add(Cuboid::new(1.6, 0.9, 0.9))), MeshMaterial3d(material), Transform::from_rotation(Quat::from_rotation_y(0.6))));
+commands.spawn((Mesh3d(meshes.add(Rectangle::new(1.6, 0.9))), MeshMaterial3d(material), Transform::from_rotation(Quat::from_rotation_y(0.6))));
 ```
 
 ![The video box example: the video playing on the faces of two rotated boxes, without mipmaps on the left and with them on the right](docs/images/video-box.jpg)
