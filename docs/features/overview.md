@@ -126,6 +126,9 @@ machine is recorded in the baseline's `machine`).
 14. **M12** Godot runtime: `praxi-godot`, a GDExtension for Godot 4.4+ that plays `.praxi`
     files in `VideoStreamPlayer` with block-compressed textures, audio and cues as signals,
     an example project, and the addon zip in releases ([godot.md](godot.md)).
+15. **0.2.0** Second release: the Godot addon in a release for the first time, opt-in
+    mipmaps for video on 3D surfaces in Bevy and the video box example
+    ([bevy.md](bevy.md#mipmaps)), and the machine recorded in benchmarks.
 
 ## Next
 

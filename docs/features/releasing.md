@@ -118,6 +118,9 @@ remote. It builds `praxi`, `praxi-viewer` and `praxi-editor` in release mode
 
 - 0.1.0: tagged, never published (the release binaries workflow did not exist yet).
 - 0.1.1: the first release on crates.io and GitHub.
+- 0.2.0: opt-in mipmaps for Bevy video images (`PraxiVideoOptions`), the Bevy 3D video box
+  example, the machine in `praxi bench` results, and the first release with the Godot
+  addon (`praxi-godot-v0.2.0.zip`). File format 0.10, unchanged.
 
 ## Release steps
 

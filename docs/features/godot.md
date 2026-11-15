@@ -211,10 +211,9 @@ In order; the open items are also in [ROADMAP.md](../../ROADMAP.md#1-godot-runti
 1. **Desktop run**: `GODOT=... make godot-example` in a Godot editor on real hardware, with
    sound: the picture, audio and sync, the keys, and the cues against the audio. Fix what
    it finds.
-2. **Release with the addon**: the addon came after `v0.1.1`, so no release ships it yet.
-   Tag the next version (0.1.2, or 0.2.0 for the new runtime) so the release workflow
-   builds `praxi-godot-vX.Y.Z.zip` with the Linux, macOS and Windows libraries, and load
-   the macOS and Windows libraries in Godot once.
+2. **Release with the addon**: `v0.2.0` is the first release whose workflow builds
+   `praxi-godot-v0.2.0.zip` with the Linux, macOS and Windows libraries; load the macOS
+   and Windows libraries in Godot once.
 3. **Audio clock**: follow what is heard instead of the game clock, from Godot's output
    latency (`AudioServer.get_output_latency`) and when `VideoStreamPlayer` mixes.
 4. **Motion codec**: GPU decoding through Godot's `RenderingDevice` compute shaders, ported
