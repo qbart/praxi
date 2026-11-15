@@ -37,6 +37,11 @@ sounds all come from cues stored in the video file.*
 selected cue, and live preview. Saves a cue sheet or writes the cues straight into the
 playing file.*
 
+![The video box example: the video playing on the faces of two rotated boxes, without mipmaps on the left and with them on the right](docs/images/video-box.jpg)
+
+*The `video_box` example in Bevy: the video as the texture of rotated 3D boxes, without
+mipmaps on the left and with them on the right.*
+
 ## Crates
 
 | Crate | |
@@ -153,8 +158,6 @@ let material = materials.add(StandardMaterial { base_color_texture: Some(video.i
 commands.spawn((Mesh3d(meshes.add(Rectangle::new(1.6, 0.9))), MeshMaterial3d(material), Transform::from_rotation(Quat::from_rotation_y(0.6))));
 ```
 
-![The video box example: the video playing on the faces of two rotated boxes, without mipmaps on the left and with them on the right](docs/images/video-box.jpg)
-
 For video seen small or at an angle in 3D, open it with
 `PraxiVideo::open_with(.., PraxiVideoOptions { mipmaps: true })` to get mipmaps (off by
 default; or encode a smaller variant for far away).
@@ -164,7 +167,7 @@ Try the examples from a checkout:
 ```sh
 make cue-game                                                        # the cutscene above
 make video-box                                                       # a test pattern on spinning boxes, with and without mipmaps
-make video-box-bunny                                                 # the same with Big Buck Bunny (the screenshot above)
+make video-box-bunny                                                 # the same with Big Buck Bunny (the box screenshot above)
 cargo run --release -p praxi-bevy --example cue_editor -- intro.praxi   # a Bevy + egui cue editor
 ```
 
