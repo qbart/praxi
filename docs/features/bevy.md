@@ -52,6 +52,32 @@ App::new()
 The player is not `Sync`, so the component holds it in a `SyncCell`: systems that query
 `&mut PraxiVideo` get it; `&PraxiVideo` cannot reach it.
 
+## Mipmaps
+
+A video shown small or at an angle in 3D (a screen across a room, a box seen from afar)
+shimmers without mipmaps. They are off by default: each new frame would cost a few more
+GPU passes, and a game can instead encode a smaller variant or a second, smaller file and
+pick what to show by distance. A video opts in when it is opened:
+
+```rust
+let options = PraxiVideoOptions { mipmaps: true, ..Default::default() };
+let video = PraxiVideo::open_with(path, &adapter, &mut images, options)?;
+```
+
+- `PraxiVideo::open(path, adapter, images)` is `open_with` with
+  `PraxiVideoOptions::default()` (`mipmaps: false`): the image has one mip level, as
+  before.
+- With `mipmaps`, the image has the full chain (`floor(log2(max(width, height))) + 1`
+  levels), `RENDER_ATTACHMENT` usage, and a trilinear sampler (linear min, mag and mipmap
+  filters; `ImageSamplerDescriptor::linear`).
+- In the render world, right after a new frame is copied into the image's level 0, each
+  level is drawn from the one above it: a full-screen triangle sampling the level above
+  with a linear filter, one render pass per level, in the same command buffer as the
+  copy. The image is `Rgba8UnormSrgb`, so filtering happens on linear values. Nothing is
+  done for display frames without a new video frame.
+- Cost: the levels add a third of the frame's pixels, drawn once per new video frame (the
+  video's frame rate, not the display's).
+
 ## Cues as they happen
 
 `PraxiEvent` and `PraxiCue<T>` are also entity events on the video's entity, triggered when
@@ -111,6 +137,19 @@ The `audio` feature (default on) turns on Bevy's `bevy_audio`. Bevy's `AudioPlug
   behind the clock).
 - `praxi-audio` (cpal) is not used: Bevy owns the device.
 
+## Video box example
+
+```sh
+cargo run --release -p praxi-bevy --example video_box -- intro.praxi
+```
+
+The video on the faces of two spinning boxes in 3D, with an unlit `StandardMaterial`
+whose `base_color_texture` is the video's image: no render target beyond the plugin's
+own. The left box plays without mipmaps, the right one with them (two `PraxiVideo`s on
+the same file), so the shimmering of the left box at a distance shows what mipmaps fix.
+Up and Down move the camera away and back, Space pauses, Escape quits. There is no audio.
+`make video-box` runs it on the sample (`make cue-game`'s file).
+
 ## Cue editor example
 
 ```sh
@@ -168,7 +207,10 @@ global and entity observers see `PraxiEvent` and `PraxiCue<T>`.
 clip when the adapter samples BC, it plays for ten updates of 50 ms and checks that frames
 were drawn, the latest drawn frame was copied into the image's GPU texture and the clip's
 cue arrived as a `PraxiEvent` and, through `PraxiCuePlugin`, as one `PraxiCue<T>` of an
-enum `T`. The copied pixels are not read back. Without an adapter it
+enum `T`. The copied pixels are not read back. A second test opens a BC7 clip with
+`mipmaps` (when the adapter samples BC) and checks that the image has the full chain of
+levels and that the smallest level, read back after a few updates, is opaque: the chain
+was drawn from the frames, not left uninitialized. Without an adapter it
 skips, as the other GPU tests do ([testing.md](testing.md)).
 
 The editor example is a manual check. It also runs under Xvfb on lavapipe:
