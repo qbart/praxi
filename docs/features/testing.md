@@ -34,6 +34,7 @@ value these tests fail instead, which shows they all ran.
 | `praxi-cli`: `tests/cli.rs` | `ffmpeg` and `ffprobe` on `PATH` |
 | `praxi-godot`: `plays_in_godot` | Godot 4.4 or newer: `GODOT`, or `godot` / `godot4` on `PATH` ([godot.md](godot.md#tests)) |
 | `praxi-bevy`: `plays_into_the_image_and_sends_events` | An adapter (the motion clip also needs compute shaders) |
+| `praxi-bevy`: `mipmaps_are_drawn_from_the_frames` | An adapter that samples BC7 |
 
 ## What the tests cover
 
