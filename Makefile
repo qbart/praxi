@@ -2,7 +2,7 @@ SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
-.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game video-box package publish tag crates release-ready godot-addon godot-example
+.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game video-box video-box-bunny package publish tag crates release-ready godot-addon godot-example
 
 # The workspace version (docs/features/releasing.md).
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -59,8 +59,20 @@ $(CUE_GAME): $(BENCH_INPUT)
 cue-game: $(CUE_GAME)
 	cargo run --release -p praxi-bevy --example cue_game -- $(CUE_GAME) crates/praxi-bevy/examples/cue_game.cues.json
 
-# The video on spinning boxes, without and with mipmaps (docs/features/bevy.md#video-box-example).
-video-box: $(CUE_GAME)
+# The video on spinning boxes, without and with mipmaps (docs/features/bevy.md#video-box-example),
+# on a moving test pattern: the sample's single slow shot looks still on a small box.
+TEST_PATTERN := target/testsrc.praxi
+
+$(TEST_PATTERN):
+	mkdir -p target
+	ffmpeg -loglevel error -y -f lavfi -i testsrc2=size=1280x720:rate=30 -t 10 -pix_fmt yuv420p target/testsrc.mp4
+	cargo run --release -p praxi-cli -- encode target/testsrc.mp4 -o $@ --variant bc7
+
+video-box: $(TEST_PATTERN)
+	cargo run --release -p praxi-bevy --example video_box -- $(TEST_PATTERN)
+
+# The same on the Big Buck Bunny sample (make cue-game's file).
+video-box-bunny: $(CUE_GAME)
 	cargo run --release -p praxi-bevy --example video_box -- $(CUE_GAME)
 
 # The Godot addon for this machine (docs/features/godot.md#addon).

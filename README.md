@@ -163,7 +163,8 @@ Try the examples from a checkout:
 
 ```sh
 make cue-game                                                        # the cutscene above
-make video-box                                                       # video on spinning boxes, with and without mipmaps
+make video-box                                                       # a test pattern on spinning boxes, with and without mipmaps
+make video-box-bunny                                                 # the same with Big Buck Bunny (the screenshot above)
 cargo run --release -p praxi-bevy --example cue_editor -- intro.praxi   # a Bevy + egui cue editor
 ```
 
