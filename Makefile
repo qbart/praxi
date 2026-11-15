@@ -2,7 +2,7 @@ SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
-.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game package publish tag crates release-ready godot-addon godot-example
+.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game video-box package publish tag crates release-ready godot-addon godot-example
 
 # The workspace version (docs/features/releasing.md).
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -58,6 +58,10 @@ $(CUE_GAME): $(BENCH_INPUT)
 
 cue-game: $(CUE_GAME)
 	cargo run --release -p praxi-bevy --example cue_game -- $(CUE_GAME) crates/praxi-bevy/examples/cue_game.cues.json
+
+# The video on spinning boxes, without and with mipmaps (docs/features/bevy.md#video-box-example).
+video-box: $(CUE_GAME)
+	cargo run --release -p praxi-bevy --example video_box -- $(CUE_GAME)
 
 # The Godot addon for this machine (docs/features/godot.md#addon).
 GODOT_ADDON := target/godot/addons/praxi
