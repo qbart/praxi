@@ -24,6 +24,10 @@ struct File(PathBuf);
 #[derive(Component)]
 struct Spin(f32);
 
+/// The label of the box on `.0`, with its name.
+#[derive(Component)]
+struct Label(Entity, &'static str);
+
 /// Tilts the boxes towards the camera, so their top shows.
 const TILT: f32 = 0.35;
 
@@ -38,7 +42,7 @@ fn main() -> AppExit {
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.07)))
         .insert_resource(File(args.file))
         .add_systems(Startup, setup)
-        .add_systems(Update, (input.before(PraxiSystems::Advance), spin))
+        .add_systems(Update, (input.before(PraxiSystems::Advance), spin, label.after(PraxiSystems::Advance)))
         .run()
 }
 
@@ -68,15 +72,16 @@ fn setup(
         let params = player.tracks()[0].params;
         let aspect = params.width as f32 / params.height as f32;
         let material = materials.add(StandardMaterial { base_color_texture: Some(video.image.clone()), unlit: true, ..default() });
-        commands.spawn((
+        let entity = commands.spawn((
             video,
             Mesh3d(meshes.add(video_box(Vec3::new(aspect, 1.0, 1.0)))),
             MeshMaterial3d(material),
             Transform::from_xyz(x, 0.0, 0.0).with_rotation(Quat::from_rotation_x(TILT)),
             Spin(0.0),
-        ));
+        )).id();
         commands.spawn((
             Text::new(label),
+            Label(entity, label),
             Node { position_type: PositionType::Absolute, top: px(16), left: if mipmaps { percent(62) } else { percent(18) }, ..default() },
         ));
     }
@@ -151,5 +156,16 @@ fn spin(time: Res<Time>, mut boxes: Query<(&mut PraxiVideo, &mut Spin, &mut Tran
             spin.0 += 0.5 * time.delta_secs();
             transform.rotation = Quat::from_rotation_x(TILT) * Quat::from_rotation_y(spin.0);
         }
+    }
+}
+
+/// Shows each box's format, clock and the index of the frame decoded last.
+fn label(mut videos: Query<&mut PraxiVideo>, mut labels: Query<(&Label, &mut Text)>) {
+    for (label, mut text) in &mut labels {
+        let Ok(mut video) = videos.get_mut(label.0) else { continue };
+        let player = video.player();
+        let format = player.tracks()[0].params.format;
+        let frame = player.video_frame(0).map_or(0, |f| f.index);
+        text.0 = format!("{}\n{format:?}  {:.2} s  frame {frame}", label.1, player.position().as_secs_f32());
     }
 }
