@@ -150,6 +150,12 @@ the same file), so the shimmering of the left box at a distance shows what mipma
 Up and Down move the camera away and back, Space pauses, Escape quits. There is no audio.
 `make video-box` runs it on the sample (`make cue-game`'s file).
 
+![Far away: without mipmaps (left) the video sparkles, with them (right) it is smooth](../images/mipmaps.jpg)
+
+`Cuboid`'s own UVs show the video flipped or sideways on some faces, so the example builds
+the box with UVs that keep the video upright on every face: up along y on the sides, the
+top and bottom read from the front.
+
 ## Cue editor example
 
 ```sh

@@ -3,6 +3,7 @@
 //!
 //! Up/Down move the camera away and back, Space pauses, Escape quits.
 
+use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapter;
 use bevy::render::view::Tonemapping;
@@ -19,9 +20,12 @@ struct Args {
 #[derive(Resource)]
 struct File(PathBuf);
 
-/// A box showing the video, spinning about `axis`.
+/// A box showing the video, spinning about its vertical axis by this angle.
 #[derive(Component)]
-struct Spin(Vec3);
+struct Spin(f32);
+
+/// Tilts the boxes towards the camera, so their top shows.
+const TILT: f32 = 0.35;
 
 fn main() -> AppExit {
     let args = Args::parse();
@@ -66,10 +70,10 @@ fn setup(
         let material = materials.add(StandardMaterial { base_color_texture: Some(video.image.clone()), unlit: true, ..default() });
         commands.spawn((
             video,
-            Mesh3d(meshes.add(Cuboid::new(aspect, 1.0, 1.0))),
+            Mesh3d(meshes.add(video_box(Vec3::new(aspect, 1.0, 1.0)))),
             MeshMaterial3d(material),
-            Transform::from_xyz(x, 0.0, 0.0),
-            Spin(Vec3::new(0.3, 1.0, 0.1).normalize()),
+            Transform::from_xyz(x, 0.0, 0.0).with_rotation(Quat::from_rotation_x(TILT)),
+            Spin(0.0),
         ));
         commands.spawn((
             Text::new(label),
@@ -116,11 +120,36 @@ fn input(
     }
 }
 
-fn spin(time: Res<Time>, mut boxes: Query<(&mut PraxiVideo, &Spin, &mut Transform)>) {
-    for (mut video, spin, mut transform) in &mut boxes {
+/// A box of `size` with the whole video upright on each face: the sides with up along y,
+/// the top and bottom read from the front. `Cuboid`'s own UVs flip some faces.
+fn video_box(size: Vec3) -> Mesh {
+    let mut mesh = Cuboid::from_size(size).mesh().build();
+    let (Some(VertexAttributeValues::Float32x3(positions)), Some(VertexAttributeValues::Float32x3(normals))) =
+        (mesh.attribute(Mesh::ATTRIBUTE_POSITION), mesh.attribute(Mesh::ATTRIBUTE_NORMAL))
+    else {
+        unreachable!("a cuboid has positions and normals")
+    };
+    let uvs: Vec<[f32; 2]> = positions
+        .iter()
+        .zip(normals)
+        .map(|(p, n)| {
+            let (p, n) = (Vec3::from(*p), Vec3::from(*n));
+            let up = if n.y.abs() > 0.5 { Vec3::NEG_Z * n.y.signum() } else { Vec3::Y };
+            let right = up.cross(n);
+            let extent = |axis: Vec3| (axis * size).length();
+            [0.5 + p.dot(right) / extent(right), 0.5 - p.dot(up) / extent(up)]
+        })
+        .collect();
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh
+}
+
+fn spin(time: Res<Time>, mut boxes: Query<(&mut PraxiVideo, &mut Spin, &mut Transform)>) {
+    for (mut video, mut spin, mut transform) in &mut boxes {
         // Spin while the video plays.
         if video.player().is_playing() {
-            transform.rotate(Quat::from_axis_angle(spin.0, 0.5 * time.delta_secs()));
+            spin.0 += 0.5 * time.delta_secs();
+            transform.rotation = Quat::from_rotation_x(TILT) * Quat::from_rotation_y(spin.0);
         }
     }
 }
