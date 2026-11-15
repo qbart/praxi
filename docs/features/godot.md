@@ -203,3 +203,20 @@ audio only in real time, so the test runs paced at 60 fps (about 4 s) rather tha
 
 The script prints `PASS` or `FAIL: <check>`. The test passes only on `PASS` with no
 `SCRIPT ERROR` in Godot's output, so a script that stops early cannot pass.
+
+## Next
+
+In order; the open items are also in [ROADMAP.md](../../ROADMAP.md#1-godot-runtime-what-is-left).
+
+1. **Desktop run**: `GODOT=... make godot-example` in a Godot editor on real hardware, with
+   sound: the picture, audio and sync, the keys, and the cues against the audio. Fix what
+   it finds.
+2. **Release with the addon**: the addon came after `v0.1.1`, so no release ships it yet.
+   Tag the next version (0.1.2, or 0.2.0 for the new runtime) so the release workflow
+   builds `praxi-godot-vX.Y.Z.zip` with the Linux, macOS and Windows libraries, and load
+   the macOS and Windows libraries in Godot once.
+3. **Audio clock**: follow what is heard instead of the game clock, from Godot's output
+   latency (`AudioServer.get_output_latency`) and when `VideoStreamPlayer` mixes.
+4. **Motion codec**: GPU decoding through Godot's `RenderingDevice` compute shaders, ported
+   from `praxi-wgpu`, so files without a block-format variant play.
+5. **More video tracks**: tracks other than 0, as extra textures read from the stream.
