@@ -145,11 +145,25 @@ fn setup(mut commands: Commands, adapter: Res<RenderAdapter>, mut images: ResMut
 }
 ```
 
-The video's image works anywhere an image does: sprites, UI, materials, egui. Try the
-examples from a checkout:
+The video's image works anywhere an image does: sprites, UI, materials, egui. On a 3D
+mesh it is just a material texture, at any rotation:
+
+```rust
+let material = materials.add(StandardMaterial { base_color_texture: Some(video.image.clone()), unlit: true, ..default() });
+commands.spawn((Mesh3d(meshes.add(Cuboid::new(1.6, 0.9, 0.9))), MeshMaterial3d(material), Transform::from_rotation(Quat::from_rotation_y(0.6))));
+```
+
+![The video box example: the video playing on the faces of two rotated boxes, without mipmaps on the left and with them on the right](docs/images/video-box.jpg)
+
+For video seen small or at an angle in 3D, open it with
+`PraxiVideo::open_with(.., PraxiVideoOptions { mipmaps: true })` to get mipmaps (off by
+default; or encode a smaller variant for far away).
+
+Try the examples from a checkout:
 
 ```sh
 make cue-game                                                        # the cutscene above
+make video-box                                                       # video on spinning boxes, with and without mipmaps
 cargo run --release -p praxi-bevy --example cue_editor -- intro.praxi   # a Bevy + egui cue editor
 ```
 
