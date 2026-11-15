@@ -1,7 +1,8 @@
 //! A video on two spinning boxes in 3D, left without mipmaps and right with them
 //! (`docs/features/bevy.md#video-box-example`).
 //!
-//! Up/Down move the camera away and back, Space pauses, Escape quits.
+//! Up/Down move the camera away and back, Space plays and pauses the video, R starts and
+//! stops the spinning, Escape quits.
 
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
@@ -24,6 +25,10 @@ struct File(PathBuf);
 #[derive(Component)]
 struct Spin(f32);
 
+/// Whether the boxes spin (R).
+#[derive(Resource)]
+struct Spinning(bool);
+
 /// The label of the box on `.0`, with its name.
 #[derive(Component)]
 struct Label(Entity, &'static str);
@@ -41,6 +46,7 @@ fn main() -> AppExit {
         .add_plugins(PraxiPlugin)
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.07)))
         .insert_resource(File(args.file))
+        .insert_resource(Spinning(true))
         .add_systems(Startup, setup)
         .add_systems(Update, (input.before(PraxiSystems::Advance), spin, label.after(PraxiSystems::Advance)))
         .run()
@@ -86,7 +92,7 @@ fn setup(
         ));
     }
     commands.spawn((
-        Text::new("Up/Down: camera distance   Space: pause   Esc: quit"),
+        Text::new("Up/Down: camera distance   Space: play/pause   R: spin   Esc: quit"),
         Node { position_type: PositionType::Absolute, bottom: px(16), left: px(16), ..default() },
     ));
 }
@@ -96,8 +102,12 @@ fn input(
     time: Res<Time>,
     mut camera: Query<&mut Transform, With<Camera3d>>,
     mut videos: Query<&mut PraxiVideo>,
+    mut spinning: ResMut<Spinning>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    if keys.just_pressed(KeyCode::KeyR) {
+        spinning.0 = !spinning.0;
+    }
     if keys.just_pressed(KeyCode::Escape) {
         exit.write(AppExit::Success);
     }
@@ -149,13 +159,13 @@ fn video_box(size: Vec3) -> Mesh {
     mesh
 }
 
-fn spin(time: Res<Time>, mut boxes: Query<(&mut PraxiVideo, &mut Spin, &mut Transform)>) {
-    for (mut video, mut spin, mut transform) in &mut boxes {
-        // Spin while the video plays.
-        if video.player().is_playing() {
-            spin.0 += 0.5 * time.delta_secs();
-            transform.rotation = Quat::from_rotation_x(TILT) * Quat::from_rotation_y(spin.0);
-        }
+fn spin(time: Res<Time>, spinning: Res<Spinning>, mut boxes: Query<(&mut Spin, &mut Transform)>) {
+    if !spinning.0 {
+        return;
+    }
+    for (mut spin, mut transform) in &mut boxes {
+        spin.0 += 0.5 * time.delta_secs();
+        transform.rotation = Quat::from_rotation_x(TILT) * Quat::from_rotation_y(spin.0);
     }
 }
 

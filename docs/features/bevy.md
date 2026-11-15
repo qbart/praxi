@@ -147,7 +147,7 @@ The video on the faces of two spinning boxes in 3D, with an unlit `StandardMater
 whose `base_color_texture` is the video's image: no render target beyond the plugin's
 own. The left box plays without mipmaps, the right one with them (two `PraxiVideo`s on
 the same file), so the shimmering of the left box at a distance shows what mipmaps fix.
-Each label shows the box's texture format, its clock and the index of the frame decoded last. Up and Down move the camera away and back, Space pauses, Escape quits. There is no audio.
+Each label shows the box's texture format, its clock and the index of the frame decoded last. Up and Down move the camera away and back, Space plays and pauses the video, R starts and stops the spinning (to compare the boxes standing still), Escape quits. There is no audio.
 `make video-box` runs it on a moving test pattern (ffmpeg's `testsrc2`, 1280x720 at 30 fps for 10 s, encoded to BC7): the sample is one slow shot whose motion is hard to see on a small spinning box. `make video-box-bunny` runs it on the Big Buck Bunny sample (`make cue-game`'s file).
 
 ![Far away: without mipmaps (left) the video sparkles, with them (right) it is smooth](../images/mipmaps.jpg)
