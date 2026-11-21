@@ -1,6 +1,6 @@
 # PRAXI file format
 
-Version 0.10. File extension `.praxi`.
+Version 0.11. File extension `.praxi`.
 
 ## Conventions
 
@@ -29,7 +29,7 @@ Version 0.10. File extension `.praxi`.
 |---|---|---|---|
 | 0 | 8 | `magic` | `89 50 52 58 0D 0A 1A 0A` (`\x89PRX\r\n\x1a\n`) |
 | 8 | 2 | `version_major` | `0`. Readers reject other values. |
-| 10 | 2 | `version_minor` | `10`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
+| 10 | 2 | `version_minor` | `11`. While `version_major` is `0`, minor versions may change the format incompatibly; readers reject minor versions other than their own. |
 | 12 | 4 | `flags` | Reserved, `0`. |
 | 16 | 2 | `stream_count` | Number of entries in the stream table, at least 1. |
 | 18 | 2 | | Reserved. |
@@ -61,11 +61,12 @@ starting at 0.
 | 16 | 4 | `width` | Frame width in pixels, at least 1. |
 | 20 | 4 | `height` | Frame height in pixels, at least 1. |
 | 24 | 2 | `format` | Texture format id, see [Texture formats](#texture-formats). |
-| 26 | 2 | `color_flags` | Bit 0: sRGB encoded color. Bit 1: alpha channel is meaningful (straight, not premultiplied). Other bits reserved. |
+| 26 | 2 | `color_flags` | Bit 0: sRGB encoded color. Bit 1: alpha channel is meaningful (straight, not premultiplied). Bit 2: HDR, linear light (see [HDR color](#hdr-color)). Other bits reserved. |
 | 28 | 1 | `block_width` | Block width in pixels. Must match `format`. |
 | 29 | 1 | `block_height` | Block height in pixels. Must match `format`. |
 | 30 | 1 | `block_bytes` | Bytes per block. Must match `format`. |
-| 31 | 33 | | Motion parameters for format `0x0201` (below), else reserved. |
+| 31 | 25 | | Motion parameters for format `0x0201` (below), else reserved. |
+| 56 | 8 | | Color description (below). |
 
 Derived values:
 
@@ -82,7 +83,28 @@ For format `0x0201` ([Motion payload](#motion-payload)):
 | 31 | 1 | `chroma` | `0` 4:2:0 (chroma planes at half width and height), `1` 4:4:4. Readers reject other values. |
 | 32 | 1 | `chroma_qp_offset` | Signed. Added to a frame's `qp` for the chroma planes. |
 | 33 | 1 | `alpha_qp_offset` | Signed. Added to a frame's `qp` for the alpha plane. |
-| 34 | 30 | | Reserved. |
+| 34 | 22 | | Reserved. |
+
+#### Color description
+
+For every video format:
+
+| Offset | Size | Field | Description |
+|---|---|---|---|
+| 56 | 1 | `primaries` | `0` BT.709 (sRGB), `1` BT.2020. Readers reject other values. |
+| 57 | 1 | | Reserved. |
+| 58 | 2 | `reference_white` | HDR streams: the luminance of `1.0`, in cd/m² (nits), at least 1. Other streams: `0`. |
+| 60 | 2 | `max_cll` | HDR streams: the largest `max(R, G, B)` of any pixel, in nits, rounded up, at most 65535; `0` unknown. Other streams: `0`. |
+| 62 | 2 | `max_fall` | HDR streams: the largest per-frame mean of `max(R, G, B)` over the frame's pixels, in nits, rounded up, at most 65535; `0` unknown. Other streams: `0`. |
+
+A stream is HDR when its format is an HDR format ([Texture formats](#texture-formats)).
+Readers reject:
+
+- `color_flags` bit 2 set on a format that is not HDR, or clear on an HDR format;
+- `color_flags` bit 0 (sRGB) or bit 1 (alpha) set on an HDR stream;
+- `reference_white` 0 on an HDR stream.
+
+SDR streams written by praxi have `primaries` 0.
 
 ### Cue parameters (`kind = 3`)
 
@@ -127,16 +149,45 @@ Bits 18-31 are reserved.
 | `0x0002` | BC3 | 4x4 | 16 |
 | `0x0003` | BC4 | 4x4 | 8 |
 | `0x0004` | BC5 | 4x4 | 16 |
+| `0x0006` | BC6H, unsigned float (HDR) | 4x4 | 16 |
 | `0x0007` | BC7 | 4x4 | 16 |
 | `0x0101` | ASTC 4x4 (LDR) | 4x4 | 16 |
 | `0x0102` | ASTC 5x5 (LDR) | 5x5 | 16 |
 | `0x0103` | ASTC 6x6 (LDR) | 6x6 | 16 |
 | `0x0104` | ASTC 8x8 (LDR) | 8x8 | 16 |
+| `0x0111` | ASTC 4x4 (HDR) | 4x4 | 16 |
+| `0x0113` | ASTC 6x6 (HDR) | 6x6 | 16 |
 | `0x0201` | motion (not a texture format) | 16x16 | 0 |
 
 BC1 streams written by praxi have `color_flags` bit 1 (alpha) clear and use only the
 four-color block mode (first endpoint color greater than the second as a 16-bit
 integer).
+
+HDR formats are `0x0006`, `0x0111` and `0x0113`. Their blocks are the standard BC6H
+(`BC6H_UF16`) and ASTC blocks; ASTC HDR ids differ from the LDR ones because the texture
+must be created with the HDR (float) channel type. HDR streams have no alpha.
+
+### HDR color
+
+The texels of an HDR stream decode to linear RGB in the stream's `primaries`, scaled so
+that `1.0` is `reference_white` nits: `nits = value * reference_white`. Values are in
+`0..65504`. Writers clamp to that range.
+
+From BT.2020 to BT.709 primaries (linear values, rows give R, G, B):
+
+```
+ 1.6605 -0.5876 -0.0728
+-0.1246  1.1329 -0.0083
+-0.0182 -0.1006  1.1187
+```
+
+From BT.709 to BT.2020:
+
+```
+0.6274 0.3293 0.0433
+0.0691 0.9195 0.0114
+0.0164 0.0880 0.8956
+```
 
 For `0x0201`, `frame_size` and the block-based derived values do not apply; the block fields
 describe the macroblock.
@@ -608,3 +659,6 @@ reads every cue through the index at open instead and keeps them in memory.)
 - 0.9: motion payload: macroblock kind `3` (split, a vector per 8x8 quadrant), vector
   prediction per 8x8 block, 8- and 4-tap interpolation filters instead of bilinear.
 - 0.10: audio sample format `4`, Opus, with its payload and seeking pre-roll.
+- 0.11: HDR: texture formats `0x0006` (BC6H), `0x0111` and `0x0113` (ASTC 4x4 and 6x6
+  HDR), `color_flags` bit 2, and the color description at offset 56 of video parameters
+  (motion parameters keep offsets 31-33, reserved space shrinks to 34-55).

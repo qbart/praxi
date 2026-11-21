@@ -1,0 +1,331 @@
+# HDR video
+
+Video whose pixels are brighter than white: sunlight, fire, neon, an explosion. It is
+stored in GPU HDR texture formats and decodes to linear floating-point color that a game
+renders like any other HDR texture: through its own tonemapper, with bloom, on HDR and SDR
+displays alike. Format changes are in [PRAXI.md](../spec/PRAXI.md) (version 0.11).
+
+## Why games want it
+
+- **Cutscenes on HDR displays**: an HDR game cuts to a video that is as bright as the
+  game around it, instead of flat SDR next to it.
+- **Video as emissive material**: screens, holograms and fire in the world. Values above
+  1.0 drive bloom and survive the game's exposure and tonemapping like the rest of the
+  scene.
+
+Both need the same thing from praxi: frames that the GPU samples as linear light in a
+known scale and gamut, not PQ or HLG code values that every engine would decode itself.
+
+## Model
+
+- An **HDR stream** is a video stream in an HDR texture format (below). Its texels are
+  **linear light**: `1.0` is the reference white (SDR white, paper white), values above it
+  are brighter, `0` is black. The scale is relative, so a game shows the video at its own
+  paper white and the video's 1.0 matches the game's UI white.
+- Each HDR stream records its **primaries** (BT.709 or BT.2020), its **reference white**
+  in nits (what 1.0 was in the source, 203 by default per ITU-R BT.2408), and its
+  **MaxCLL / MaxFALL** in nits (brightest pixel, brightest frame average), for engines that
+  tonemap to a display's peak.
+- HDR streams are **opaque**: BC6H has no alpha channel. Alpha from the source is dropped
+  from HDR variants, as for BC1 ([texture-variants.md](texture-variants.md#formats)); SDR
+  variants of the same track keep it.
+- An HDR track may also carry **SDR variants** (BC7, ASTC, motion) in the same group,
+  tonemapped from the same source at encode time. An engine that does not render HDR picks
+  them and pays nothing for HDR.
+
+## Formats
+
+| Format | Id | Block | Bytes per block | Sampled as | GPU support | Produced |
+|---|---|---|---|---|---|---|
+| BC6H (unsigned) | `0x0006` | 4x4 | 16 | RGB half float | Every GPU with BC7 (desktop, consoles, Apple silicon) | yes |
+| ASTC 4x4 HDR | `0x0111` | 4x4 | 16 | RGBA half float | ASTC HDR GPUs (Apple A13+ and M1+, Mali since Valhall; not every Adreno) | yes |
+| ASTC 6x6 HDR | `0x0113` | 6x6 | 16 | RGBA half float | as above | no (reserved, see [Later](#later)) |
+
+BC6H is the HDR format: it costs the same 16 bytes per block as BC7, so an HDR file is as
+large as a BC7 one (about 56 MB/s at 1080p60 before compression gains; the byte-plane and
+Huffman stages of [video-codec.md](video-codec.md#compression) apply unchanged).
+ASTC 4x4 HDR serves mobile GPUs that have it; elsewhere an SDR ASTC variant is the
+fallback. A format id names the data's interpretation: ASTC HDR blocks need a texture
+created with the HDR channel type, so they are not the LDR ASTC ids.
+
+The motion codec stays SDR for now ([Later](#later)).
+
+## Color
+
+### Linear values
+
+Texel values are linear RGB in the stream's primaries, relative to reference white:
+`nits = value * reference_white`. Values are at least 0 and at most 65504 (the largest
+half float); the encoder clamps negative values (colors outside the stored gamut), NaN
+(to 0) and infinities.
+
+### Primaries
+
+- `bt709`: the sRGB / BT.709 primaries every game engine renders in. The default.
+- `bt2020`: wide gamut, for engines that render or output BT.2020. Saturated HDR source
+  colors outside BT.709 survive only here.
+
+Engines that render in BT.709 convert BT.2020 streams with the 3x3 matrix in
+[PRAXI.md](../spec/PRAXI.md#hdr-color); `praxi-wgpu` does it in its draw shader.
+
+### Light level
+
+`max_cll` is the largest `max(R, G, B)` of any pixel of any frame, `max_fall` the largest
+per-frame mean of `max(R, G, B)`, both in nits, rounded up and clamped to 65535
+(CTA-861.3). The encoder fills them in when the stream ends. A game tonemapping to a known
+display peak can use them to place the video's highlights; most can ignore them.
+
+### Tonemap to SDR
+
+One curve, used wherever praxi itself turns HDR into SDR: the encoder's SDR variants of an
+HDR source, `praxi-wgpu` drawing an HDR track into a non-float target, `praxi frame` and
+the viewer. It is fixed (normative), so a file's SDR variant and an HDR variant tonemapped
+at runtime look alike:
+
+1. Convert to BT.709 primaries if the stream is BT.2020.
+2. `Y = 0.2126 R + 0.7152 G + 0.0722 B`. If `Y > 0`, scale R, G and B by
+   `Yd / Y` with `Yd = Y * (1 + Y / W²) / (1 + Y)` (extended Reinhard on luminance; `W`, the
+   *tonemap white*, is the value that maps to 1.0, default `4.0`).
+3. Clamp each channel to `0..1`, sRGB encode, round to 8 bits.
+
+`W = 4.0` at the default reference white puts 812 nits at SDR white. Games with their own
+tonemapper do not use this curve; they get linear values.
+
+## Variant selection
+
+Nothing new in the player: a group's variant is still the first format of the engine's
+`Capabilities` list that the group provides ([texture-variants.md](texture-variants.md#selection)).
+Preference expresses intent:
+
+- An **HDR engine** lists HDR formats first: `[Bc6h, Bc7, ...]` picks BC6H where the file
+  has it and BC7 elsewhere.
+- An **SDR engine** lists SDR formats first and HDR formats last: `[Bc7, ..., Bc6h]`
+  picks the SDR variant when there is one, and still plays an HDR-only file (tonemapped
+  when drawn by `praxi-wgpu`).
+
+Typical setups:
+
+- Desktop and consoles: `bc6h` + `bc7` (HDR and its SDR fallback), or `bc6h` alone when
+  every target renders HDR.
+- Shipping one file everywhere: `bc6h` + `bc7` + `astc6x6`; add `astc4x4-hdr` for HDR on
+  recent mobile GPUs.
+
+## Encoder
+
+### Library
+
+```rust
+let config = EncoderConfig::new(width, height, fps_num, fps_den)
+    .color(ColorConfig::hdr()                 // reference white 203 nits, BT.709
+        .primaries(Primaries::Bt709)
+        .tonemap_white(4.0))                  // for the SDR variants
+    .variant(VariantConfig::bc6h())
+    .variant(VariantConfig::bc7());           // SDR fallback, tonemapped
+let mut encoder = Encoder::new(File::create("sunset.praxi")?, config)?;
+for frame in frames {
+    encoder.push_frame_hdr(&frame)?;          // width * height * 4 f32: linear RGBA, 1.0 = reference white
+}
+```
+
+- `VariantConfig::bc6h()` and `VariantConfig::astc_hdr(4)` add HDR variants.
+- `push_frame_hdr(&[f32])`: linear RGBA in the configured primaries, relative to reference
+  white, straight alpha in `0..1`. HDR variants store RGB; SDR variants get the
+  [tonemapped](#tonemap-to-sdr) frame with its alpha.
+- `push_frame(&[u8])` (RGBA8, sRGB) still works in a file with HDR variants: they get the
+  frame sRGB-decoded to linear (at most 1.0), converted to BT.2020 when configured. Each
+  frame may come through either call.
+- `ColorConfig::hdr()` sets `reference_white` (default 203), `primaries` (default
+  `Bt709`) and `tonemap_white` (default 4.0). Without it (`ColorConfig::sdr()`, the
+  default), HDR variants are rejected.
+- HDR variants never have the alpha flag; `max_cll` and `max_fall` are written by
+  `finish()`.
+
+### Encoding paths
+
+Both from `ktx-rs`, like the SDR formats ([video-codec.md](video-codec.md#encoding-paths)):
+
+- **BC6H**: `basisu::astc_6x6_hdr::fast_encode_bc6h` per 4x4 block of half floats
+  (unsigned). `--quality` picks its search:
+
+  | Quality | Endpoint modes | 2-subset patterns | Brute-force weights |
+  |---|---|---|---|
+  | `fast` | 2 | 1 | no |
+  | `medium` | 4 | 8 | no |
+  | `thorough` | 9 | 32 | yes |
+
+- **ASTC 4x4 HDR**: the UASTC HDR 4x4 block encoder (`basisu::uastc_hdr_4x4_enc::
+  astc_hdr_4x4_enc_block`, BC6H error weight 0.1 so it optimizes for ASTC), at level 0, 1
+  and 2 for `fast`, `medium` and `thorough`. UASTC HDR 4x4 blocks are standard ASTC 4x4
+  HDR blocks.
+
+The BC6H that the UASTC HDR search also produces is not used: on detailed frames it is
+about 2 dB worse than `fast_encode_bc6h` and 5 times slower ([Measurements](#measurements)).
+
+### Temporal skip
+
+For HDR variants, the skip threshold ([video-codec.md](video-codec.md#temporal-skip))
+compares 10-bit PQ code values: each channel becomes `round(PQ(value * reference_white) *
+1023)`, so a threshold step is about one 10-bit HDR10 code value at any brightness. The
+default threshold (3) and `--skip-threshold` apply unchanged. SDR variants of an HDR source
+compare their tonemapped 8-bit pixels, as any SDR variant.
+
+### CLI
+
+```sh
+praxi encode sunset_hdr10.mkv -o sunset.praxi --variant bc6h --variant bc7
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--variant bc6h`, `--variant astc4x4-hdr` | | HDR variants (with the existing SDR ones) |
+| `--primaries <P>` | `bt709` | `bt709` or `bt2020`: primaries of the HDR variants |
+| `--reference-white <NITS>` | `203` | Nits that become 1.0 |
+| `--tonemap-white <W>` | `4.0` | `W` of the [SDR tonemap](#tonemap-to-sdr), for SDR variants of an HDR source |
+| `--input-transfer <T>` | from `ffprobe` | `pq`, `hlg`, `linear` or `srgb`: override the source's transfer function |
+
+The source's transfer function comes from `ffprobe`'s `color_transfer`: `smpte2084` is
+`pq`, `arib-std-b67` is `hlg`, `linear` is `linear` (OpenEXR and other float sources);
+anything else is `srgb` (today's path). Primaries come from `color_primaries`: `bt2020`, or
+BT.709 for `bt709` and unspecified; an HDR source with other primaries is rejected.
+
+For `pq`, `hlg` and `linear` sources, `ffmpeg` decodes to float RGB without changing the
+transfer (`-pix_fmt gbrapf32le`, `gbrpf32le` without alpha), and the CLI converts:
+
+- `pq`: SMPTE ST 2084 EOTF to nits, divided by reference white;
+- `hlg`: BT.2100 inverse OETF, then the OOTF for a 1000-nit display (system gamma 1.2,
+  on luminance), divided by reference white;
+- `linear`: taken as is (1.0 is reference white);
+- then the primaries matrix to the target primaries.
+
+A `pq` or `hlg` source now also gets SDR variants right: they are tonemapped from linear
+light instead of being read as sRGB, which today washes them out.
+
+`--scale` is rejected for `linear` sources: `swscale` clamps float samples to 1.0 when it
+resizes (seen with ffmpeg 6.1 on an OpenEXR input), which would cut every highlight. `pq`
+and `hlg` samples are code values in `0..1` and scale as before. `--fps` and `--frames`
+work for every source.
+
+`praxi encode` prints, per HDR variant, the usual statistics plus `max_cll` and
+`max_fall`.
+
+## Player
+
+- `TextureFormat::Bc6h` and `TextureFormat::Astc4x4Hdr` (and the reserved
+  `Astc6x6Hdr`); `TextureFormat::is_hdr()`.
+- `VideoParams::hdr()`, `primaries()` (`Primaries::Bt709` / `Bt2020`),
+  `reference_white()`, `max_cll()`, `max_fall()`.
+- `VideoFrame` gets `hdr` next to `srgb`. HDR frames are uploaded like any other: rows of
+  `blocks_x * 16` bytes, no conversion.
+
+## Engines
+
+### `praxi-wgpu`
+
+| Item | Change |
+|---|---|
+| `wgpu_format(format, srgb)` | `Bc6h` → `Bc6hRgbUfloat`; `Astc4x4Hdr` → `Astc { block: B4x4, channel: Hdr }`. |
+| `supported_formats(features)` | As today, then `Bc6h` (with `TEXTURE_COMPRESSION_BC`) and `Astc4x4Hdr` (with `TEXTURE_COMPRESSION_ASTC_HDR`) last: SDR preferred, HDR-only files still play. |
+| `supported_formats_hdr(features)` | `Bc6h`, then the BC formats; `Astc4x4Hdr`, then the ASTC formats. |
+| `capabilities_hdr(adapter, only)` | Like `capabilities`, with `supported_formats_hdr`. |
+| `required_features(adapter)` | Also `TEXTURE_COMPRESSION_ASTC_HDR` when the adapter has it. |
+| `VideoRenderer` | Into a float target (`Rgba16Float`, `Rgba32Float`, `Rg11b10Ufloat`): HDR tracks drawn as linear BT.709 values, BT.2020 streams converted in the shader. Into any other target: HDR tracks [tonemapped](#tonemap-to-sdr) with `set_tonemap_white(w)` (default 4.0). SDR tracks draw as today (linear values up to 1.0 in float targets). |
+
+### Bevy
+
+`PraxiVideoOptions { hdr: true, .. }` opens the video with `capabilities_hdr` and makes the
+video's `Image` `Rgba16Float` instead of `Rgba8UnormSrgb`: linear values, 1.0 at reference
+white, ready for a camera with `Hdr` and bloom or as an `emissive_texture`. Mipmaps work the
+same on it. With `hdr: false` (default) the image is as today and HDR-only files are
+tonemapped into it.
+
+The `video_box` example gets `--hdr`: an `Hdr` camera with `Bloom`, and the box material
+takes the video as `emissive_texture` (black `base_color`), so bright parts of the video
+glow.
+
+### Godot
+
+`VideoStreamPraxi` gets `hdr: bool` (default `false`); `formats` accepts `bc6h` and
+`astc4x4-hdr`:
+
+| Feature | praxi format | Godot `Image` format |
+|---|---|---|
+| `bptc` | BC6H | `FORMAT_BPTC_RGBFU` |
+| ASTC HDR (`RenderingDevice.texture_is_format_supported_for_usage` with `DATA_FORMAT_ASTC_4x4_SFLOAT_BLOCK`) | ASTC 4x4 HDR | `FORMAT_ASTC_4x4_HDR` |
+
+With `hdr`, these come before the SDR formats; without it, after them. Godot draws the
+texture without a praxi shader, so it gets the values as stored: files for Godot use
+`bt709` (the default), and a project without HDR 2D (`rendering/viewport/hdr_2d`) clips
+values above 1.0; such projects should ship an SDR variant.
+
+## Tools
+
+- `praxi info` shows HDR streams as `video BC6H 1920x1080 HDR bt709 white 203 nits
+  maxCLL 3249 maxFALL 410`.
+- `praxi frame` on an HDR variant: `-o FILE.exr` writes the linear half floats as OpenEXR
+  (RGB, the stream's primaries, through `ktx-rs`'s `tinyexr`); `-o FILE.png` writes the
+  [tonemapped](#tonemap-to-sdr) 8-bit image, with `--tonemap-white`. `--format` accepts
+  `bc6h` and `astc4x4-hdr`. The library adds `praxi_encoder::decode_frame_hdr(&VideoParams,
+  &[u8]) -> Vec<f32>` (RGBA, alpha 1), through `ktx-rs`'s `unpack_bc6h` and ASTC HDR
+  decoder.
+- `praxi-viewer --hdr` prefers HDR variants (`capabilities_hdr`). The surface stays sRGB,
+  so HDR tracks are tonemapped, `--tonemap-white W` (default 4.0); the window title shows
+  `HDR` after the format. Screenshots are tonemapped PNGs.
+
+## Tests
+
+- `praxi-format`: color description round trip; readers reject the HDR flag on an SDR
+  format and its absence on an HDR one, the sRGB flag on an HDR stream, unknown primaries,
+  and an HDR stream with reference white 0.
+- `praxi-encoder`: PQ, HLG and primaries conversions against reference values (PQ code
+  0.5807 is 203 nits, so 1.0; HLG 0.75 is 203 nits on the 1000-nit display); the tonemap
+  curve at fixed points; BC6H and ASTC 4x4 HDR of a generated HDR frame (a gradient to 40.0
+  with colored highlights) decode within a PQ-PSNR floor; `max_cll`/`max_fall` of known
+  frames; alpha is dropped from HDR variants and kept in SDR ones.
+- `praxi-wgpu`: `block_formats_draw_like_the_cpu_decoder` covers BC6H (and ASTC 4x4 HDR
+  where the adapter has it) into an `Rgba16Float` target, within half-float rounding of
+  the CPU decoder; an HDR track into an sRGB target matches the CPU tonemap within 1 per
+  channel.
+- CLI end to end: a 10-bit clip generated by `ffmpeg` and tagged PQ / BT.2020 encoded as
+  `bc6h` + `bc7`; `praxi info` shows the color description; `praxi frame` writes `.exr`
+  and `.png`; `--scale` with `--input-transfer linear` fails.
+
+## Measurements
+
+One 1080p frame per input, encoded with `ktx-rs` 4.4.4 on 24 threads (Ryzen AI 9 HX
+370), decoded with `ktx-rs`'s CPU decoders. Quality is PSNR of PQ code values (linear
+1.0 = 100 nits) against the source rounded to half floats; it is not comparable with the
+8-bit sRGB PSNR of the SDR formats.
+
+- *sky*: an OpenEXR sky panorama (1024x512) upscaled to 1920x1080, peak 3249 nits, 20% of
+  pixels above 100 nits. Smooth.
+- *bunny*: a frame of the bench input with highlights expanded (`x / (1 - 0.95x)` on
+  linear values, so SDR white becomes 2000 nits), 9% of pixels above 100 nits. Detailed.
+
+| Encoder | sky ms | sky dB | bunny ms | bunny dB |
+|---|---|---|---|---|
+| BC6H `fast` | 8.6 | 55.40 | 20.0 | 43.07 |
+| BC6H `medium` | 10.4 | 55.44 | 46.1 | 43.56 |
+| BC6H `thorough` | 20.0 | 55.47 | 127.0 | 43.85 |
+| ASTC 4x4 HDR level 0 (`fast`) | 124 | 57.10 | 128 | 41.29 |
+| ASTC 4x4 HDR level 1 (`medium`) | 559 | 57.20 | 576 | 41.74 |
+| ASTC 4x4 HDR level 2 (`thorough`) | 1194 | 57.31 | 1208 | 41.88 |
+| BC6H from the UASTC HDR 4x4 search, levels 0-2 | 124-1194 | 56.00-56.93 | 128-1208 | 41.15-41.79 |
+| ASTC 6x6 HDR (`compress_photo`, levels 0 and 2) | 1618-1636 | 51.9 | 3434-5380 | 38.2 |
+| BC7 `fast` (SDR, for scale) | | | 73 | |
+
+BC6H encodes faster than the BC7 praxi already writes. ASTC 4x4 HDR at `fast` is about 8
+frames per second at 1080p, fine for offline encoding. ASTC 6x6 HDR is too slow for video
+(a 10 s clip at 60 fps would take 16 to 54 minutes) and stays reserved.
+
+## Later
+
+- **ASTC 6x6 HDR**: once its encoder is fast enough (in `ktx-rs`), for smaller mobile HDR.
+- **HDR motion codec**: 10-bit PQ planes (`u16`, about twice the plane memory), decoded
+  by the color pass into `Rgba16Float` as linear values. This is where HDR files become
+  small; BC6H costs what BC7 does.
+- **HDR with alpha**: ASTC HDR RGB with LDR alpha (`astcenc`'s `HdrRgbLdrA` profile, once
+  `ktx-rs` encodes it), or a separate alpha track.
+- **`praxi bench`** with PQ-PSNR for HDR variants (and the result format in
+  [BENCH.md](../spec/BENCH.md)).
+- **HDR output in the viewer**: an HDR swapchain where `wgpu` offers one.
+- **`praxi-ffi`** exposes the color description from the start (roadmap).

@@ -32,11 +32,14 @@ A CPU fallback (decoding blocks to RGBA) may be added later behind an opt-in fea
 | BC3 | 4x4 | 16 | yes | no (reserved) |
 | BC4 | 4x4 | 8 | single channel | no (reserved) |
 | BC5 | 4x4 | 16 | two channels | no (reserved) |
+| BC6H (HDR) | 4x4 | 16 | no | yes |
 | BC7 | 4x4 | 16 | yes | yes |
 | ASTC 4x4 | 4x4 | 16 | yes | yes |
 | ASTC 5x5 | 5x5 | 16 | yes | no (reserved) |
 | ASTC 6x6 | 6x6 | 16 | yes | yes |
 | ASTC 8x8 | 8x8 | 16 | yes | yes |
+| ASTC 4x4 HDR | 4x4 | 16 | no | yes |
+| ASTC 6x6 HDR | 6x6 | 16 | no | no (reserved) |
 | motion | 16x16 macroblock | variable | yes | yes |
 
 `motion` is not a GPU texture format: it is a transform codec with motion compensation,
@@ -57,7 +60,9 @@ BC7's 55.6 MB/s at 41.0 dB, ASTC 6x6's 34.1 MB/s at 37.4 dB and ASTC 8x8's 18.4 
 `thorough` (2 and 3 least-squares passes) gain 0.2 dB, so `fast` is the default.
 
 Numeric ids are in [PRAXI.md](../spec/PRAXI.md#texture-formats). Color data is sRGB encoded;
-the stream's sRGB flag tells the engine to sample it with an sRGB texture format.
+the stream's sRGB flag tells the engine to sample it with an sRGB texture format. HDR
+formats hold linear light instead and sit in the same groups as SDR variants of the same
+video; the engine's format order chooses between them ([hdr.md](hdr.md)).
 
 ## Typical setups
 

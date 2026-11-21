@@ -34,8 +34,8 @@ in `docs/features/` first.
 
 - [ ] **`praxi-ffi`**: a C library and header (`praxi.h`) over the player: open from a
   path or from read/seek callbacks, advance, events, frames, audio outputs readable from
-  the audio thread, cues with their fields. Explicit ownership (every handle has a free
-  function), errors as codes plus a message, no Rust panics across the boundary.
+  the audio thread, cues with their fields, the video color description of format 0.11
+  ([hdr.md](docs/features/hdr.md)). Explicit ownership (every handle has a free function), errors as codes plus a message, no Rust panics across the boundary.
 - [ ] **Unity plugin**: a C# package over `praxi-ffi` (P/Invoke): frames into
   `Texture2D` in their compressed format, audio through `OnAudioFilterRead`, cues as C#
   events. Built for Linux, macOS and Windows by the release workflow.
@@ -63,6 +63,23 @@ keyframes at scene cuts. Each needs a spec in `docs/features/` first.
 - [ ] **Fast seek in the player**: a seek mode that lands on the nearest keyframe instead of
   the exact frame (`SeekMode::Keyframe`), for scrubbing and skipping, where precision
   matters less than speed.
+
+## 4. HDR
+
+Spec: [hdr.md](docs/features/hdr.md), format 0.11. HDR video as linear half-float textures,
+for HDR displays and for video as an emissive material. The encoders are in `ktx-rs`
+already (measured in the spec).
+
+- [ ] **Format and player**: texture formats BC6H and ASTC 4x4/6x6 HDR, the HDR color flag
+  and the color description (primaries, reference white, MaxCLL/MaxFALL); `praxi info`.
+- [ ] **Encoder**: `bc6h` and `astc4x4-hdr` variants, `push_frame_hdr`, PQ/HLG/linear
+  sources in the CLI, SDR variants tonemapped from HDR sources, PQ-based temporal skip.
+- [ ] **Playback**: `praxi-wgpu` formats and HDR/SDR drawing, `praxi frame` to EXR and
+  tonemapped PNG, `praxi-viewer --hdr`.
+- [ ] **Engines**: Bevy `Rgba16Float` video images and `video_box --hdr` with bloom; Godot
+  `hdr` and BC6H / ASTC HDR images.
+- [ ] Later: HDR motion codec (10-bit PQ planes), ASTC 6x6 HDR once its encoder is fast
+  enough, HDR with alpha.
 
 ## Not scheduled
 
