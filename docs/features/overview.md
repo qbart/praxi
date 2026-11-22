@@ -137,6 +137,8 @@ machine is recorded in the baseline's `machine`).
     ([video-codec.md](video-codec.md#encoding-paths)).
 17. **0.3.0** Third release: HDR video in file format 0.11 and the move to `imgio`
     ([releasing.md](releasing.md#versions-released)).
+18. **0.3.1** HDR output to HDR displays in the viewer, `--input-primaries`, the Bevy HDR
+    demo and HDR sample footage ([releasing.md](releasing.md#versions-released)).
 
 ## Next
 

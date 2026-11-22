@@ -127,6 +127,13 @@ remote. It builds `praxi`, `praxi-viewer` and `praxi-editor` in release mode
   reads only 0.11 files and earlier releases cannot read them, so files from 0.2.0 must be
   encoded again. Breaking API changes: new fields in `VideoParams`, `VideoFrame` and
   `PraxiVideoOptions`, new `TextureFormat` variants, `VariantKind::Bc7` and `Astc`.
+- 0.3.1: HDR output to HDR displays in `praxi-viewer` (HDR10 PQ or scRGB surfaces,
+  `--hdr-output`, `--hdr-white`) through new `praxi-wgpu` API (`Output`,
+  `VideoRenderer::set_output`, `hdr_surface`, `is_sdr_display`); `praxi encode
+  --input-primaries` and color tagging for untagged sources such as `.y4m`; the Bevy HDR
+  demo (`video_box --hdr`: SDR and HDR variants side by side, debug labels, a panel for
+  strength, bloom and the tonemapper); `make samples-hdr` with real HDR10 footage and an
+  OpenEXR sky. File format 0.11, unchanged; no breaking API changes.
 
 ## Release steps
 
