@@ -33,6 +33,8 @@ pub type FilePlayer = Player<BufReader<SharedFile>>;
 
 /// Format of the video texture and image.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// Format of the video texture and image with [`PraxiVideoOptions::hdr`].
+const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// Advances every [`PraxiVideo`], sends its events as [`PraxiEvent`] messages and shows its
 /// frames in its image.
@@ -148,6 +150,10 @@ pub struct PraxiVideoOptions {
     /// sampler, for video shown small or at an angle in 3D. Off by default: each new frame
     /// costs a few more GPU passes (`docs/features/bevy.md#mipmaps`).
     pub mipmaps: bool,
+    /// Prefers HDR variants and makes the image `Rgba16Float`: linear values, 1.0 at the
+    /// video's reference white, brighter above (`docs/features/hdr.md#bevy`). Off by
+    /// default: the image is `Rgba8UnormSrgb` and HDR-only files are tonemapped into it.
+    pub hdr: bool,
 }
 
 /// A praxi file playing into an [`Image`].
@@ -160,6 +166,8 @@ pub struct PraxiVideo {
     path: PathBuf,
     caps: Capabilities,
     gpu: Option<Gpu>,
+    /// Format of `image` and of the texture the video is drawn into.
+    format: wgpu::TextureFormat,
     /// Frames drawn into `gpu.target`, for the copy into `image`.
     version: u64,
     /// Counts the players `reopen` made; their audio outputs are new.
@@ -182,11 +190,14 @@ impl PraxiVideo {
 
     /// [`PraxiVideo::open`] with `options`.
     pub fn open_with(path: &Path, adapter: &RenderAdapter, images: &mut Assets<Image>, options: PraxiVideoOptions) -> Result<PraxiVideo, String> {
-        let caps = praxi_wgpu::capabilities(adapter, None)?;
+        let (caps, format) = match options.hdr {
+            true => (praxi_wgpu::capabilities_hdr(adapter, None)?, HDR_FORMAT),
+            false => (praxi_wgpu::capabilities(adapter, None)?, FORMAT),
+        };
         let (player, file) = open_player(path, &caps)?;
         let video = player.tracks()[0].params;
         let size = wgpu::Extent3d { width: video.width, height: video.height, depth_or_array_layers: 1 };
-        let mut image = Image::new_uninit(size, wgpu::TextureDimension::D2, FORMAT, RenderAssetUsages::RENDER_WORLD);
+        let mut image = Image::new_uninit(size, wgpu::TextureDimension::D2, format, RenderAssetUsages::RENDER_WORLD);
         if options.mipmaps {
             image.texture_descriptor.mip_level_count = mipmaps::levels(video.width, video.height);
             image.texture_descriptor.usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
@@ -199,6 +210,7 @@ impl PraxiVideo {
             path: path.to_path_buf(),
             caps,
             gpu: None,
+            format,
             version: 0,
             generation: 0,
         })
@@ -268,6 +280,7 @@ fn draw(device: Option<Res<RenderDevice>>, queue: Option<Res<RenderQueue>>, mut 
     for mut video in &mut videos {
         let video = &mut *video;
         let player = video.player.get();
+        let format = video.format;
         let gpu = video.gpu.get_or_insert_with(|| {
             let params = player.tracks()[0].params;
             let target = device.create_texture(&wgpu::TextureDescriptor {
@@ -276,12 +289,12 @@ fn draw(device: Option<Res<RenderDevice>>, queue: Option<Res<RenderQueue>>, mut 
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: FORMAT,
+                format,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             let view = target.create_view(&Default::default());
-            Gpu { renderer: VideoRenderer::new(device, FORMAT, player), target, view }
+            Gpu { renderer: VideoRenderer::new(device, format, player), target, view }
         });
         if gpu.renderer.prepare(device, queue, player, 1.0) == 0 {
             continue;
@@ -307,12 +320,12 @@ fn draw(device: Option<Res<RenderDevice>>, queue: Option<Res<RenderQueue>>, mut 
 }
 
 /// Video textures to copy into images, the version last copied into each, and the mip
-/// pipeline once an image has mipmaps.
+/// pipeline of each image format once an image of that format has mipmaps.
 #[derive(Resource, Default)]
 struct Copies {
     pending: Vec<(AssetId<Image>, wgpu::Texture, u64)>,
     copied: HashMap<AssetId<Image>, u64>,
-    mipmaps: Option<Mipmaps>,
+    mipmaps: HashMap<wgpu::TextureFormat, Mipmaps>,
 }
 
 fn extract(videos: Extract<Query<&PraxiVideo>>, mut copies: ResMut<Copies>) {
@@ -336,7 +349,8 @@ fn copy(mut copies: ResMut<Copies>, images: Res<RenderAssets<GpuImage>>, device:
         let encoder = encoder.get_or_insert_with(|| device.create_command_encoder(&Default::default()));
         encoder.copy_texture_to_texture(texture.as_image_copy(), image.texture.as_image_copy(), texture.size());
         if image.texture.mip_level_count() > 1 {
-            copies.mipmaps.get_or_insert_with(|| Mipmaps::new(device, FORMAT)).record(device, encoder, &image.texture);
+            let format = image.texture.format();
+            copies.mipmaps.entry(format).or_insert_with(|| Mipmaps::new(device, format)).record(device, encoder, &image.texture);
         }
         copies.copied.insert(*id, *version);
     }
@@ -520,7 +534,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("praxi-bevy-mips-{}.praxi", std::process::id()));
         clip(&path, VariantConfig::bc7());
         let world = app.world_mut();
-        let options = PraxiVideoOptions { mipmaps: true };
+        let options = PraxiVideoOptions { mipmaps: true, ..Default::default() };
         let mut video = world.resource_scope(|_, mut images: Mut<Assets<Image>>| PraxiVideo::open_with(&path, &adapter, &mut images, options)).unwrap();
         video.player().play().unwrap();
         let image = video.image.id();
@@ -550,6 +564,70 @@ mod tests {
         assert!(pixel[3] > 240, "the smallest level is drawn, opaque: {pixel:?}");
         assert!(pixel[..3].iter().any(|&c| c > 0), "and not black: {pixel:?}");
         app.world_mut().despawn(entity);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// The first pixel of level 0 of a video's image.
+    fn first_pixel(app: &App, image: AssetId<Image>) -> (wgpu::TextureFormat, Vec<u8>) {
+        let render = app.sub_app(RenderApp).world();
+        let texture = render.resource::<RenderAssets<GpuImage>>().get(image).unwrap().texture.clone();
+        let device = app.world().resource::<RenderDevice>().wgpu_device().clone();
+        let queue = app.world().resource::<RenderQueue>();
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let to = wgpu::TexelCopyBufferInfo { buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: None } };
+        encoder.copy_texture_to_buffer(texture.as_image_copy(), to, wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 });
+        queue.submit([encoder.finish()]);
+        buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let bytes = buffer.slice(..8).get_mapped_range().expect("mapped").to_vec();
+        (texture.format(), bytes)
+    }
+
+    #[test]
+    fn hdr_images_hold_linear_values() {
+        use praxi_encoder::ColorConfig;
+        let Some(mut app) = app() else {
+            return skip("no adapter");
+        };
+        let adapter = app.world().resource::<RenderAdapter>().clone();
+        if !praxi_wgpu::supported_formats(adapter.features()).contains(&praxi::TextureFormat::Bc6h) {
+            return skip("the adapter does not sample BC6H");
+        }
+        let path = std::env::temp_dir().join(format!("praxi-bevy-hdr-{}.praxi", std::process::id()));
+        let config = EncoderConfig::new(40, 24, 10, 1).color(ColorConfig::hdr()).variant(VariantConfig::bc6h()).variant(VariantConfig::bc7());
+        let mut enc = Encoder::new(std::fs::File::create(&path).unwrap(), config).unwrap();
+        enc.push_frame_hdr(&[3.0, 0.5, 0.25, 1.0].repeat(40 * 24)).unwrap();
+        enc.finish().unwrap();
+        for hdr in [true, false] {
+            let world = app.world_mut();
+            let options = PraxiVideoOptions { hdr, ..Default::default() };
+            let mut video = world.resource_scope(|_, mut images: Mut<Assets<Image>>| PraxiVideo::open_with(&path, &adapter, &mut images, options)).unwrap();
+            let format = video.player().tracks()[0].params.format;
+            assert_eq!(format, if hdr { praxi::TextureFormat::Bc6h } else { praxi::TextureFormat::Bc7 });
+            let image = video.image.id();
+            let entity = app.world_mut().spawn(video).id();
+            for _ in 0..3 {
+                app.update();
+            }
+            let (format, pixel) = first_pixel(&app, image);
+            if hdr {
+                assert_eq!(format, wgpu::TextureFormat::Rgba16Float);
+                let rgb: Vec<f32> = pixel.as_chunks::<2>().0[..3].iter().map(|b| imgio::half::to_f32(u16::from_le_bytes(*b))).collect();
+                assert!((rgb[0] - 3.0).abs() < 0.05 && (rgb[2] - 0.25).abs() < 0.01, "linear, above 1.0: {rgb:?}");
+            } else {
+                assert_eq!(format, FORMAT);
+                // BC7 holds the frame tonemapped at encode time.
+                let expected = praxi::format::color::tonemap_srgb8([3.0, 0.5, 0.25], praxi::Primaries::Bt709, 4.0);
+                assert!(pixel[..3].iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 2), "tonemapped: {pixel:?}, {expected:?}");
+            }
+            app.world_mut().despawn(entity);
+        }
         std::fs::remove_file(&path).unwrap();
     }
 

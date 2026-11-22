@@ -2,11 +2,14 @@
 //! (`docs/features/bevy.md#video-box-example`).
 //!
 //! Up/Down move the camera away and back, Space plays and pauses the video, R starts and
-//! stops the spinning, Escape quits.
+//! stops the spinning, Escape quits. `--hdr` shows HDR video glowing through bloom
+//! (`docs/features/hdr.md#bevy`).
 
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapter;
+use bevy::camera::Hdr;
+use bevy::post_process::bloom::Bloom;
 use bevy::render::view::Tonemapping;
 use clap::Parser;
 use praxi_bevy::{PraxiPlugin, PraxiSystems, PraxiVideo, PraxiVideoOptions};
@@ -16,10 +19,14 @@ use std::path::PathBuf;
 struct Args {
     /// The praxi file to play.
     file: PathBuf,
+    /// Prefer HDR variants: the video is emissive on an HDR camera with bloom.
+    #[arg(long)]
+    hdr: bool,
 }
 
+/// The file and whether it plays as HDR.
 #[derive(Resource)]
-struct File(PathBuf);
+struct File(PathBuf, bool);
 
 /// A box showing the video, spinning about its vertical axis by this angle.
 #[derive(Component)]
@@ -45,7 +52,7 @@ fn main() -> AppExit {
         }))
         .add_plugins(PraxiPlugin)
         .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.07)))
-        .insert_resource(File(args.file))
+        .insert_resource(File(args.file, args.hdr))
         .insert_resource(Spinning(true))
         .add_systems(Startup, setup)
         .add_systems(Update, (input.before(PraxiSystems::Advance), spin, label.after(PraxiSystems::Advance)))
@@ -61,10 +68,18 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    // The video's colors as they are: unlit, and no tonemapping on the camera.
-    commands.spawn((Camera3d::default(), Tonemapping::None, Transform::from_xyz(0.0, 0.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y)));
+    let hdr = file.1;
+    let camera = (Camera3d::default(), Transform::from_xyz(0.0, 0.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y));
+    if hdr {
+        // Values above 1.0 bloom and go through the camera's tonemapper like the scene.
+        commands.spawn((camera, Hdr, Bloom::NATURAL));
+    } else {
+        // The video's colors as they are: unlit, and no tonemapping on the camera.
+        commands.spawn((camera, Tonemapping::None));
+    }
     for (x, mipmaps, label) in [(-1.3, false, "no mipmaps"), (1.3, true, "mipmaps")] {
-        let mut video = match PraxiVideo::open_with(&file.0, &adapter, &mut images, PraxiVideoOptions { mipmaps }) {
+        let options = PraxiVideoOptions { mipmaps, hdr };
+        let mut video = match PraxiVideo::open_with(&file.0, &adapter, &mut images, options) {
             Ok(video) => video,
             Err(e) => {
                 eprintln!("{}: {e}", file.0.display());
@@ -77,7 +92,16 @@ fn setup(
         player.play().unwrap();
         let params = player.tracks()[0].params;
         let aspect = params.width as f32 / params.height as f32;
-        let material = materials.add(StandardMaterial { base_color_texture: Some(video.image.clone()), unlit: true, ..default() });
+        let material = materials.add(match hdr {
+            // Emissive: the video's linear values light the box, bright parts bloom.
+            true => StandardMaterial {
+                base_color: Color::BLACK,
+                emissive: LinearRgba::WHITE,
+                emissive_texture: Some(video.image.clone()),
+                ..default()
+            },
+            false => StandardMaterial { base_color_texture: Some(video.image.clone()), unlit: true, ..default() },
+        });
         let entity = commands.spawn((
             video,
             Mesh3d(meshes.add(video_box(Vec3::new(aspect, 1.0, 1.0)))),
