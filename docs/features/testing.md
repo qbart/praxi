@@ -15,8 +15,8 @@ tests that need them skip there.
 | `make test-strict` | `make test` with `PRAXI_TEST_STRICT=1`: tests that would skip fail instead | ffmpeg, a GPU adapter with compute shaders and BC or ASTC |
 | `make bench` | `praxi bench` on the sample video, checked against [bench/baseline.json](../../bench/baseline.json) ([benchmarks.md](benchmarks.md)) | ffmpeg, the sample video (`make samples` downloads it) |
 | `make examples` | Encodes part of the sample and runs the `game_loop` and `decode_thread` examples on it | ffmpeg, the sample video |
-| `make samples-hdr` | Downloads real HDR10 footage (685 MB, CC BY 3.0) into `samples/` and checks its MD5 ([hdr.md](hdr.md#sample-footage)) | curl |
-| `make examples-hdr` | Encodes the HDR sample to `target/cosmos.praxi` (BC6H + BC7) and prints `praxi info`; play it with `praxi-viewer target/cosmos.praxi --hdr --loop` | ffmpeg, the HDR sample |
+| `make samples-hdr` | Downloads real HDR10 footage (685 MB, CC BY 3.0) and an OpenEXR sky (1.4 MB, CC0) into `samples/` and checks their MD5 ([hdr.md](hdr.md#sample-footage)) | curl |
+| `make examples-hdr` | Encodes the HDR samples to `target/cosmos.praxi` and `target/sky.praxi` (BC6H + BC7) and prints `praxi info`; play them with `praxi-viewer target/cosmos.praxi --hdr --loop` | ffmpeg, the HDR samples |
 
 Code is not formatted with rustfmt; `make check` does not run `cargo fmt`. The first
 `make test` also builds Bevy and `bevy_egui` for `praxi-bevy` and its example, which

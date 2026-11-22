@@ -37,7 +37,11 @@ $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4:
 HDR_INPUT := $(SAMPLES_DIR)/CosmosCaterpillar_2048x858p24_hdr10.y4m
 HDR_MD5 := 793c7f42b657ca2b5755a46c853ce4a8
 
-samples-hdr: $(HDR_INPUT)
+# An OpenEXR sky, 1.4 MB: Kloppenheim 06 from Poly Haven (CC0), peak 33x reference white.
+HDR_STILL := $(SAMPLES_DIR)/sky.exr
+HDR_STILL_MD5 := b27964c76679d9b275cc3f912c001735
+
+samples-hdr: $(HDR_INPUT) $(HDR_STILL)
 
 $(HDR_INPUT):
 	mkdir -p $(SAMPLES_DIR)
@@ -45,13 +49,22 @@ $(HDR_INPUT):
 	(md5sum $@.part 2>/dev/null || md5 -r $@.part) | grep -q $(HDR_MD5)
 	mv $@.part $@
 
+$(HDR_STILL):
+	mkdir -p $(SAMPLES_DIR)
+	curl -fL -o $@.part https://dl.polyhaven.org/file/ph-assets/HDRIs/exr/1k/kloppenheim_06_1k.exr
+	(md5sum $@.part 2>/dev/null || md5 -r $@.part) | grep -q $(HDR_STILL_MD5)
+	mv $@.part $@
+
 HDR_EXAMPLE := target/cosmos.praxi
+HDR_STILL_EXAMPLE := target/sky.praxi
 
 examples-hdr: samples-hdr
 	mkdir -p target
 	cargo run --release -p praxi-cli -- encode $(HDR_INPUT) -o $(HDR_EXAMPLE) --input-transfer pq --input-primaries bt2020 \
 		--primaries bt2020 --variant bc6h --variant bc7
 	cargo run --release -p praxi-cli -- info $(HDR_EXAMPLE)
+	cargo run --release -p praxi-cli -- encode $(HDR_STILL) -o $(HDR_STILL_EXAMPLE) --variant bc6h --variant bc7
+	cargo run --release -p praxi-cli -- info $(HDR_STILL_EXAMPLE)
 
 bench: samples
 	mkdir -p target
