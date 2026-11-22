@@ -160,10 +160,11 @@ alone on 24 threads):
 | `medium` | 71.5 | 43.23 dB | 4.1 s |
 | `thorough` | 73.1 | 43.61 dB | 65 s |
 
-Until 0.2.0, BC7 was UASTC transcoded to BC7 (through `ktx-rs`), with UASTC RDO as `--rdo`;
-at `fast` it gave 55.6 MB/s at 41.00 dB, so `imgio`'s fastest mode is 1.8% smaller and
-0.08 dB better. BC1 output is byte for byte the same; ASTC sizes and PSNR are within 0.02%
-and 0.01 dB.
+Every format is encoded directly. A file's variants are chosen per platform at encode time,
+so praxi has no use for a universal intermediate such as UASTC, which exists to be
+transcoded on the device. Until 0.2.0, BC7 went through UASTC anyway (UASTC encoded, then
+transcoded to BC7); encoding BC7 directly is 1.8% smaller, 0.08 dB better and about 4
+times faster at `fast` (55.6 MB/s at 41.00 dB before).
 
 Frames whose size is not a multiple of the block size are padded by repeating the last
 column and row; the stream's width and height keep the real size.

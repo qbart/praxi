@@ -307,9 +307,7 @@ of the SDR formats.
 | BC7 `fast` (SDR, for scale) | | | 19 | |
 
 Every HDR variant encodes a 1080p frame in under 0.25 s, so a 10 s clip at 60 fps takes
-under a minute per variant at `fast`. Basis Universal's encoders (through `ktx-rs` 4.4.4,
-before praxi moved to `imgio`) were slower and worse for ASTC: UASTC HDR 4x4 took 128 ms
-per bunny frame at level 0 for 41.29 dB, and ASTC 6x6 HDR 3.4 s for 38.2 dB.
+under a minute per variant at `fast`.
 
 ## Later
 
