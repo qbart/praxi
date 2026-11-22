@@ -14,6 +14,9 @@ const BC: [TextureFormat; 5] =
     [TextureFormat::Bc7, TextureFormat::Bc3, TextureFormat::Bc1, TextureFormat::Bc5, TextureFormat::Bc4];
 const ASTC: [TextureFormat; 4] =
     [TextureFormat::Astc4x4, TextureFormat::Astc5x5, TextureFormat::Astc6x6, TextureFormat::Astc8x8];
+/// HDR formats of each family (`docs/features/hdr.md#praxi-wgpu`).
+const BC_HDR: [TextureFormat; 1] = [TextureFormat::Bc6h];
+const ASTC_HDR: [TextureFormat; 2] = [TextureFormat::Astc4x4Hdr, TextureFormat::Astc6x6Hdr];
 
 const SHADER: &str = r#"
 struct Params {
@@ -22,6 +25,10 @@ struct Params {
     opacity: f32,
     // 1 when the texture holds sRGB-encoded bytes in a non-sRGB format.
     decode_srgb: f32,
+    // HDR tracks: 1 for BT.2020 primaries (converted to BT.709).
+    bt2020: f32,
+    // HDR tracks drawn into an SDR target: the tonemap white; 0 draws linear values.
+    tonemap_white: f32,
 };
 
 @group(0) @binding(0) var tex: texture_2d<f32>;
@@ -51,29 +58,95 @@ fn fs_video(in: VsOut) -> @location(0) vec4<f32> {
     if params.decode_srgb > 0.5 {
         rgb = select(pow((rgb + 0.055) / 1.055, vec3<f32>(2.4)), rgb / 12.92, rgb <= vec3<f32>(0.04045));
     }
+    if params.bt2020 > 0.5 {
+        // Columns of the BT.2020 to BT.709 matrix (docs/spec/PRAXI.md#hdr-color).
+        rgb = mat3x3<f32>(
+            vec3<f32>(1.6605, -0.1246, -0.0182),
+            vec3<f32>(-0.5876, 1.1329, -0.1006),
+            vec3<f32>(-0.0728, -0.0083, 1.1187),
+        ) * rgb;
+        rgb = max(rgb, vec3<f32>(0.0));
+    }
+    let white = params.tonemap_white;
+    if white > 0.0 {
+        // Extended Reinhard on luminance (docs/features/hdr.md#tonemap-to-sdr).
+        let y = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let scale = select(1.0, (1.0 + y / (white * white)) / (1.0 + y), y > 0.0);
+        rgb = clamp(rgb * scale, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
     return vec4<f32>(rgb, c.a * params.opacity);
 }
 "#;
 
-/// Bytes of the `Params` uniform (`opacity` at 16, `decode_srgb` at 20, padded to 32).
+/// Bytes of the `Params` uniform (`opacity` at 16, `decode_srgb` at 20, `bt2020` at 24,
+/// `tonemap_white` at 28).
 const PARAMS_SIZE: usize = 32;
+/// Byte offset of `tonemap_white` in `Params`.
+const TONEMAP_WHITE_OFFSET: u64 = 28;
 
-/// Texture formats the adapter can sample, most preferred first.
+/// Texture formats the adapter can sample, most preferred first: SDR formats, then HDR ones,
+/// so an SDR variant wins and HDR-only files still play (tonemapped when drawn).
 pub fn supported_formats(features: wgpu::Features) -> Vec<TextureFormat> {
+    let (bc, astc, astc_hdr) = families(features);
     let mut formats = Vec::new();
-    if features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+    if bc {
         formats.extend(BC);
     }
-    if features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
+    if astc {
+        formats.extend(ASTC);
+    }
+    if bc {
+        formats.extend(BC_HDR);
+    }
+    if astc_hdr {
+        formats.extend(ASTC_HDR);
+    }
+    formats
+}
+
+/// Like [`supported_formats`], but HDR formats first in each family
+/// (`docs/features/hdr.md#variant-selection`).
+pub fn supported_formats_hdr(features: wgpu::Features) -> Vec<TextureFormat> {
+    let (bc, astc, astc_hdr) = families(features);
+    let mut formats = Vec::new();
+    if bc {
+        formats.extend(BC_HDR.into_iter().chain(BC));
+    }
+    if astc_hdr {
+        formats.extend(ASTC_HDR);
+    }
+    if astc {
         formats.extend(ASTC);
     }
     formats
 }
 
+/// Whether the features allow BC, ASTC and ASTC HDR textures.
+fn families(features: wgpu::Features) -> (bool, bool, bool) {
+    let astc = features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC);
+    (
+        features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
+        astc,
+        astc && features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR),
+    )
+}
+
 /// The player capabilities for an adapter, restricted to `only` when given: the texture
 /// formats it samples, then `motion` when it can run the motion decoder.
 pub fn capabilities(adapter: &wgpu::Adapter, only: Option<TextureFormat>) -> Result<Capabilities, String> {
-    let mut supported = supported_formats(adapter.features());
+    capabilities_from(adapter, supported_formats(adapter.features()), only)
+}
+
+/// Like [`capabilities`], preferring HDR variants ([`supported_formats_hdr`]).
+pub fn capabilities_hdr(adapter: &wgpu::Adapter, only: Option<TextureFormat>) -> Result<Capabilities, String> {
+    capabilities_from(adapter, supported_formats_hdr(adapter.features()), only)
+}
+
+fn capabilities_from(
+    adapter: &wgpu::Adapter,
+    mut supported: Vec<TextureFormat>,
+    only: Option<TextureFormat>,
+) -> Result<Capabilities, String> {
     if supports_motion(adapter) {
         supported.push(TextureFormat::Motion);
     }
@@ -90,7 +163,10 @@ pub fn capabilities(adapter: &wgpu::Adapter, only: Option<TextureFormat>) -> Res
 
 /// The compression features to request from `adapter`.
 pub fn required_features(adapter: &wgpu::Adapter) -> wgpu::Features {
-    adapter.features() & (wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TEXTURE_COMPRESSION_ASTC)
+    adapter.features()
+        & (wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR)
 }
 
 pub fn wgpu_format(format: TextureFormat, srgb: bool) -> wgpu::TextureFormat {
@@ -112,9 +188,18 @@ pub fn wgpu_format(format: TextureFormat, srgb: bool) -> wgpu::TextureFormat {
         TextureFormat::Astc5x5 => astc(wgpu::AstcBlock::B5x5),
         TextureFormat::Astc6x6 => astc(wgpu::AstcBlock::B6x6),
         TextureFormat::Astc8x8 => astc(wgpu::AstcBlock::B8x8),
+        TextureFormat::Bc6h => W::Bc6hRgbUfloat,
+        TextureFormat::Astc4x4Hdr => W::Astc { block: wgpu::AstcBlock::B4x4, channel: wgpu::AstcChannel::Hdr },
+        TextureFormat::Astc6x6Hdr => W::Astc { block: wgpu::AstcBlock::B6x6, channel: wgpu::AstcChannel::Hdr },
         // Decoded into RGBA holding sRGB-encoded bytes (storage textures cannot be sRGB).
         TextureFormat::Motion => W::Rgba8Unorm,
     }
+}
+
+/// Whether a render target holds floats, so HDR tracks keep values above 1.0.
+fn is_float(target: wgpu::TextureFormat) -> bool {
+    use wgpu::TextureFormat as W;
+    matches!(target, W::Rgba16Float | W::Rgba32Float | W::Rg11b10Ufloat)
 }
 
 /// A pixel rectangle of the render target.
@@ -152,6 +237,7 @@ struct TrackTexture {
     params: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     format: TextureFormat,
+    hdr: bool,
     blocks: (u32, u32),
     /// `VideoFrame::index` of the uploaded frame.
     uploaded: Option<u64>,
@@ -179,6 +265,9 @@ pub struct VideoRenderer {
     replace: wgpu::RenderPipeline,
     tracks: Vec<TrackTexture>,
     opacity: f32,
+    /// Whether the target holds floats, so HDR tracks are drawn linear, not tonemapped.
+    float_target: bool,
+    tonemap_white: f32,
     /// The motion decoder's pipelines, when a track needs them.
     motion: Option<motion::Pipelines>,
 }
@@ -281,6 +370,8 @@ impl VideoRenderer {
             sampler,
             tracks: Vec::new(),
             opacity: 1.0,
+            float_target: is_float(target),
+            tonemap_white: praxi::format::color::DEFAULT_TONEMAP_WHITE,
             motion: None,
         };
         if player.tracks().iter().any(|t| t.params.format == TextureFormat::Motion) {
@@ -288,7 +379,7 @@ impl VideoRenderer {
         }
         for info in player.tracks() {
             let p = &info.params;
-            let mut track = renderer.track_texture(device, p.format, p.srgb(), p.width, p.height);
+            let mut track = renderer.track_texture(device, p);
             if let Some(pipelines) = &renderer.motion
                 && p.format == TextureFormat::Motion
             {
@@ -300,14 +391,8 @@ impl VideoRenderer {
         renderer
     }
 
-    fn track_texture(
-        &self,
-        device: &wgpu::Device,
-        format: TextureFormat,
-        srgb: bool,
-        width: u32,
-        height: u32,
-    ) -> TrackTexture {
+    fn track_texture(&self, device: &wgpu::Device, p: &praxi::VideoParams) -> TrackTexture {
+        let (format, srgb, width, height) = (p.format, p.srgb(), p.width, p.height);
         let (bw, bh) = format.block_size();
         let blocks = (width.div_ceil(bw), height.div_ceil(bh));
         let (padded_w, padded_h) = (blocks.0 * bw, blocks.1 * bh);
@@ -325,13 +410,15 @@ impl VideoRenderer {
             },
             view_formats: &[],
         });
-        let values: [f32; 6] = [
+        let values: [f32; 8] = [
             width as f32 / padded_w as f32,
             height as f32 / padded_h as f32,
             (width as f32 - 0.5) / padded_w as f32,
             (height as f32 - 0.5) / padded_h as f32,
             self.opacity,
             (format == TextureFormat::Motion && srgb) as u32 as f32,
+            (p.hdr() && p.color.primaries == praxi::Primaries::Bt2020) as u32 as f32,
+            self.track_tonemap_white(p),
         ];
         let mut bytes = [0u8; PARAMS_SIZE];
         for (dst, v) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
@@ -355,7 +442,28 @@ impl VideoRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: params.as_entire_binding() },
             ],
         });
-        TrackTexture { texture, params, bind_group, format, blocks, uploaded: None, motion: None }
+        TrackTexture { texture, params, bind_group, format, hdr: p.hdr(), blocks, uploaded: None, motion: None }
+    }
+
+    /// The `tonemap_white` uniform of a track: the white for HDR tracks drawn into an SDR
+    /// target, 0 (linear) otherwise.
+    fn track_tonemap_white(&self, p: &praxi::VideoParams) -> f32 {
+        if p.hdr() && !self.float_target { self.tonemap_white } else { 0.0 }
+    }
+
+    /// Sets the linear value that HDR tracks drawn into an SDR target map to white (default
+    /// 4.0, `docs/features/hdr.md#tonemap-to-sdr`). Values that are not positive are ignored.
+    pub fn set_tonemap_white(&mut self, queue: &wgpu::Queue, white: f32) {
+        if !(white.is_finite() && white > 0.0) {
+            return;
+        }
+        self.tonemap_white = white;
+        if self.float_target {
+            return;
+        }
+        for t in self.tracks.iter().filter(|t| t.hdr) {
+            queue.write_buffer(&t.params, TONEMAP_WHITE_OFFSET, &white.to_le_bytes());
+        }
     }
 
     /// Starts or stops measuring the GPU time of the motion decoder's passes with timestamp
@@ -475,7 +583,7 @@ mod tests {
                 let w = wgpu_format(format, srgb);
                 assert_eq!(w.block_dimensions(), format.block_size(), "{format}");
                 assert_eq!(w.block_copy_size(None), Some(format.block_bytes()), "{format}");
-                let has_srgb = !matches!(format, TextureFormat::Bc4 | TextureFormat::Bc5);
+                let has_srgb = !matches!(format, TextureFormat::Bc4 | TextureFormat::Bc5) && !format.is_hdr();
                 assert_eq!(w.is_srgb(), srgb && has_srgb, "{format}");
             }
         }
@@ -488,8 +596,16 @@ mod tests {
             wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TEXTURE_COMPRESSION_ASTC,
         );
         assert_eq!(both[0], TextureFormat::Bc7);
-        assert_eq!(both.len(), 9);
+        assert_eq!(both.len(), 10, "BC6H last, no ASTC HDR without its feature");
+        assert_eq!(both[9], TextureFormat::Bc6h);
         assert_eq!(supported_formats(wgpu::Features::TEXTURE_COMPRESSION_ASTC), ASTC);
+        let all = wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR;
+        assert_eq!(supported_formats(all).len(), 12);
+        let hdr = supported_formats_hdr(all);
+        assert_eq!(&hdr[..2], [TextureFormat::Bc6h, TextureFormat::Bc7]);
+        assert_eq!(&hdr[6..9], [TextureFormat::Astc4x4Hdr, TextureFormat::Astc6x6Hdr, TextureFormat::Astc4x4]);
     }
 
     /// A device on the adapter `wgpu` picks (`WGPU_ADAPTER_NAME` selects one), if it can
@@ -604,6 +720,123 @@ mod tests {
         }
     }
 
+    /// Draws track 0 of `player` at 200 ms into a new `target` texture and reads it back.
+    fn draw_frame(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        player: &mut Player<std::io::Cursor<Vec<u8>>>,
+        target: wgpu::TextureFormat,
+        tonemap_white: f32,
+    ) -> Vec<u8> {
+        let (w, h) = (player.tracks()[0].params.width, player.tracks()[0].params.height);
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: target,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let mut renderer = VideoRenderer::new(device, target, player);
+        renderer.set_tonemap_white(queue, tonemap_white);
+        player.seek(std::time::Duration::from_millis(200)).unwrap();
+        renderer.prepare(device, queue, player, 1.0);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                })],
+                ..Default::default()
+            });
+            renderer.draw_replace(&mut pass, Rect { x: 0.0, y: 0.0, w: w as f32, h: h as f32 });
+        }
+        queue.submit([encoder.finish()]);
+        read_texture(device, queue, &texture, w, h)
+    }
+
+    #[test]
+    fn hdr_formats_draw_like_the_cpu_decoder() {
+        use praxi::format::color::tonemap_srgb8;
+        use praxi_encoder::{ColorConfig, Encoder, EncoderConfig, VariantConfig};
+        use std::io::Cursor;
+
+        let Some((device, queue, features)) = block_gpu() else {
+            return skip("no adapter");
+        };
+        let formats = supported_formats(features);
+        let (w, h) = (50, 34);
+        let mut drawn = Vec::new();
+        for (format, variant, primaries) in [
+            (TextureFormat::Bc6h, VariantConfig::bc6h(), praxi::Primaries::Bt709),
+            (TextureFormat::Bc6h, VariantConfig::bc6h(), praxi::Primaries::Bt2020),
+            (TextureFormat::Astc4x4Hdr, VariantConfig::astc_hdr(4), praxi::Primaries::Bt709),
+            (TextureFormat::Astc6x6Hdr, VariantConfig::astc_hdr(6), praxi::Primaries::Bt709),
+        ] {
+            if !formats.contains(&format) {
+                continue;
+            }
+            let color = ColorConfig::hdr().primaries(primaries);
+            let config = EncoderConfig::new(w, h, 10, 1).color(color).variant(variant).threads(2);
+            let mut enc = Encoder::new(Cursor::new(Vec::new()), config).unwrap();
+            for t in 0..3 {
+                // The SDR clip scaled to 0..12, with a colored highlight.
+                let frame: Vec<f32> = clip_frame(w, h, t)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .flat_map(|p| [p[0] as f32 / 20.0, p[1] as f32 / 40.0, p[2] as f32 / 255.0 * 0.3, 1.0])
+                    .collect();
+                enc.push_frame_hdr(&frame).unwrap();
+            }
+            let bytes = enc.finish().unwrap().0.into_inner();
+            let mut player = Player::open(Cursor::new(bytes), &Capabilities::new([format])).unwrap();
+            player.seek(std::time::Duration::from_millis(200)).unwrap();
+            let params = player.tracks()[0].params;
+            let cpu = praxi_encoder::decode_frame_hdr(&params, player.video_frame(0).unwrap().data).unwrap();
+            let cpu_709: Vec<[f32; 3]> = cpu
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|p| praxi::format::color::convert_primaries([p[0], p[1], p[2]], primaries, praxi::Primaries::Bt709).map(|v| v.max(0.0)))
+                .collect();
+
+            // Linear values in a float target, within half-float rounding (and the matrix).
+            let gpu = draw_frame(&device, &queue, &mut player, wgpu::TextureFormat::Rgba16Float, 4.0);
+            let gpu: Vec<f32> = gpu.as_chunks::<2>().0.iter().map(|b| imgio::half::to_f32(u16::from_le_bytes(*b))).collect();
+            for (g, c) in gpu.as_chunks::<4>().0.iter().zip(&cpu_709) {
+                for k in 0..3 {
+                    assert!((g[k] - c[k]).abs() <= 0.002 + c[k] * 0.002, "{format} {primaries}: GPU {g:?}, CPU {c:?}");
+                }
+            }
+            // The tonemap in an sRGB target.
+            let gpu = draw_frame(&device, &queue, &mut player, wgpu::TextureFormat::Rgba8UnormSrgb, 2.0);
+            let worst = gpu
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(cpu.as_chunks::<4>().0)
+                .flat_map(|(g, c)| {
+                    let t = tonemap_srgb8([c[0], c[1], c[2]], primaries, 2.0);
+                    (0..3).map(move |k| g[k].abs_diff(t[k]))
+                })
+                .max()
+                .unwrap();
+            assert!(worst <= 1, "{format} {primaries}: tonemapped channel differs by {worst}");
+            drawn.push(format);
+        }
+        eprintln!("drawn: {drawn:?}");
+        if drawn.is_empty() {
+            skip("the adapter samples no HDR format");
+        }
+    }
+
     fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u8> {
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -619,7 +852,8 @@ mod tests {
 
     /// The top-left `width x height` pixels of an RGBA texture.
     fn read_texture(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
-        let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let texel = texture.format().block_copy_size(None).expect("uncompressed");
+        let row = (width * texel).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: (row * height) as u64,
@@ -636,7 +870,7 @@ mod tests {
             wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
         queue.submit([encoder.finish()]);
-        map(device, &staging).chunks(row as usize).flat_map(|r| r[..(width * 4) as usize].to_vec()).collect()
+        map(device, &staging).chunks(row as usize).flat_map(|r| r[..(width * texel) as usize].to_vec()).collect()
     }
 
     fn map(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {

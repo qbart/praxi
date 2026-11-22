@@ -2,14 +2,17 @@
 //! `docs/features/audio.md`).
 
 mod decode;
+mod hdr;
 mod motion;
 mod opus;
 
-pub use decode::decode_frame;
+pub use decode::{decode_frame, decode_frame_hdr};
+pub use hdr::ColorConfig;
+pub use praxi_format::Primaries;
 pub use motion::MotionStats;
 
 use praxi_format::{
-    AudioParams, COLOR_FLAG_ALPHA, adpcm, COLOR_FLAG_SRGB, Compression, Cue, StreamInfo, TextureFormat, TimeBase,
+    AudioParams, COLOR_FLAG_ALPHA, COLOR_FLAG_HDR, adpcm, COLOR_FLAG_SRGB, Compression, Cue, StreamInfo, TextureFormat, TimeBase,
     VideoParams, Writer,
 };
 
@@ -75,6 +78,10 @@ pub enum VariantKind {
     Astc { block: u8, rdo_lambda: f32 },
     /// The motion codec (`docs/features/motion-codec.md`).
     Motion { qp: u8, chroma: Chroma, slices: u32 },
+    /// BC6H, HDR (`docs/features/hdr.md`).
+    Bc6h,
+    /// ASTC HDR with square blocks of 4 or 6 pixels.
+    AstcHdr { block: u8 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -95,6 +102,16 @@ impl VariantConfig {
 
     pub fn astc(block: u8) -> VariantConfig {
         VariantConfig { kind: VariantKind::Astc { block, rdo_lambda: 0.0 }, quality: Quality::Fast }
+    }
+
+    /// BC6H HDR; needs [`ColorConfig::hdr`].
+    pub fn bc6h() -> VariantConfig {
+        VariantConfig { kind: VariantKind::Bc6h, quality: Quality::Fast }
+    }
+
+    /// ASTC HDR with blocks of 4 or 6 pixels; needs [`ColorConfig::hdr`].
+    pub fn astc_hdr(block: u8) -> VariantConfig {
+        VariantConfig { kind: VariantKind::AstcHdr { block }, quality: Quality::Fast }
     }
 
     /// The motion codec with `qp` 16 (about BC7's PSNR), 4:2:0 chroma and 16 slices.
@@ -149,6 +166,10 @@ impl VariantConfig {
             VariantKind::Astc { block: 8, .. } => Some(TextureFormat::Astc8x8),
             VariantKind::Astc { .. } => None,
             VariantKind::Motion { .. } => Some(TextureFormat::Motion),
+            VariantKind::Bc6h => Some(TextureFormat::Bc6h),
+            VariantKind::AstcHdr { block: 4 } => Some(TextureFormat::Astc4x4Hdr),
+            VariantKind::AstcHdr { block: 6 } => Some(TextureFormat::Astc6x6Hdr),
+            VariantKind::AstcHdr { .. } => None,
         }
     }
 }
@@ -287,6 +308,8 @@ pub struct EncoderConfig {
     pub cue_streams: Vec<CueStreamConfig>,
     /// Whether the alpha channel is meaningful (sets the stream's alpha flag).
     pub alpha: bool,
+    /// Color of the frames and of HDR variants (`docs/features/hdr.md#library`).
+    pub color: ColorConfig,
     /// Worker threads of the motion encoder; 0 uses `std::thread::available_parallelism`.
     /// Block formats are encoded by `imgio` on all cores.
     pub threads: usize,
@@ -312,6 +335,7 @@ impl EncoderConfig {
             plane_min_saving: praxi_format::DEFAULT_PLANE_MIN_SAVING,
             cue_streams: Vec::new(),
             alpha: false,
+            color: ColorConfig::sdr(),
             threads: 0,
             audio: Vec::new(),
             audio_preload: Duration::from_millis(250),
@@ -379,6 +403,11 @@ impl EncoderConfig {
         self
     }
 
+    pub fn color(mut self, color: ColorConfig) -> EncoderConfig {
+        self.color = color;
+        self
+    }
+
     pub fn threads(mut self, threads: usize) -> EncoderConfig {
         self.threads = threads;
         self
@@ -397,6 +426,8 @@ pub struct VariantStats {
     pub skipped_blocks: u64,
     /// Macroblock counts of motion variants.
     pub motion: Option<MotionStats>,
+    /// HDR variants: `max_cll` and `max_fall` in nits.
+    pub light_level: Option<(u16, u16)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -446,10 +477,11 @@ struct Variant {
     stream: u16,
     params: VideoParams,
     encoder: BlockEncoder,
-    /// Source pixels and encoded bytes of the last emitted block at each position.
-    ref_src: Vec<u8>,
+    /// Skip keys (RGBA8 values, or 10-bit PQ codes for HDR) and encoded bytes of the last
+    /// emitted block at each position.
+    ref_src: Vec<u16>,
     ref_enc: Vec<u8>,
-    src_blocks: Vec<u8>,
+    src_blocks: Vec<u16>,
     encoded: Vec<u8>,
     payload: Vec<u8>,
     stats: VariantStats,
@@ -465,6 +497,21 @@ pub struct Encoder<W: Write + Seek> {
     cues: Vec<(u64, u16, Cue)>,
     next_cue: usize,
     frame: u64,
+    threads: usize,
+    /// The frame as SDR RGBA8, linear HDR RGBA, and skip keys of each, when needed.
+    sdr_frame: Vec<u8>,
+    hdr_frame: Vec<f32>,
+    sdr_keys: Vec<u16>,
+    hdr_keys: Vec<u16>,
+    /// Brightest pixel and brightest frame mean so far, linear.
+    max_cll: f32,
+    max_fall: f32,
+}
+
+/// A frame as pushed.
+enum Frame<'a> {
+    Sdr(&'a [u8]),
+    Hdr(&'a [f32]),
 }
 
 impl<W: Write + Seek> Encoder<W> {
@@ -486,6 +533,9 @@ impl<W: Write + Seek> Encoder<W> {
         if !(0.0..=100.0).contains(&config.plane_min_saving) {
             return Err(Error::Config("plane_min_saving must be between 0 and 100".into()));
         }
+        if c.color.reference_white == 0 || !(c.color.tonemap_white.is_finite() && c.color.tonemap_white > 0.0) {
+            return Err(Error::Config("reference white and tonemap white must be positive".into()));
+        }
 
         let threads = match c.threads {
             0 => std::thread::available_parallelism().map_or(1, |n| n.get()),
@@ -499,15 +549,26 @@ impl<W: Write + Seek> Encoder<W> {
             let Some(format) = v.format() else {
                 return Err(Error::Config(format!("unsupported variant {:?}", v.kind)));
             };
-            // BC1 is written opaque.
-            let flags = if format == TextureFormat::Bc1 { color_flags & !COLOR_FLAG_ALPHA } else { color_flags };
+            // BC1 is written opaque; HDR variants are opaque and linear.
+            let flags = match format {
+                f if f.is_hdr() => COLOR_FLAG_HDR,
+                TextureFormat::Bc1 => color_flags & !COLOR_FLAG_ALPHA,
+                _ => color_flags,
+            };
+            if format.is_hdr() && !c.color.hdr {
+                return Err(Error::Config(format!("{format} needs an HDR color config (ColorConfig::hdr)")));
+            }
             let mut params = VideoParams::new(c.width, c.height, format, flags);
+            if format.is_hdr() {
+                params.color.primaries = c.color.primaries;
+                params.color.reference_white = c.color.reference_white;
+            }
             if let VariantKind::Motion { chroma, .. } = v.kind {
                 params.motion.chroma = chroma;
             }
             streams.push(StreamInfo::video(0, time_base, params));
             let encoder = match v.kind {
-                VariantKind::Bc7 | VariantKind::Bc1 | VariantKind::Astc { .. } => {
+                VariantKind::Bc7 | VariantKind::Bc1 | VariantKind::Astc { .. } | VariantKind::Bc6h | VariantKind::AstcHdr { .. } => {
                     let (texture, quality) = texture_encoding(v.kind, v.quality);
                     let rdo_lambda = match v.kind {
                         VariantKind::Astc { rdo_lambda, .. } if rdo_lambda.is_finite() && rdo_lambda >= 0.0 => rdo_lambda,
@@ -624,17 +685,78 @@ impl<W: Write + Seek> Encoder<W> {
         cues.sort_by_key(|(at, _, _)| *at);
         let mut writer = Writer::new(out, streams)?;
         writer.set_plane_min_saving(config.plane_min_saving);
-        Ok(Encoder { writer, config, variants, audio, time_base, cues, next_cue: 0, frame: 0 })
+        Ok(Encoder {
+            writer,
+            config,
+            variants,
+            audio,
+            time_base,
+            cues,
+            next_cue: 0,
+            frame: 0,
+            threads,
+            sdr_frame: Vec::new(),
+            hdr_frame: Vec::new(),
+            sdr_keys: Vec::new(),
+            hdr_keys: Vec::new(),
+            max_cll: 0.0,
+            max_fall: 0.0,
+        })
     }
 
-    /// Encodes one frame: `width * height * 4` bytes of sRGB RGBA8, rows top to bottom.
+    /// Encodes one frame: `width * height * 4` bytes of sRGB RGBA8, rows top to bottom. HDR
+    /// variants get it as linear light (at most 1.0).
     pub fn push_frame(&mut self, rgba: &[u8]) -> Result<()> {
+        self.push(Frame::Sdr(rgba))
+    }
+
+    /// Encodes one HDR frame: `width * height * 4` floats of linear RGBA in the configured
+    /// primaries, 1.0 at reference white, straight alpha (`docs/features/hdr.md#library`).
+    /// SDR variants get it tonemapped.
+    pub fn push_frame_hdr(&mut self, rgba: &[f32]) -> Result<()> {
+        self.push(Frame::Hdr(rgba))
+    }
+
+    fn push(&mut self, frame: Frame) -> Result<()> {
         let (w, h) = (self.config.width as usize, self.config.height as usize);
-        if rgba.len() != w * h * 4 {
-            return Err(Error::Config(format!("frame has {} bytes, expected {}", rgba.len(), w * h * 4)));
+        let len = match frame {
+            Frame::Sdr(f) => f.len(),
+            Frame::Hdr(f) => f.len(),
+        };
+        if len != w * h * 4 {
+            return Err(Error::Config(format!("frame has {len} values, expected {}", w * h * 4)));
         }
         let pts = self.frame;
         self.write_due(self.time_base.to_micros(pts))?;
+        let color = self.config.color;
+        let threads = self.threads;
+        let hdr_variant = |v: &Variant| v.params.format.is_hdr();
+        let needs_hdr = self.variants.iter().any(hdr_variant);
+        let needs_sdr = self.variants.iter().any(|v| !hdr_variant(v));
+        let needs_sdr_keys = self.variants.iter().any(|v| !hdr_variant(v) && v.params.format != TextureFormat::Motion);
+        if needs_hdr {
+            match frame {
+                Frame::Sdr(rgba) => hdr::from_sdr(rgba, &color, threads, &mut self.hdr_frame),
+                Frame::Hdr(rgba) => hdr::clamp_frame(rgba, threads, &mut self.hdr_frame),
+            }
+            hdr::skip_keys(&self.hdr_frame, color.reference_white as f32, threads, &mut self.hdr_keys);
+            let (max, mean) = hdr::light_level(&self.hdr_frame);
+            self.max_cll = self.max_cll.max(max);
+            self.max_fall = self.max_fall.max(mean);
+        }
+        if needs_sdr && let Frame::Hdr(rgba) = frame {
+            hdr::to_sdr(rgba, &color, threads, &mut self.sdr_frame);
+        }
+        let rgba: &[u8] = match frame {
+            Frame::Sdr(rgba) => rgba,
+            Frame::Hdr(_) => &self.sdr_frame,
+        };
+        if needs_sdr_keys {
+            self.sdr_keys.clear();
+            self.sdr_keys.extend(rgba.iter().map(|&v| v as u16));
+        }
+        let hdr_frame = &self.hdr_frame;
+        let (sdr_keys, hdr_keys) = (&self.sdr_keys, &self.hdr_keys);
 
         let keyframe = pts.is_multiple_of(self.config.keyint as u64);
         for v in &mut self.variants {
@@ -652,9 +774,15 @@ impl<W: Write + Seek> Encoder<W> {
                 continue;
             }
             let (bw, bh) = v.params.format.block_size();
-            gather_blocks(rgba, w, h, bw as usize, bh as usize, &mut v.src_blocks);
+            let is_hdr = v.params.format.is_hdr();
+            gather_blocks(if is_hdr { hdr_keys } else { sdr_keys }, w, h, bw as usize, bh as usize, &mut v.src_blocks);
             match &v.encoder {
-                BlockEncoder::Texture { format, options } => encode_texture(rgba, &v.params, *format, options, &mut v.encoded)?,
+                BlockEncoder::Texture { format, options } if is_hdr => {
+                    encode_texture(bytemuck::cast_slice(hdr_frame), imgio::Format::Rgba32Float, &v.params, *format, options, &mut v.encoded)?
+                }
+                BlockEncoder::Texture { format, options } => {
+                    encode_texture(rgba, imgio::Format::Rgba8Srgb, &v.params, *format, options, &mut v.encoded)?
+                }
                 BlockEncoder::Motion(_) => unreachable!("handled above"),
             }
             build_payload(v, keyframe, self.config.skip_threshold);
@@ -673,6 +801,12 @@ impl<W: Write + Seek> Encoder<W> {
     /// statistics.
     pub fn finish(mut self) -> Result<(W, Stats)> {
         self.write_due(u64::MAX)?;
+        let white = self.config.color.reference_white;
+        let (cll, fall) = (hdr::nits(self.max_cll, white), hdr::nits(self.max_fall, white));
+        for v in self.variants.iter_mut().filter(|v| v.params.format.is_hdr()) {
+            self.writer.set_light_level(v.stream, cll, fall)?;
+            v.stats.light_level = Some((cll, fall));
+        }
         let frames_end = self.time_base.to_micros(self.frame);
         let cues_end = self.cues.iter().map(|(at, _, c)| at.saturating_add(c.duration));
         let audio_end = self.audio.iter().map(|a| self.writer.streams()[a.stream as usize].time_base.to_micros(a.next_pts));
@@ -782,7 +916,7 @@ fn read_full(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
 
 /// Splits an RGBA image into blocks of `bw * bh` pixels (row-major blocks, row-major pixels
 /// inside a block), repeating the last column and row to pad partial blocks.
-fn gather_blocks(rgba: &[u8], w: usize, h: usize, bw: usize, bh: usize, out: &mut Vec<u8>) {
+fn gather_blocks(rgba: &[u16], w: usize, h: usize, bw: usize, bh: usize, out: &mut Vec<u16>) {
     let (nx, ny) = (w.div_ceil(bw), h.div_ceil(bh));
     out.clear();
     out.reserve(nx * ny * bw * bh * 4);
@@ -818,21 +952,28 @@ fn texture_encoding(kind: VariantKind, quality: Quality) -> (imgio::Format, imgi
             let b = imgio::AstcBlock::from_dim(block as u32, block as u32).expect("square ASTC block size");
             (imgio::Format::Astc(b, imgio::AstcKind::Srgb), q(Q::Fast, Q::Default, Q::High))
         }
+        // BC6H: basisu fast_encode_bc6h; ASTC HDR: astcenc presets fastest, fast and medium.
+        VariantKind::Bc6h => (imgio::Format::Bc6hUfloat, q(Q::Default, Q::High, Q::Best)),
+        VariantKind::AstcHdr { block } => {
+            let b = imgio::AstcBlock::from_dim(block as u32, block as u32).expect("square ASTC block size");
+            (imgio::Format::Astc(b, imgio::AstcKind::Float), q(Q::Fastest, Q::Fast, Q::Default))
+        }
         VariantKind::Motion { .. } => unreachable!("motion is not a block format"),
     }
 }
 
-/// Encodes a `width * height` RGBA8 frame into `out` (`params.frame_size()` bytes). Partial
-/// blocks repeat the last column and row.
+/// Encodes a `width * height` frame of `pixels` (RGBA8 sRGB or RGBA32 float) into `out`
+/// (`params.frame_size()` bytes). Partial blocks repeat the last column and row.
 fn encode_texture(
-    rgba: &[u8],
+    frame: &[u8],
+    pixels: imgio::Format,
     params: &VideoParams,
     format: imgio::Format,
     options: &imgio::EncodeOptions,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     let fail = |e: imgio::Error| Error::Encode(format!("{format:?}: {e}"));
-    let src = imgio::Surface::new(imgio::Format::Rgba8Srgb, params.width, params.height, rgba).map_err(fail)?;
+    let src = imgio::Surface::new(pixels, params.width, params.height, frame).map_err(fail)?;
     out.resize(params.frame_size(), 0);
     imgio::encode(&src, format, options, out).map_err(fail)
 }
@@ -858,7 +999,7 @@ fn build_payload(v: &mut Variant, keyframe: bool, threshold: u8) {
         let ref_enc = &mut v.ref_enc[i * bb..(i + 1) * bb];
         if enc == ref_enc {
             ref_src.copy_from_slice(src);
-        } else if src.iter().zip(ref_src.iter()).all(|(a, b)| a.abs_diff(*b) <= threshold) {
+        } else if src.iter().zip(ref_src.iter()).all(|(a, b)| a.abs_diff(*b) <= threshold as u16) {
             // Close enough to what the decoder already shows.
         } else {
             v.payload[i / 8] |= 1 << (i % 8);

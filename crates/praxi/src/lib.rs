@@ -16,7 +16,10 @@ use std::io::{Read, Seek};
 use std::time::Duration;
 
 pub use audio::AudioOutput;
-pub use praxi_format::{self as format, AudioParams, CueTrack, SampleFormat, TextureFormat, TimedCue, Value, VideoParams};
+pub use praxi_format::{
+    self as format, AudioParams, ColorDescription, CueTrack, Primaries, SampleFormat, TextureFormat, TimedCue, Value,
+    VideoParams,
+};
 
 /// Default for [`Player::set_audio_sync_tolerance`].
 pub const DEFAULT_AUDIO_SYNC_TOLERANCE: Duration = Duration::from_millis(60);
@@ -234,6 +237,8 @@ pub struct VideoFrame<'a> {
     pub format: TextureFormat,
     pub srgb: bool,
     pub alpha: bool,
+    /// Linear-light HDR color (`docs/features/hdr.md`).
+    pub hdr: bool,
     pub width: u32,
     pub height: u32,
     /// Blocks in row-major order, ready to upload as a compressed texture. Empty for
@@ -843,6 +848,7 @@ impl<R: Read + Seek> Player<R> {
             format: p.format,
             srgb: p.srgb(),
             alpha: p.alpha(),
+            hdr: p.hdr(),
             width: p.width,
             height: p.height,
             data: &t.frame,

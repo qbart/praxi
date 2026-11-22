@@ -1,6 +1,7 @@
 //! Reader and writer for the PRAXI container format (`docs/spec/PRAXI.md`).
 
 pub mod adpcm;
+pub mod color;
 pub mod cue;
 #[cfg(feature = "cue-sheet")]
 pub mod cue_sheet;
@@ -23,7 +24,7 @@ use std::fmt;
 /// `\x89PRX\r\n\x1a\n`
 pub const MAGIC: [u8; 8] = [0x89, b'P', b'R', b'X', 0x0D, 0x0A, 0x1A, 0x0A];
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 10;
+pub const VERSION_MINOR: u16 = 11;
 
 pub const HEADER_SIZE: u64 = 48;
 pub const STREAM_ENTRY_SIZE: u64 = 64;
@@ -37,6 +38,8 @@ pub const CHUNK_FLAG_KEYFRAME: u8 = 1;
 pub const COLOR_FLAG_SRGB: u16 = 1;
 /// Video `color_flags` bit 1.
 pub const COLOR_FLAG_ALPHA: u16 = 2;
+/// Video `color_flags` bit 2: linear light, HDR (`docs/spec/PRAXI.md#hdr-color`).
+pub const COLOR_FLAG_HDR: u16 = 4;
 
 #[derive(Debug)]
 pub enum Error {
@@ -94,13 +97,19 @@ pub enum TextureFormat {
     Astc5x5,
     Astc6x6,
     Astc8x8,
+    /// BC6H, unsigned float (HDR).
+    Bc6h,
+    /// ASTC 4x4 with the HDR profile.
+    Astc4x4Hdr,
+    /// ASTC 6x6 with the HDR profile.
+    Astc6x6Hdr,
     /// The motion codec: not a GPU texture format; decoded into RGBA on the GPU.
     Motion,
 }
 
 impl TextureFormat {
-    /// The GPU texture formats (every format but `Motion`).
-    pub const ALL: [TextureFormat; 9] = [
+    /// The GPU texture formats (every format but `Motion`), SDR formats first.
+    pub const ALL: [TextureFormat; 12] = [
         TextureFormat::Bc1,
         TextureFormat::Bc3,
         TextureFormat::Bc4,
@@ -110,6 +119,9 @@ impl TextureFormat {
         TextureFormat::Astc5x5,
         TextureFormat::Astc6x6,
         TextureFormat::Astc8x8,
+        TextureFormat::Bc6h,
+        TextureFormat::Astc4x4Hdr,
+        TextureFormat::Astc6x6Hdr,
     ];
 
     pub fn id(self) -> u16 {
@@ -123,6 +135,9 @@ impl TextureFormat {
             TextureFormat::Astc5x5 => 0x0102,
             TextureFormat::Astc6x6 => 0x0103,
             TextureFormat::Astc8x8 => 0x0104,
+            TextureFormat::Bc6h => 0x0006,
+            TextureFormat::Astc4x4Hdr => 0x0111,
+            TextureFormat::Astc6x6Hdr => 0x0113,
             TextureFormat::Motion => 0x0201,
         }
     }
@@ -131,16 +146,23 @@ impl TextureFormat {
         Self::ALL.into_iter().chain([TextureFormat::Motion]).find(|f| f.id() == id)
     }
 
-    /// The format whose name matches `s`, ignoring case and spaces: `bc7`, `astc6x6`, `motion`.
+    /// The format whose name matches `s`, ignoring case, spaces and dashes: `bc7`, `astc6x6`,
+    /// `astc6x6-hdr`, `motion`.
     pub fn parse(s: &str) -> Option<TextureFormat> {
-        Self::ALL.into_iter().chain([TextureFormat::Motion]).find(|f| f.name().replace(' ', "").eq_ignore_ascii_case(s))
+        let s = s.replace(['-', ' '], "");
+        Self::ALL.into_iter().chain([TextureFormat::Motion]).find(|f| f.name().replace(' ', "").eq_ignore_ascii_case(&s))
+    }
+
+    /// Whether the format holds linear-light HDR color (`docs/features/hdr.md`).
+    pub fn is_hdr(self) -> bool {
+        matches!(self, TextureFormat::Bc6h | TextureFormat::Astc4x4Hdr | TextureFormat::Astc6x6Hdr)
     }
 
     /// Block width and height in pixels; the macroblock for `Motion`.
     pub fn block_size(self) -> (u32, u32) {
         match self {
             TextureFormat::Astc5x5 => (5, 5),
-            TextureFormat::Astc6x6 => (6, 6),
+            TextureFormat::Astc6x6 | TextureFormat::Astc6x6Hdr => (6, 6),
             TextureFormat::Astc8x8 => (8, 8),
             TextureFormat::Motion => (16, 16),
             _ => (4, 4),
@@ -167,6 +189,9 @@ impl TextureFormat {
             TextureFormat::Astc5x5 => "ASTC 5x5",
             TextureFormat::Astc6x6 => "ASTC 6x6",
             TextureFormat::Astc8x8 => "ASTC 8x8",
+            TextureFormat::Bc6h => "BC6H",
+            TextureFormat::Astc4x4Hdr => "ASTC 4x4 HDR",
+            TextureFormat::Astc6x6Hdr => "ASTC 6x6 HDR",
             TextureFormat::Motion => "motion",
         }
     }
@@ -199,6 +224,55 @@ pub struct MotionParams {
     pub alpha_qp_offset: i8,
 }
 
+/// Color primaries of a video stream (`docs/spec/PRAXI.md#color-description`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Primaries {
+    /// BT.709, the sRGB primaries.
+    #[default]
+    Bt709,
+    /// BT.2020.
+    Bt2020,
+}
+
+impl Primaries {
+    pub fn id(self) -> u8 {
+        match self {
+            Primaries::Bt709 => 0,
+            Primaries::Bt2020 => 1,
+        }
+    }
+
+    pub fn from_id(id: u8) -> Option<Primaries> {
+        [Primaries::Bt709, Primaries::Bt2020].into_iter().find(|p| p.id() == id)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Primaries::Bt709 => "bt709",
+            Primaries::Bt2020 => "bt2020",
+        }
+    }
+}
+
+impl fmt::Display for Primaries {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// Color description of a video stream (`docs/spec/PRAXI.md#color-description`). The
+/// light levels are `0` for SDR streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ColorDescription {
+    pub primaries: Primaries,
+    /// HDR: nits of the value 1.0, at least 1.
+    pub reference_white: u16,
+    /// HDR: largest `max(R, G, B)` of any pixel in nits; 0 unknown.
+    pub max_cll: u16,
+    /// HDR: largest per-frame mean of `max(R, G, B)` in nits; 0 unknown.
+    pub max_fall: u16,
+}
+
 /// Parameters of a video stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VideoParams {
@@ -207,11 +281,31 @@ pub struct VideoParams {
     pub format: TextureFormat,
     pub color_flags: u16,
     pub motion: MotionParams,
+    pub color: ColorDescription,
 }
 
 impl VideoParams {
     pub fn new(width: u32, height: u32, format: TextureFormat, color_flags: u16) -> VideoParams {
-        VideoParams { width, height, format, color_flags, motion: MotionParams::default() }
+        VideoParams { width, height, format, color_flags, motion: MotionParams::default(), color: ColorDescription::default() }
+    }
+
+    /// Checks the color fields against the format (`docs/spec/PRAXI.md#color-description`).
+    pub fn check_color(&self) -> std::result::Result<(), String> {
+        let f = self.format;
+        match (f.is_hdr(), self.hdr()) {
+            (true, false) => return Err(format!("{f} stream without the HDR flag")),
+            (false, true) => return Err(format!("HDR flag on {f}, which is not an HDR format")),
+            _ => {}
+        }
+        if self.hdr() {
+            if self.srgb() || self.alpha() {
+                return Err("HDR stream with the sRGB or alpha flag".into());
+            }
+            if self.color.reference_white == 0 {
+                return Err("HDR stream with reference white 0".into());
+            }
+        }
+        Ok(())
     }
 
     pub fn blocks_x(&self) -> u32 {
@@ -247,6 +341,11 @@ impl VideoParams {
 
     pub fn alpha(&self) -> bool {
         self.color_flags & COLOR_FLAG_ALPHA != 0
+    }
+
+    /// Linear-light HDR color (`docs/features/hdr.md`).
+    pub fn hdr(&self) -> bool {
+        self.color_flags & COLOR_FLAG_HDR != 0
     }
 }
 

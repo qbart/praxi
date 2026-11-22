@@ -1,6 +1,6 @@
 use crate::{
     CHUNK_HEADER_SIZE, ChunkHeader, Compression, Error, HEADER_SIZE, Header, INDEX_ENTRY_SIZE,
-    Chroma, IndexEntry, MAGIC, Result, AUDIO_NAME_SIZE, AudioParams, CUE_NAME_SIZE, CueParams, SampleFormat, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
+    Chroma, IndexEntry, MAGIC, Primaries, Result, AUDIO_NAME_SIZE, AudioParams, CUE_NAME_SIZE, CueParams, SampleFormat, VERSION_MINOR, STREAM_ENTRY_SIZE, StreamInfo, StreamParams, TextureFormat,
     TimeBase, VERSION_MAJOR, VideoParams, corrupt, from_planes, planes::decode_sections, le_u16, le_u32, le_u64,
 };
 use std::io::{Read, Seek, SeekFrom};
@@ -221,6 +221,16 @@ fn decode_stream(i: usize, b: &[u8]) -> Result<StreamInfo> {
             }
             if v.width == 0 || v.height == 0 {
                 return corrupt(format!("stream {i}: zero frame size"));
+            }
+            v.color.primaries = match Primaries::from_id(b[56]) {
+                Some(p) => p,
+                None => return corrupt(format!("stream {i}: unknown primaries {}", b[56])),
+            };
+            v.color.reference_white = le_u16(b, 58);
+            v.color.max_cll = le_u16(b, 60);
+            v.color.max_fall = le_u16(b, 62);
+            if let Err(e) = v.check_color() {
+                return corrupt(format!("stream {i}: {e}"));
             }
             StreamParams::Video(v)
         }

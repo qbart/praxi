@@ -1,7 +1,9 @@
 //! `praxi` command line tool (`docs/features/encoder.md`).
 
 use clap::{Parser, Subcommand, ValueEnum};
-use praxi_encoder::{AudioTrackConfig, Chroma, CueConfig, Encoder, EncoderConfig, Quality, SampleFormat, VariantConfig};
+use praxi_encoder::{
+    AudioTrackConfig, Chroma, ColorConfig, CueConfig, Encoder, EncoderConfig, Primaries, Quality, SampleFormat, VariantConfig,
+};
 use praxi::{Capabilities, Player};
 use praxi_format::{Cue, Reader, StreamParams, TextureFormat, Value};
 use std::fs::File;
@@ -12,6 +14,7 @@ use std::time::Instant;
 
 mod bench;
 mod cues;
+mod hdr;
 
 #[derive(Parser)]
 #[command(name = "praxi", version, about = "praxi video codec for games")]
@@ -110,6 +113,33 @@ struct VideoOptions {
     /// Slices per frame of the motion variant.
     #[arg(long, default_value_t = 16, value_parser = clap::value_parser!(u32).range(1..=255))]
     slices: u32,
+    /// Primaries of the HDR variants.
+    #[arg(long, value_enum, default_value_t = PrimariesArg::Bt709)]
+    primaries: PrimariesArg,
+    /// Nits that become 1.0 in HDR variants.
+    #[arg(long, default_value_t = praxi_format::color::DEFAULT_REFERENCE_WHITE, value_parser = clap::value_parser!(u16).range(1..))]
+    reference_white: u16,
+    /// Linear value the SDR tonemap maps to white, for SDR variants of an HDR source.
+    #[arg(long, default_value_t = praxi_format::color::DEFAULT_TONEMAP_WHITE)]
+    tonemap_white: f32,
+    /// Transfer function of the source (default: from ffprobe).
+    #[arg(long, value_enum)]
+    input_transfer: Option<hdr::Transfer>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum PrimariesArg {
+    Bt709,
+    Bt2020,
+}
+
+impl PrimariesArg {
+    fn primaries(self) -> Primaries {
+        match self {
+            PrimariesArg::Bt709 => Primaries::Bt709,
+            PrimariesArg::Bt2020 => Primaries::Bt2020,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -142,6 +172,9 @@ struct FrameArgs {
     /// Track (group) index.
     #[arg(long, default_value_t = 0)]
     track: usize,
+    /// HDR frames written as PNG: the linear value the tonemap maps to white.
+    #[arg(long, default_value_t = praxi_format::color::DEFAULT_TONEMAP_WHITE)]
+    tonemap_white: f32,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -156,6 +189,9 @@ enum FormatArg {
     Astc6x6,
     Astc8x8,
     Motion,
+    Bc6h,
+    Astc4x4Hdr,
+    Astc6x6Hdr,
 }
 
 impl FormatArg {
@@ -171,6 +207,9 @@ impl FormatArg {
             FormatArg::Astc6x6 => TextureFormat::Astc6x6,
             FormatArg::Astc8x8 => TextureFormat::Astc8x8,
             FormatArg::Motion => TextureFormat::Motion,
+            FormatArg::Bc6h => TextureFormat::Bc6h,
+            FormatArg::Astc4x4Hdr => TextureFormat::Astc4x4Hdr,
+            FormatArg::Astc6x6Hdr => TextureFormat::Astc6x6Hdr,
         }
     }
 }
@@ -183,6 +222,9 @@ enum VariantArg {
     Astc6x6,
     Astc8x8,
     Motion,
+    Bc6h,
+    Astc4x4Hdr,
+    Astc6x6Hdr,
 }
 
 impl VariantArg {
@@ -194,6 +236,9 @@ impl VariantArg {
             VariantArg::Astc6x6 => TextureFormat::Astc6x6,
             VariantArg::Astc8x8 => TextureFormat::Astc8x8,
             VariantArg::Motion => TextureFormat::Motion,
+            VariantArg::Bc6h => TextureFormat::Bc6h,
+            VariantArg::Astc4x4Hdr => TextureFormat::Astc4x4Hdr,
+            VariantArg::Astc6x6Hdr => TextureFormat::Astc6x6Hdr,
         }
     }
 }
@@ -280,6 +325,25 @@ struct Probe {
     alpha: bool,
     /// ffmpeg filters producing these frames from the input (`--fps`, `--scale`).
     filters: Option<String>,
+    /// Source transfer function and primaries (`docs/features/hdr.md#cli`).
+    transfer: hdr::Transfer,
+    primaries: Option<Primaries>,
+}
+
+impl Probe {
+    /// Bytes of one raw frame as `spawn_video` delivers it.
+    fn frame_bytes(&self) -> usize {
+        let pixels = self.width as usize * self.height as usize;
+        match self.transfer.is_hdr() {
+            true => pixels * self.planes() * 4,
+            false => pixels * 4,
+        }
+    }
+
+    /// Float planes of an HDR source frame.
+    fn planes(&self) -> usize {
+        if self.alpha { 4 } else { 3 }
+    }
 }
 
 /// `WxH`, each side a positive size or `-1` (from the other side and the aspect ratio).
@@ -318,6 +382,15 @@ fn scaled_size(from: (u32, u32), scale: (i64, i64)) -> (u32, u32) {
 /// applied (`docs/features/encoder.md#cli`).
 fn source(input: &Path, o: &VideoOptions) -> AnyResult<Probe> {
     let mut p = probe(input)?;
+    if let Some(t) = o.input_transfer {
+        p.transfer = t;
+    }
+    if p.transfer.is_hdr() && p.primaries.is_none() {
+        return Err("HDR source with primaries other than bt709 and bt2020".into());
+    }
+    if p.transfer == hdr::Transfer::Linear && o.scale.is_some() {
+        return Err("--scale is not supported for linear sources: ffmpeg clamps float samples to 1.0 when it resizes".into());
+    }
     let mut filters = Vec::new();
     if let Some((num, den)) = o.fps {
         (p.fps_num, p.fps_den) = (num, den);
@@ -333,7 +406,16 @@ fn source(input: &Path, o: &VideoOptions) -> AnyResult<Probe> {
 
 fn probe(input: &Path) -> AnyResult<Probe> {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,r_frame_rate,pix_fmt", "-of", "default=noprint_wrappers=1"])
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,r_frame_rate,pix_fmt,color_transfer,color_primaries",
+            "-of",
+            "default=noprint_wrappers=1",
+        ])
         .arg(input)
         .output()
         .map_err(|e| format!("cannot run ffprobe: {e}"))?;
@@ -356,6 +438,8 @@ fn probe(input: &Path) -> AnyResult<Probe> {
         fps_den: den.parse()?,
         alpha: pix_fmt_has_alpha(pix_fmt),
         filters: None,
+        transfer: hdr::Transfer::from_ffprobe(field("color_transfer").unwrap_or("")),
+        primaries: hdr::primaries_from_ffprobe(field("color_primaries").unwrap_or("")),
     })
 }
 
@@ -455,6 +539,16 @@ fn pix_fmt_has_alpha(pix_fmt: &str) -> bool {
     ["yuva", "gbrap", "rgba", "bgra", "argb", "abgr", "ya8", "ya16", "pal8"].iter().any(|p| pix_fmt.starts_with(p))
 }
 
+/// Converts the raw frames of an HDR source to linear RGBA for `push_frame_hdr`.
+fn hdr_conversion(p: &Probe, o: &VideoOptions) -> hdr::Conversion {
+    hdr::Conversion {
+        transfer: p.transfer,
+        source: p.primaries.unwrap_or_default(),
+        target: o.primaries.primaries(),
+        reference_white: o.reference_white as f32,
+    }
+}
+
 /// The encoder configuration for the video options, without audio and cues.
 fn video_config(p: &Probe, o: &VideoOptions) -> AnyResult<EncoderConfig> {
     let astc = |v: &&VariantArg| matches!(v, VariantArg::Astc4x4 | VariantArg::Astc6x6 | VariantArg::Astc8x8);
@@ -466,11 +560,17 @@ fn video_config(p: &Probe, o: &VideoOptions) -> AnyResult<EncoderConfig> {
         QualityArg::Medium => Quality::Medium,
         QualityArg::Thorough => Quality::Thorough,
     };
+    let hdr_variants = o.variants.iter().any(|v| v.format().is_hdr());
+    let color = if hdr_variants { ColorConfig::hdr() } else { ColorConfig::sdr() }
+        .primaries(o.primaries.primaries())
+        .reference_white(o.reference_white)
+        .tonemap_white(o.tonemap_white);
     let mut config = EncoderConfig::new(p.width, p.height, p.fps_num, p.fps_den)
         .keyint(o.keyint)
         .skip_threshold(o.skip_threshold)
         .plane_min_saving(o.plane_min_saving)
-        .alpha(p.alpha);
+        .alpha(p.alpha)
+        .color(color);
     for v in &o.variants {
         let variant = match v {
             VariantArg::Bc7 => VariantConfig::bc7(),
@@ -482,13 +582,17 @@ fn video_config(p: &Probe, o: &VideoOptions) -> AnyResult<EncoderConfig> {
                 ChromaArg::C420 => Chroma::C420,
                 ChromaArg::C444 => Chroma::C444,
             }),
+            VariantArg::Bc6h => VariantConfig::bc6h(),
+            VariantArg::Astc4x4Hdr => VariantConfig::astc_hdr(4),
+            VariantArg::Astc6x6Hdr => VariantConfig::astc_hdr(6),
         };
         config = config.variant(variant.quality(quality));
     }
     Ok(config)
 }
 
-/// Starts an ffmpeg process decoding the video to the RGBA frames of `source` on its stdout.
+/// Starts an ffmpeg process decoding the video to the frames of `source` on its stdout:
+/// RGBA8, or planar float (`gbrpf32le`, `gbrapf32le` with alpha) for HDR sources.
 fn spawn_video(input: &Path, source: &Probe, frames: Option<u64>) -> AnyResult<Child> {
     let mut ffmpeg = Command::new("ffmpeg");
     ffmpeg.args(["-v", "error", "-nostdin", "-i"]).arg(input);
@@ -498,8 +602,13 @@ fn spawn_video(input: &Path, source: &Probe, frames: Option<u64>) -> AnyResult<C
     if let Some(n) = frames {
         ffmpeg.args(["-frames:v", &n.to_string()]);
     }
+    let pix_fmt = match (source.transfer.is_hdr(), source.alpha) {
+        (false, _) => "rgba",
+        (true, false) => "gbrpf32le",
+        (true, true) => "gbrapf32le",
+    };
     let child = ffmpeg
-        .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+        .args(["-f", "rawvideo", "-pix_fmt", pix_fmt, "-"])
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|e| format!("cannot run ffmpeg: {e}"))?;
@@ -575,13 +684,14 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
         }
     }
     eprintln!(
-        "{}: {}x{} @ {}/{} fps{}",
+        "{}: {}x{} @ {}/{} fps{}{}",
         args.input.display(),
         p.width,
         p.height,
         p.fps_num,
         p.fps_den,
-        if p.alpha { ", alpha" } else { "" }
+        if p.alpha { ", alpha" } else { "" },
+        if p.transfer.is_hdr() { format!(", {:?} {}", p.transfer, p.primaries.unwrap_or_default()) } else { String::new() }
     );
 
     let out = BufWriter::new(File::create(&args.output)?);
@@ -589,8 +699,15 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
     let ffmpeg = spawn_video(&args.input, &p, args.video.frames)?;
     let started = Instant::now();
     let mut count = 0u64;
-    pump_frames(ffmpeg, p.width as usize * p.height as usize * 4, |frame| {
-        encoder.push_frame(frame)?;
+    let conversion = hdr_conversion(&p, &args.video);
+    let mut linear = Vec::new();
+    pump_frames(ffmpeg, p.frame_bytes(), |frame| {
+        if p.transfer.is_hdr() {
+            conversion.convert(frame, p.width as usize * p.height as usize, p.planes(), &mut linear);
+            encoder.push_frame_hdr(&linear)?;
+        } else {
+            encoder.push_frame(frame)?;
+        }
         count += 1;
         eprint!("\rframe {count}");
         Ok(())
@@ -610,6 +727,9 @@ fn encode(args: EncodeArgs) -> AnyResult<()> {
         let name = v.format.map_or("?", |f| f.name());
         let skipped = 100.0 * v.skipped_blocks as f64 / v.blocks.max(1) as f64;
         println!("{:<10} {:>12} {:>9.2} {:>8.1}% {:>9}", name, v.bytes, v.bytes as f64 / 1e6 / secs, skipped, v.keyframes);
+        if let Some((cll, fall)) = v.light_level {
+            println!("{:<10} maxCLL {cll} nits, maxFALL {fall} nits", "");
+        }
         if let Some(m) = v.motion {
             let total = (m.intra + m.inter + m.split + m.skip).max(1) as f64;
             println!(
@@ -672,6 +792,9 @@ fn frame(args: FrameArgs) -> AnyResult<()> {
     let params = player.tracks()[args.track].params;
     let frame = player.video_frame(args.track).ok_or("no frame at that time")?;
     let time = frame.time;
+    if params.hdr() {
+        return write_hdr_frame(&args, &params, frame.data, time);
+    }
     let rgba = if params.format == TextureFormat::Motion {
         // Seeking queued the frames from the preceding keyframe: rebuild them on the CPU.
         use praxi::format::motion;
@@ -701,6 +824,45 @@ fn frame(args: FrameArgs) -> AnyResult<()> {
     Ok(())
 }
 
+/// Writes an HDR frame as OpenEXR (linear half floats) or as a tonemapped PNG, by the
+/// output's extension (`docs/features/hdr.md#tools`).
+fn write_hdr_frame(args: &FrameArgs, params: &praxi::VideoParams, data: &[u8], time: std::time::Duration) -> AnyResult<()> {
+    use imgio::file::FileFormat;
+    let linear = praxi_encoder::decode_frame_hdr(params, data)?;
+    let exr = args.output.extension().is_some_and(|e| e.eq_ignore_ascii_case("exr"));
+    let file = if exr {
+        let halves: Vec<u8> = linear.iter().flat_map(|&v| imgio::half::from_f32(v).to_le_bytes()).collect();
+        let image = imgio::Surface::new(imgio::Format::Rgba16Float, params.width, params.height, &halves)?;
+        imgio::file::encode(FileFormat::Exr, &image).map_err(|e| format!("EXR encoding failed: {e}"))?
+    } else {
+        if !(args.tonemap_white.is_finite() && args.tonemap_white > 0.0) {
+            return Err(format!("invalid --tonemap-white {}", args.tonemap_white).into());
+        }
+        let rgba: Vec<u8> = linear
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|p| {
+                let [r, g, b] = praxi_format::color::tonemap_srgb8([p[0], p[1], p[2]], params.color.primaries, args.tonemap_white);
+                [r, g, b, 255]
+            })
+            .collect();
+        let image = imgio::Surface::new(imgio::Format::Rgba8Srgb, params.width, params.height, &rgba)?;
+        imgio::file::encode(FileFormat::Png, &image).map_err(|e| format!("PNG encoding failed: {e}"))?
+    };
+    std::fs::write(&args.output, &file[..])?;
+    println!(
+        "{}: frame at {:.3} s, {} {}x{} HDR{}",
+        args.output.display(),
+        time.as_secs_f64(),
+        params.format,
+        params.width,
+        params.height,
+        if exr { "" } else { ", tonemapped" }
+    );
+    Ok(())
+}
+
 fn info(path: &Path, chunks: bool) -> AnyResult<()> {
     let mut r = Reader::new(BufReader::new(File::open(path)?))?;
     let h = *r.header();
@@ -709,6 +871,10 @@ fn info(path: &Path, chunks: bool) -> AnyResult<()> {
     println!("index     {} entries at {}", h.index_count, h.index_offset);
     for (i, s) in r.streams().iter().enumerate() {
         let desc = match &s.params {
+            StreamParams::Video(v) if v.hdr() => format!(
+                "video {} {}x{} HDR {} white {} nits maxCLL {} maxFALL {}",
+                v.format, v.width, v.height, v.color.primaries, v.color.reference_white, v.color.max_cll, v.color.max_fall
+            ),
             StreamParams::Video(v) => format!(
                 "video {} {}x{}{}{}",
                 v.format,

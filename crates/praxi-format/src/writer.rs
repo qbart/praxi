@@ -37,10 +37,13 @@ impl<W: Write + Seek> Writer<W> {
             if s.time_base.num == 0 || s.time_base.den == 0 {
                 return Err(Error::Invalid(format!("stream {i}: zero time base")));
             }
-            if let StreamParams::Video(v) = &s.params
-                && (v.width == 0 || v.height == 0)
-            {
-                return Err(Error::Invalid(format!("stream {i}: zero frame size")));
+            if let StreamParams::Video(v) = &s.params {
+                if v.width == 0 || v.height == 0 {
+                    return Err(Error::Invalid(format!("stream {i}: zero frame size")));
+                }
+                if let Err(e) = v.check_color() {
+                    return Err(Error::Invalid(format!("stream {i}: {e}")));
+                }
             }
             if let StreamParams::Cues(c) = &s.params
                 && (c.name.len() > CUE_NAME_SIZE || c.name.contains('\0'))
@@ -90,6 +93,19 @@ impl<W: Write + Seek> Writer<W> {
 
     pub fn streams(&self) -> &[StreamInfo] {
         &self.streams
+    }
+
+    /// Sets the light level of an HDR video stream (`max_cll`, `max_fall` in nits), written
+    /// to the stream table by [`Writer::finish`].
+    pub fn set_light_level(&mut self, stream: u16, max_cll: u16, max_fall: u16) -> Result<()> {
+        match self.streams.get_mut(stream as usize).map(|s| &mut s.params) {
+            Some(StreamParams::Video(v)) if v.hdr() => {
+                v.color.max_cll = max_cll;
+                v.color.max_fall = max_fall;
+                Ok(())
+            }
+            _ => Err(Error::Invalid(format!("stream {stream} is not an HDR video stream"))),
+        }
     }
 
     /// Bytes written so far (header, stream table and chunks).
@@ -356,6 +372,10 @@ fn encode_stream(s: &StreamInfo) -> [u8; STREAM_ENTRY_SIZE as usize] {
             b[32] = v.motion.chroma_qp_offset as u8;
             b[33] = v.motion.alpha_qp_offset as u8;
         }
+        b[56] = v.color.primaries.id();
+        b[58..60].copy_from_slice(&v.color.reference_white.to_le_bytes());
+        b[60..62].copy_from_slice(&v.color.max_cll.to_le_bytes());
+        b[62..64].copy_from_slice(&v.color.max_fall.to_le_bytes());
     }
     if let StreamParams::Cues(c) = &s.params {
         b[16..24].copy_from_slice(&c.max_duration.to_le_bytes());

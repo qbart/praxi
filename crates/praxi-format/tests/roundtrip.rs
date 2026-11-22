@@ -95,7 +95,7 @@ fn rejects_bad_magic_and_version() {
 
     let mut file = sample_file();
     file[8] = 1;
-    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 10 })));
+    assert!(matches!(Reader::new(Cursor::new(file)), Err(Error::UnsupportedVersion { major: 1, minor: 11 })));
 
     let mut file = sample_file();
     file[10] = 1;
@@ -452,4 +452,68 @@ fn copy_chunk_checks_stream_and_size() {
     assert!(matches!(w.copy_chunk(&ChunkHeader { stream: 1, ..c }, &stored), Err(Error::Invalid(_))), "cue stream");
     w.copy_chunk(&c, &stored).unwrap();
     assert!(matches!(w.copy_chunk(&c, &stored), Err(Error::Invalid(_))), "same pts again");
+}
+
+fn hdr_video(format: TextureFormat) -> StreamInfo {
+    let mut params = VideoParams::new(10, 6, format, praxi_format::COLOR_FLAG_HDR);
+    params.color.primaries = praxi_format::Primaries::Bt2020;
+    params.color.reference_white = 203;
+    StreamInfo::video(0, TimeBase::new(1, 30), params)
+}
+
+#[test]
+fn hdr_color_description_roundtrip() {
+    let streams = vec![hdr_video(TextureFormat::Bc6h), hdr_video(TextureFormat::Astc6x6Hdr), video(TextureFormat::Bc7)];
+    let mut w = Writer::new(Cursor::new(Vec::new()), streams).unwrap();
+    w.write_chunk(0, 0, true, &[1; 48], None).unwrap();
+    w.set_light_level(0, 3249, 410).unwrap();
+    assert!(w.set_light_level(2, 1, 1).is_err(), "SDR streams have no light level");
+    let file = w.finish(100_000).unwrap().into_inner();
+    let r = Reader::new(Cursor::new(file)).unwrap();
+    let v = r.streams()[0].video_params().unwrap();
+    assert!(v.hdr() && !v.srgb());
+    assert_eq!(v.color.primaries, praxi_format::Primaries::Bt2020);
+    assert_eq!((v.color.reference_white, v.color.max_cll, v.color.max_fall), (203, 3249, 410));
+    let v = r.streams()[1].video_params().unwrap();
+    assert_eq!((v.format, v.frame_size()), (TextureFormat::Astc6x6Hdr, 32));
+    assert_eq!(v.color.max_cll, 0, "unknown");
+    let v = r.streams()[2].video_params().unwrap();
+    assert!(!v.hdr());
+    assert_eq!(v.color, praxi_format::ColorDescription::default());
+}
+
+#[test]
+fn rejects_inconsistent_hdr_streams() {
+    let file = || {
+        let w = Writer::new(Cursor::new(Vec::new()), vec![hdr_video(TextureFormat::Bc6h)]).unwrap();
+        w.finish(0).unwrap().into_inner()
+    };
+    // Stream table entry at 48; color_flags at 26, primaries at 56, reference white at 58.
+    let patched = |at: usize, bytes: &[u8]| {
+        let mut f = file();
+        f[48 + at..48 + at + bytes.len()].copy_from_slice(bytes);
+        Reader::new(Cursor::new(f)).err().map(|e| e.to_string())
+    };
+    assert_eq!(patched(0, &[1]), None, "unchanged file reads");
+    assert!(patched(26, &[0, 0]).unwrap().contains("without the HDR flag"));
+    assert!(patched(26, &[5, 0]).unwrap().contains("sRGB or alpha"));
+    assert!(patched(56, &[2]).unwrap().contains("unknown primaries"));
+    assert!(patched(58, &[0, 0]).unwrap().contains("reference white 0"));
+    assert!(patched(24, &[7, 0]).unwrap().contains("not an HDR format"), "HDR flag on BC7");
+    // The writer refuses the same streams.
+    let mut bad = hdr_video(TextureFormat::Bc7);
+    assert!(Writer::new(Cursor::new(Vec::new()), vec![bad.clone()]).is_err());
+    if let StreamParams::Video(v) = &mut bad.params {
+        v.format = TextureFormat::Bc6h;
+        v.color.reference_white = 0;
+    }
+    assert!(Writer::new(Cursor::new(Vec::new()), vec![bad]).is_err());
+}
+
+#[test]
+fn hdr_format_names_parse() {
+    assert_eq!(TextureFormat::parse("bc6h"), Some(TextureFormat::Bc6h));
+    assert_eq!(TextureFormat::parse("astc4x4-hdr"), Some(TextureFormat::Astc4x4Hdr));
+    assert_eq!(TextureFormat::parse("ASTC 6x6 HDR"), Some(TextureFormat::Astc6x6Hdr));
+    assert!(TextureFormat::ALL.iter().all(|f| TextureFormat::from_id(f.id()) == Some(*f)));
 }

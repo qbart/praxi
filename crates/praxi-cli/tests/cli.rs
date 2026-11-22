@@ -189,3 +189,52 @@ fn benches_to_json() {
     assert!(variants.iter().all(|v| v["psnr_db"].as_f64().unwrap() > 20.0), "{result}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// `praxi encode` on a 10-bit clip tagged PQ / BT.2020, `praxi info`, and `praxi frame` to
+/// EXR and PNG (`docs/features/hdr.md#tests`).
+#[test]
+fn encodes_hdr_sources() {
+    if !has_ffmpeg() {
+        return skip("ffmpeg and ffprobe not found");
+    }
+    let dir = temp_dir("hdr");
+    let source = dir.join("pq.mkv");
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10:duration=0.5"])
+        .args(["-vf", "format=yuv444p10le", "-c:v", "ffv1"])
+        .args(["-color_trc", "smpte2084", "-color_primaries", "bt2020", "-colorspace", "bt2020nc"])
+        .arg(&source)
+        .status()
+        .unwrap();
+    assert!(status.success(), "ffmpeg could not generate the source");
+    let out = dir.join("pq.praxi");
+    let (src, out_s) = (source.to_str().unwrap(), out.to_str().unwrap());
+    let stdout = praxi(&["encode", src, "-o", out_s, "--variant", "bc6h", "--variant", "astc6x6-hdr", "--variant", "bc7"]);
+    assert!(stdout.contains("maxCLL"), "{stdout}");
+    let s = summary(&out);
+    assert_eq!(
+        s.video,
+        [(TextureFormat::Bc6h, 64, 48, 5), (TextureFormat::Astc6x6Hdr, 64, 48, 5), (TextureFormat::Bc7, 64, 48, 5)]
+    );
+    let reader = Reader::new(BufReader::new(File::open(&out).unwrap())).unwrap();
+    let v = reader.streams()[0].video_params().unwrap();
+    assert!(v.hdr() && v.color.reference_white == 203 && v.color.max_cll > 203, "{:?}", v.color);
+    let info = praxi(&["info", out_s]);
+    assert!(info.contains("video BC6H 64x48 HDR bt709 white 203 nits maxCLL"), "{info}");
+
+    let exr = dir.join("frame.exr");
+    praxi(&["frame", out_s, "--at", "0.2", "-o", exr.to_str().unwrap()]);
+    assert!(std::fs::read(&exr).unwrap().starts_with(&[0x76, 0x2f, 0x31, 0x01]), "OpenEXR magic");
+    let png = dir.join("frame.png");
+    praxi(&["frame", out_s, "--format", "astc6x6-hdr", "--tonemap-white", "2", "-o", png.to_str().unwrap()]);
+    assert!(std::fs::read(&png).unwrap().starts_with(b"\x89PNG"));
+
+    // --scale would clamp linear float sources in ffmpeg.
+    let failed = Command::new(env!("CARGO_BIN_EXE_praxi"))
+        .args(["encode", src, "-o", out_s, "--variant", "bc6h", "--input-transfer", "linear", "--scale", "32x-1"])
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("--scale"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

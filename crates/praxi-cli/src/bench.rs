@@ -174,7 +174,12 @@ impl Drop for Encoded {
 pub fn bench(args: BenchArgs) -> AnyResult<()> {
     let baseline = args.baseline.as_deref().map(read_results).transpose()?;
     let machine = Machine::current();
-    let p = source(&args.input, &args.video)?;
+    let mut p = source(&args.input, &args.video)?;
+    if args.video.variants.iter().any(|v| v.format().is_hdr()) {
+        return Err("bench does not measure HDR variants yet (docs/features/hdr.md#later)".into());
+    }
+    // Quality is measured on 8-bit frames: HDR sources are read as sRGB, as before.
+    p.transfer = crate::hdr::Transfer::Srgb;
     let frame_bytes = p.width as usize * p.height as usize * 4;
     let encoded = Encoded {
         path: args
