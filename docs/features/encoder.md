@@ -26,7 +26,7 @@ praxi info intro.praxi
 | `--fps <N[/D]>` | source rate | Resample to this frame rate, `N` or `N/D` frames per second, by dropping or repeating frames |
 | `--frames <N>` | all | Encode only the first `N` frames (after `--fps`) |
 | `--no-audio`, `--audio-layout`, `--audio-rate`, `--audio-format`, `--audio-name` | | Audio options, see [audio.md](audio.md#cli) |
-| `--primaries`, `--reference-white`, `--tonemap-white`, `--input-transfer` | | HDR options, see [hdr.md](hdr.md#cli) |
+| `--primaries`, `--reference-white`, `--tonemap-white`, `--input-transfer`, `--input-primaries` | | HDR options, see [hdr.md](hdr.md#cli) |
 
 The CLI runs `ffprobe` for width, height, frame rate, transfer function and primaries, and
 `ffmpeg` to decode frames as raw RGBA (`-f rawvideo -pix_fmt rgba`), so alpha is kept when

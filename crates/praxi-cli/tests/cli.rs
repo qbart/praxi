@@ -229,6 +229,27 @@ fn encodes_hdr_sources() {
     praxi(&["frame", out_s, "--format", "astc6x6-hdr", "--tonemap-white", "2", "-o", png.to_str().unwrap()]);
     assert!(std::fs::read(&png).unwrap().starts_with(b"\x89PNG"));
 
+    // The same clip without color tags (.y4m), described with --input-transfer and
+    // --input-primaries, gives the same frames.
+    let y4m = dir.join("pq.y4m");
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-i", src, "-strict", "-1", "-f", "yuv4mpegpipe"])
+        .arg(&y4m)
+        .status()
+        .unwrap();
+    assert!(status.success(), "ffmpeg could not write the y4m");
+    let untagged = dir.join("untagged.praxi");
+    let y4m_s = y4m.to_str().unwrap();
+    praxi(&["encode", y4m_s, "-o", untagged.to_str().unwrap(), "--variant", "bc6h", "--input-transfer", "pq", "--input-primaries", "bt2020"]);
+    let tagged = dir.join("tagged.praxi");
+    praxi(&["encode", src, "-o", tagged.to_str().unwrap(), "--variant", "bc6h"]);
+    let frame = |file: &std::path::Path, name: &str| {
+        let exr = dir.join(name);
+        praxi(&["frame", file.to_str().unwrap(), "--at", "0.2", "-o", exr.to_str().unwrap()]);
+        std::fs::read(&exr).unwrap()
+    };
+    assert!(frame(&untagged, "untagged.exr") == frame(&tagged, "tagged.exr"), "untagged y4m decodes differently");
+
     // --scale would clamp linear float sources in ffmpeg.
     let failed = Command::new(env!("CARGO_BIN_EXE_praxi"))
         .args(["encode", src, "-o", out_s, "--variant", "bc6h", "--input-transfer", "linear", "--scale", "32x-1"])

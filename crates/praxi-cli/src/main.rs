@@ -125,6 +125,9 @@ struct VideoOptions {
     /// Transfer function of the source (default: from ffprobe).
     #[arg(long, value_enum)]
     input_transfer: Option<hdr::Transfer>,
+    /// Primaries of the source (default: from ffprobe).
+    #[arg(long, value_enum)]
+    input_primaries: Option<PrimariesArg>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -323,11 +326,13 @@ struct Probe {
     fps_num: u32,
     fps_den: u32,
     alpha: bool,
-    /// ffmpeg filters producing these frames from the input (`--fps`, `--scale`).
+    /// ffmpeg filters producing these frames from the input (color tags, `--fps`, `--scale`).
     filters: Option<String>,
     /// Source transfer function and primaries (`docs/features/hdr.md#cli`).
     transfer: hdr::Transfer,
     primaries: Option<Primaries>,
+    /// Whether ffprobe reports the source's YUV matrix (`color_space`).
+    matrix: bool,
 }
 
 impl Probe {
@@ -385,6 +390,9 @@ fn source(input: &Path, o: &VideoOptions) -> AnyResult<Probe> {
     if let Some(t) = o.input_transfer {
         p.transfer = t;
     }
+    if let Some(primaries) = o.input_primaries {
+        p.primaries = Some(primaries.primaries());
+    }
     if p.transfer.is_hdr() && p.primaries.is_none() {
         return Err("HDR source with primaries other than bt709 and bt2020".into());
     }
@@ -392,6 +400,9 @@ fn source(input: &Path, o: &VideoOptions) -> AnyResult<Probe> {
         return Err("--scale is not supported for linear sources: ffmpeg clamps float samples to 1.0 when it resizes".into());
     }
     let mut filters = Vec::new();
+    if o.input_transfer.is_some() || o.input_primaries.is_some() {
+        filters.push(hdr::setparams(p.transfer, p.primaries.unwrap_or_default(), !p.matrix));
+    }
     if let Some((num, den)) = o.fps {
         (p.fps_num, p.fps_den) = (num, den);
         filters.push(format!("fps={num}/{den}"));
@@ -412,7 +423,7 @@ fn probe(input: &Path) -> AnyResult<Probe> {
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=width,height,r_frame_rate,pix_fmt,color_transfer,color_primaries",
+            "stream=width,height,r_frame_rate,pix_fmt,color_transfer,color_primaries,color_space",
             "-of",
             "default=noprint_wrappers=1",
         ])
@@ -440,6 +451,7 @@ fn probe(input: &Path) -> AnyResult<Probe> {
         filters: None,
         transfer: hdr::Transfer::from_ffprobe(field("color_transfer").unwrap_or("")),
         primaries: hdr::primaries_from_ffprobe(field("color_primaries").unwrap_or("")),
+        matrix: !matches!(field("color_space").unwrap_or(""), "" | "unknown"),
     })
 }
 

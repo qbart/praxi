@@ -173,11 +173,28 @@ praxi encode sunset_hdr10.mkv -o sunset.praxi --variant bc6h --variant bc7
 | `--reference-white <NITS>` | `203` | Nits that become 1.0 |
 | `--tonemap-white <W>` | `4.0` | `W` of the [SDR tonemap](#tonemap-to-sdr), for SDR variants of an HDR source |
 | `--input-transfer <T>` | from `ffprobe` | `pq`, `hlg`, `linear` or `srgb`: override the source's transfer function |
+| `--input-primaries <P>` | from `ffprobe` | `bt709` or `bt2020`: override the source's primaries |
 
 The source's transfer function comes from `ffprobe`'s `color_transfer`: `smpte2084` is
 `pq`, `arib-std-b67` is `hlg`, `linear` is `linear` (OpenEXR and other float sources);
 anything else is `srgb` (today's path). Primaries come from `color_primaries`: `bt2020`, or
 BT.709 for `bt709` and unspecified; an HDR source with other primaries is rejected.
+
+Some sources carry no color tags at all: a `.y4m` file has none, so an HDR10 `.y4m` looks
+like SDR BT.709 to `ffprobe`. `--input-transfer` and `--input-primaries` say what the
+source is:
+
+```sh
+praxi encode clip_hdr10.y4m -o clip.praxi --input-transfer pq --input-primaries bt2020 \
+    --variant bc6h --variant bc7
+```
+
+With either option the CLI also tags the frames for `ffmpeg` with the `setparams` filter,
+ahead of `--fps` and `--scale`: `color_trc` and `color_primaries` from the resolved
+transfer and primaries, and, when `ffprobe` reports no `color_space` for the source, the
+YUV matrix of the primaries (`bt2020nc` for BT.2020, `bt709` for BT.709). Without the
+matrix, `ffmpeg` converts untagged YUV to RGB with BT.601, which shifts the hues of a
+BT.2020 source. Range is left to `ffmpeg` (narrow, the default for untagged YUV).
 
 For `pq`, `hlg` and `linear` sources, `ffmpeg` decodes to float RGB without changing the
 transfer (`-pix_fmt gbrapf32le`, `gbrpf32le` without alpha), and the CLI converts:

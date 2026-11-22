@@ -2,7 +2,7 @@ SAMPLES_DIR := samples
 BENCH_INPUT := $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4
 BENCH_ARGS := --frames 180 --variant bc7 --variant bc1 --variant astc6x6 --variant astc8x8
 
-.PHONY: build test test-strict check check-windows samples bench bench-baseline examples cue-game video-box video-box-bunny package publish tag crates release-ready godot-addon godot-example
+.PHONY: build test test-strict check check-windows samples samples-hdr bench bench-baseline examples examples-hdr cue-game video-box video-box-bunny package publish tag crates release-ready godot-addon godot-example
 
 # The workspace version (docs/features/releasing.md).
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -31,6 +31,27 @@ samples: $(BENCH_INPUT)
 $(SAMPLES_DIR)/big_buck_bunny_1080_10s.mp4:
 	mkdir -p $(SAMPLES_DIR)
 	curl -fL -o $@ https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_10MB.mp4
+
+# Real HDR10 footage, 685 MB (docs/features/hdr.md#sample-footage): Cosmos Laundromat
+# (Blender Foundation, CC BY 3.0), HDR remaster by Netflix, from the AOM test set on Xiph.
+HDR_INPUT := $(SAMPLES_DIR)/CosmosCaterpillar_2048x858p24_hdr10.y4m
+HDR_MD5 := 793c7f42b657ca2b5755a46c853ce4a8
+
+samples-hdr: $(HDR_INPUT)
+
+$(HDR_INPUT):
+	mkdir -p $(SAMPLES_DIR)
+	curl -fL -o $@.part https://media.xiph.org/video/aomctc/test_set/hdr2_2k/CosmosCaterpillar_2048x858p24_hdr10.y4m
+	(md5sum $@.part 2>/dev/null || md5 -r $@.part) | grep -q $(HDR_MD5)
+	mv $@.part $@
+
+HDR_EXAMPLE := target/cosmos.praxi
+
+examples-hdr: samples-hdr
+	mkdir -p target
+	cargo run --release -p praxi-cli -- encode $(HDR_INPUT) -o $(HDR_EXAMPLE) --input-transfer pq --input-primaries bt2020 \
+		--variant bc6h --variant bc7
+	cargo run --release -p praxi-cli -- info $(HDR_EXAMPLE)
 
 bench: samples
 	mkdir -p target

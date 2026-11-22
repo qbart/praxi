@@ -15,6 +15,8 @@ tests that need them skip there.
 | `make test-strict` | `make test` with `PRAXI_TEST_STRICT=1`: tests that would skip fail instead | ffmpeg, a GPU adapter with compute shaders and BC or ASTC |
 | `make bench` | `praxi bench` on the sample video, checked against [bench/baseline.json](../../bench/baseline.json) ([benchmarks.md](benchmarks.md)) | ffmpeg, the sample video (`make samples` downloads it) |
 | `make examples` | Encodes part of the sample and runs the `game_loop` and `decode_thread` examples on it | ffmpeg, the sample video |
+| `make samples-hdr` | Downloads real HDR10 footage (685 MB, CC BY 3.0) into `samples/` and checks its MD5 ([hdr.md](hdr.md#sample-footage)) | curl |
+| `make examples-hdr` | Encodes the HDR sample to `target/cosmos.praxi` (BC6H + BC7) and prints `praxi info`; play it with `praxi-viewer target/cosmos.praxi --hdr --loop` | ffmpeg, the HDR sample |
 
 Code is not formatted with rustfmt; `make check` does not run `cargo fmt`. The first
 `make test` also builds Bevy and `bevy_egui` for `praxi-bevy` and its example, which
@@ -46,7 +48,7 @@ value these tests fail instead, which shows they all ran.
 | `praxi` | Player: variant selection, events, cues, seeking, looping, audio outputs and clocks |
 | `praxi-encoder` | Encoding every variant and playing it back, CPU decoding, BC1, motion frames, audio, cue replacement on a motion file, HDR variants (`tests/hdr.rs`: PQ-PSNR, light levels, tonemapped SDR variants) |
 | `praxi-wgpu` | Format mapping, the GPU motion decoder against the CPU reference, block and HDR formats drawn against the CPU decoder |
-| `praxi-cli` | Argument parsing, SRT conversion, cue add and remove; `tests/cli.rs` runs the binary end to end on a video ffmpeg generates: `encode` (BC1, BC7, motion, `--scale`, `--fps`, audio, cues), `info`, `frame`, `cues export / import / add / remove / srt` and `bench --json`; HDR sources (`encodes_hdr_sources`: a PQ clip to BC6H, ASTC 6x6 HDR and BC7, `info`, `frame` to EXR and PNG) |
+| `praxi-cli` | Argument parsing, SRT conversion, cue add and remove; `tests/cli.rs` runs the binary end to end on a video ffmpeg generates: `encode` (BC1, BC7, motion, `--scale`, `--fps`, audio, cues), `info`, `frame`, `cues export / import / add / remove / srt` and `bench --json`; HDR sources (`encodes_hdr_sources`: a PQ clip to BC6H, ASTC 6x6 HDR and BC7, `info`, `frame` to EXR and PNG, the same clip untagged as `.y4m` with `--input-transfer` and `--input-primaries`) |
 | `praxi-viewer`, `praxi-editor` | Argument parsing, the editor's document, drafts and file closing |
 | `praxi-audio` | Resampling and channel mapping, without a device |
 | `praxi-bevy` | The plugin in a headless Bevy app: frames drawn and copied into the image, events as messages, mipmaps, HDR images |

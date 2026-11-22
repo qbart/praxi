@@ -32,6 +32,30 @@ impl Transfer {
     pub fn is_hdr(self) -> bool {
         self != Transfer::Srgb
     }
+
+    /// The name of the transfer in `ffmpeg`'s `color_trc`.
+    pub fn ffmpeg_name(self) -> &'static str {
+        match self {
+            Transfer::Pq => "smpte2084",
+            Transfer::Hlg => "arib-std-b67",
+            Transfer::Linear => "linear",
+            Transfer::Srgb => "iec61966-2-1",
+        }
+    }
+}
+
+/// The `setparams` filter tagging frames with `transfer` and `primaries`, and with the YUV
+/// matrix of the primaries when `matrix` is set (`docs/features/hdr.md#cli`).
+pub fn setparams(transfer: Transfer, primaries: Primaries, matrix: bool) -> String {
+    let mut filter = format!("setparams=color_trc={}:color_primaries={}", transfer.ffmpeg_name(), primaries.name());
+    if matrix {
+        let colorspace = match primaries {
+            Primaries::Bt709 => "bt709",
+            Primaries::Bt2020 => "bt2020nc",
+        };
+        filter.push_str(&format!(":colorspace={colorspace}"));
+    }
+    filter
 }
 
 /// Source primaries from `ffprobe`'s `color_primaries`: BT.2020, or BT.709 for `bt709` and
@@ -105,5 +129,14 @@ mod tests {
         assert_eq!(Transfer::from_ffprobe("bt709"), Transfer::Srgb);
         assert_eq!(primaries_from_ffprobe("unknown"), Some(Primaries::Bt709));
         assert_eq!(primaries_from_ffprobe("smpte432"), None);
+    }
+
+    #[test]
+    fn setparams_filters() {
+        assert_eq!(
+            setparams(Transfer::Pq, Primaries::Bt2020, true),
+            "setparams=color_trc=smpte2084:color_primaries=bt2020:colorspace=bt2020nc"
+        );
+        assert_eq!(setparams(Transfer::Hlg, Primaries::Bt709, false), "setparams=color_trc=arib-std-b67:color_primaries=bt709");
     }
 }
