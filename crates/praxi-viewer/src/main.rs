@@ -227,6 +227,8 @@ fn screenshot(args: &Args) -> AnyResult<()> {
     let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None))?;
     describe_adapter(&adapter);
     let mut player = open_player(args, &capabilities(args, &adapter)?)?;
+    // Seeking decodes the frame, also at 0 where `open_player` does not seek.
+    player.seek(Duration::from_secs_f64(args.at))?;
     describe_tracks(&player);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("praxi-viewer"),
