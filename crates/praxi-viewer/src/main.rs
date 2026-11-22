@@ -57,6 +57,17 @@ struct Args {
     /// Screenshot size, WxH (default: track 0's size).
     #[arg(long, value_parser = parse_size)]
     size: Option<(u32, u32)>,
+    /// Prefer HDR variants (BC6H, ASTC HDR); they are tonemapped to the sRGB window.
+    #[arg(long)]
+    hdr: bool,
+    /// The linear value HDR tracks are tonemapped to white.
+    #[arg(long, default_value_t = praxi::format::color::DEFAULT_TONEMAP_WHITE)]
+    tonemap_white: f32,
+}
+
+/// The player capabilities: SDR or HDR variants first (`docs/features/hdr.md#tools`).
+fn capabilities(args: &Args, adapter: &wgpu::Adapter) -> Result<praxi::Capabilities, String> {
+    if args.hdr { praxi_wgpu::capabilities_hdr(adapter, args.format) } else { praxi_wgpu::capabilities(adapter, args.format) }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -215,7 +226,7 @@ fn screenshot(args: &Args) -> AnyResult<()> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(wgpu::util::initialize_adapter_from_env_or_default(&instance, None))?;
     describe_adapter(&adapter);
-    let mut player = open_player(args, &praxi_wgpu::capabilities(&adapter, args.format)?)?;
+    let mut player = open_player(args, &capabilities(args, &adapter)?)?;
     describe_tracks(&player);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("praxi-viewer"),
@@ -226,6 +237,7 @@ fn screenshot(args: &Args) -> AnyResult<()> {
 
     let target_format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let mut renderer = VideoRenderer::new(&device, target_format, &player);
+    renderer.set_tonemap_white(&queue, args.tonemap_white);
     renderer.prepare(&device, &queue, &mut player, 1.0);
     let video = player.tracks()[0].params;
     let (width, height) = args.size.unwrap_or((video.width, video.height));
@@ -411,7 +423,7 @@ impl Viewer {
 
         #[cfg(feature = "audio")]
         let device_audio = if args.no_audio { None } else { audio::Device::open_default() };
-        let caps = praxi_wgpu::capabilities(&adapter, args.format)?;
+        let caps = capabilities(args, &adapter)?;
         #[cfg(feature = "audio")]
         let caps = match device_audio.as_ref().and_then(|d| d.channels()) {
             Some(channels) => caps.max_audio_channels(channels),
@@ -440,7 +452,8 @@ impl Viewer {
         }
         config.present_mode = wgpu::PresentMode::Fifo;
         surface.configure(&device, &config);
-        let renderer = VideoRenderer::new(&device, config.format, &player);
+        let mut renderer = VideoRenderer::new(&device, config.format, &player);
+        renderer.set_tonemap_white(&queue, args.tonemap_white);
         let checker = Checker::new(&device, config.format);
 
         let video = player.tracks()[0].params;
@@ -604,12 +617,14 @@ impl Viewer {
             "paused"
         };
         let looping = if p.looping() { ", loop" } else { "" };
+        let video = &p.tracks()[0].params;
         format!(
-            "{} — {:.2} / {:.2} s — {state}{looping} — {}",
+            "{} — {:.2} / {:.2} s — {state}{looping} — {}{}",
             self.name,
             p.position().as_secs_f64(),
             p.duration().as_secs_f64(),
-            p.tracks()[0].params.format
+            video.format,
+            if video.hdr() && !video.format.name().ends_with("HDR") { " HDR" } else { "" }
         )
     }
 }
