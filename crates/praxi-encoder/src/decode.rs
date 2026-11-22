@@ -27,7 +27,7 @@ pub fn decode_frame(params: &VideoParams, data: &[u8]) -> Result<Vec<u8>> {
     let pixels = (w * h) as usize;
     Ok(match format.decoded() {
         imgio::Format::R8Unorm => decoded[..pixels].iter().flat_map(|&r| [r, 0, 0, 255]).collect(),
-        imgio::Format::Rg8Unorm => decoded[..pixels * 2].chunks_exact(2).flat_map(|c| [c[0], c[1], 0, 255]).collect(),
+        imgio::Format::Rg8Unorm => decoded[..pixels * 2].as_chunks::<2>().0.iter().flat_map(|c| [c[0], c[1], 0, 255]).collect(),
         _ => decoded[..pixels * 4].to_vec(),
     })
 }

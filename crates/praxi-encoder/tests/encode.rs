@@ -209,10 +209,21 @@ fn bc1_is_opaque_and_half_of_bc7() {
 }
 
 #[test]
-fn decode_rejects_unsupported_formats() {
-    let params = praxi::VideoParams::new(4, 4, TextureFormat::Bc3, 0);
-    assert!(praxi_encoder::decode_frame(&params, &[0; 16]).is_err());
-    let params = praxi::VideoParams { format: TextureFormat::Bc7, ..params };
+fn decode_covers_every_block_format() {
+    // A zero BC4 / BC5 block is red (and green) 0; BC4 and BC5 come out as R00A and RG0A.
+    for (format, bytes, pixel) in [
+        (TextureFormat::Bc3, 16, None),
+        (TextureFormat::Bc4, 8, Some([0, 0, 0, 255])),
+        (TextureFormat::Bc5, 16, Some([0, 0, 0, 255])),
+    ] {
+        let params = praxi::VideoParams::new(4, 4, format, 0);
+        let rgba = praxi_encoder::decode_frame(&params, &vec![0; bytes]).expect("decodes");
+        assert_eq!(rgba.len(), 4 * 4 * 4, "{format}");
+        if let Some(px) = pixel {
+            assert!(rgba.as_chunks::<4>().0.iter().all(|p| *p == px), "{format}: {:?}", &rgba[..4]);
+        }
+    }
+    let params = praxi::VideoParams::new(4, 4, TextureFormat::Bc7, 0);
     assert!(praxi_encoder::decode_frame(&params, &[0; 8]).is_err(), "wrong data size");
 }
 
