@@ -17,6 +17,10 @@ pub struct VideoStreamPraxi {
     #[var]
     #[export]
     formats: PackedStringArray,
+    /// Prefer HDR variants (BC6H, ASTC 4x4 HDR) over SDR ones (`docs/features/hdr.md#godot`).
+    #[var]
+    #[export]
+    hdr: bool,
     /// The playback made last, which signals and cue queries refer to.
     playback: Option<InstanceId>,
 }
@@ -26,7 +30,7 @@ impl IVideoStream for VideoStreamPraxi {
     fn instantiate_playback(&mut self) -> Option<Gd<VideoStreamPlayback>> {
         let path = self.base().get_file().to_string();
         let mut playback = VideoStreamPlaybackPraxi::new_gd();
-        playback.bind_mut().open(&path, &self.formats, self.looping, self.to_gd());
+        playback.bind_mut().open(&path, &self.formats, self.hdr, self.looping, self.to_gd());
         self.playback = Some(playback.instance_id());
         Some(playback.upcast())
     }

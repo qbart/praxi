@@ -21,11 +21,12 @@ const MAX_PENDING_FRAMES: usize = 24_000;
 const READ_FRAMES: usize = 4096;
 
 /// The texture formats this rendering device samples (`docs/features/godot.md#texture-formats`).
+/// ASTC HDR is only taken when `formats` names it: Godot does not report it.
 fn device_formats() -> Vec<TextureFormat> {
     let rs = RenderingServer::singleton();
     let mut formats = Vec::new();
     if rs.has_os_feature("bptc") {
-        formats.push(TextureFormat::Bc7);
+        formats.extend([TextureFormat::Bc7, TextureFormat::Bc6h]);
     }
     if rs.has_os_feature("s3tc") {
         formats.push(TextureFormat::Bc1);
@@ -43,8 +44,17 @@ fn image_format(format: TextureFormat) -> Option<Format> {
         TextureFormat::Bc1 => Some(Format::DXT1),
         TextureFormat::Astc4x4 => Some(Format::ASTC_4x4),
         TextureFormat::Astc8x8 => Some(Format::ASTC_8x8),
+        TextureFormat::Bc6h => Some(Format::BPTC_RGBFU),
+        TextureFormat::Astc4x4Hdr => Some(Format::ASTC_4x4_HDR),
         _ => None,
     }
+}
+
+/// `formats` with HDR formats first when `hdr`, last otherwise, each part in its order
+/// (`docs/features/hdr.md#godot`).
+fn order_formats(mut formats: Vec<TextureFormat>, hdr: bool) -> Vec<TextureFormat> {
+    formats.sort_by_key(|f| f.is_hdr() != hdr);
+    formats
 }
 
 fn value(v: &Value) -> Variant {
@@ -161,9 +171,9 @@ impl VideoStreamPlaybackPraxi {
     }
 
     /// Opens `path`; on failure prints the error and stays not playing.
-    pub fn open(&mut self, path: &str, formats: &PackedStringArray, looping: bool, stream: Gd<VideoStreamPraxi>) {
+    pub fn open(&mut self, path: &str, formats: &PackedStringArray, hdr: bool, looping: bool, stream: Gd<VideoStreamPraxi>) {
         self.stream = Some(stream);
-        match Self::open_player(path, formats) {
+        match Self::open_player(path, formats, hdr) {
             Ok(mut player) => {
                 player.set_looping(looping);
                 // VideoStreamPlayer takes the texture once, when the stream is set, so it
@@ -181,7 +191,7 @@ impl VideoStreamPlaybackPraxi {
         }
     }
 
-    fn open_player(path: &str, formats: &PackedStringArray) -> Result<FilePlayer, String> {
+    fn open_player(path: &str, formats: &PackedStringArray, hdr: bool) -> Result<FilePlayer, String> {
         let accepted: Vec<TextureFormat> = if formats.is_empty() {
             device_formats()
         } else {
@@ -191,7 +201,7 @@ impl VideoStreamPlaybackPraxi {
                 .map(|f| TextureFormat::parse(&f.to_string()).ok_or_else(|| format!("unknown texture format {f}")))
                 .collect::<Result<_, _>>()?
         };
-        let accepted: Vec<TextureFormat> = accepted.into_iter().filter(|f| image_format(*f).is_some()).collect();
+        let accepted = order_formats(accepted.into_iter().filter(|f| image_format(*f).is_some()).collect(), hdr);
         let caps = Capabilities::new(accepted.clone()).max_audio_channels(2);
         let file = BufReader::with_capacity(256 * 1024, GodotFile::open(path)?);
         let player = Player::open(file, &caps).map_err(|e| e.to_string())?;
@@ -381,5 +391,19 @@ impl IVideoStreamPlayback for VideoStreamPlaybackPraxi {
 
     fn get_mix_rate(&self) -> i32 {
         self.state().audio.as_ref().map_or(0, |a| a.sample_rate() as i32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hdr_formats_come_first_with_hdr() {
+        use TextureFormat::*;
+        let formats = vec![Bc7, Bc6h, Bc1, Astc4x4Hdr, Astc4x4];
+        assert_eq!(order_formats(formats.clone(), true), [Bc6h, Astc4x4Hdr, Bc7, Bc1, Astc4x4]);
+        assert_eq!(order_formats(formats, false), [Bc7, Bc1, Astc4x4, Bc6h, Astc4x4Hdr]);
+        assert!(image_format(Astc6x6Hdr).is_none(), "Godot has no ASTC 6x6");
     }
 }

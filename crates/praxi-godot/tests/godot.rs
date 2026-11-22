@@ -1,6 +1,6 @@
 //! Runs the extension in headless Godot (`docs/features/godot.md#tests`).
 
-use praxi_encoder::{AudioTrackConfig, CueConfig, CueStreamConfig, Encoder, EncoderConfig, SampleFormat, VariantConfig};
+use praxi_encoder::{AudioTrackConfig, ColorConfig, CueConfig, CueStreamConfig, Encoder, EncoderConfig, SampleFormat, VariantConfig};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -49,6 +49,16 @@ fn clip(path: &Path) {
     enc.finish().unwrap();
 }
 
+/// A short 64x32 clip with a BC6H and a BC7 variant.
+fn hdr_clip(path: &Path) {
+    let config = EncoderConfig::new(64, 32, 30, 1).color(ColorConfig::hdr()).variant(VariantConfig::bc6h()).variant(VariantConfig::bc7());
+    let mut enc = Encoder::new(std::fs::File::create(path).unwrap(), config).unwrap();
+    for _ in 0..3 {
+        enc.push_frame_hdr(&[2.0, 1.0, 0.5, 1.0].repeat(64 * 32)).unwrap();
+    }
+    enc.finish().unwrap();
+}
+
 const SCRIPT: &str = r#"extends SceneTree
 
 var player: VideoStreamPlayer
@@ -81,6 +91,18 @@ func _initialize() -> void:
 	check(first != null and first.get_width() == 64 and first.get_height() == 32, "texture when the stream is set: %s" % [first])
 	player.autoplay = true  # starts when it enters the tree, after _initialize
 	root.add_child(player)
+	# The HDR clip: BC6H with hdr, BC7 without (docs/features/hdr.md#godot).
+	for hdr in [true, false]:
+		var hdr_stream = load("res://hdr.praxi").duplicate()
+		hdr_stream.formats = PackedStringArray(["bc7", "bc6h"])
+		hdr_stream.hdr = hdr
+		var hdr_player := VideoStreamPlayer.new()
+		hdr_player.stream = hdr_stream
+		var tex = hdr_player.get_video_texture()
+		var format = tex.get_image().get_format() if tex != null and tex.get_image() != null else -1
+		var expected = Image.FORMAT_BPTC_RGBFU if hdr else Image.FORMAT_BPTC_RGBA
+		check(format == expected, "hdr %s: image format %d, expected %d" % [hdr, format, expected])
+		hdr_player.free()
 	check(is_equal_approx(player.get_stream_length(), 2.0), "length %f" % player.get_stream_length())
 
 func _process(_delta: float) -> bool:
@@ -167,6 +189,7 @@ fn plays_in_godot() {
     std::fs::write(project.join("project.godot"), "config_version=5\n\n[application]\nconfig/name=\"praxi test\"\n").unwrap();
     std::fs::write(project.join("test.gd"), SCRIPT).unwrap();
     clip(&project.join("clip.praxi"));
+    hdr_clip(&project.join("hdr.praxi"));
 
     let mut child = Command::new(&godot)
         .args(["--headless", "--max-fps", "60", "--path"])
