@@ -57,12 +57,62 @@ struct Args {
     /// Screenshot size, WxH (default: track 0's size).
     #[arg(long, value_parser = parse_size)]
     size: Option<(u32, u32)>,
-    /// Prefer HDR variants (BC6H, ASTC HDR); they are tonemapped to the sRGB window.
+    /// Prefer HDR variants (BC6H, ASTC HDR): shown in HDR on an HDR display, tonemapped otherwise.
     #[arg(long)]
     hdr: bool,
-    /// The linear value HDR tracks are tonemapped to white.
+    /// Surface for HDR tracks: auto (HDR10 PQ, then scRGB, when offered), pq, scrgb or off.
+    #[arg(long, value_enum, default_value_t = HdrOutputArg::Auto)]
+    hdr_output: HdrOutputArg,
+    /// Nits reference white is shown at on an HDR output (default: the track's reference white).
+    #[arg(long, value_parser = parse_nits)]
+    hdr_white: Option<f32>,
+    /// The linear value HDR tracks are tonemapped to white on an sRGB surface.
     #[arg(long, default_value_t = praxi::format::color::DEFAULT_TONEMAP_WHITE)]
     tonemap_white: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
+enum HdrOutputArg {
+    Auto,
+    Pq,
+    Scrgb,
+    Off,
+}
+
+fn parse_nits(s: &str) -> Result<f32, String> {
+    match s.parse::<f32>() {
+        Ok(n) if n.is_finite() && n > 0.0 && n <= 10000.0 => Ok(n),
+        _ => Err(format!("{s:?} is not a luminance in nits (1 to 10000)")),
+    }
+}
+
+/// The HDR surface format and color space for `--hdr-output` (`docs/features/hdr.md#hdr-output`),
+/// or `None` for the sRGB surface. `auto` needs an HDR track and a display that does not
+/// report itself SDR.
+fn hdr_surface(
+    mode: HdrOutputArg,
+    track_hdr: bool,
+    caps: &wgpu::SurfaceCapabilities,
+    info: &wgpu::DisplayHdrInfo,
+) -> Result<Option<(wgpu::TextureFormat, wgpu::SurfaceColorSpace)>, String> {
+    use wgpu::{SurfaceColorSpace as Space, TextureFormat as F};
+    let wanted = match mode {
+        HdrOutputArg::Off => return Ok(None),
+        HdrOutputArg::Auto if !track_hdr || praxi_wgpu::is_sdr_display(info) => return Ok(None),
+        HdrOutputArg::Auto => return Ok(praxi_wgpu::hdr_surface(caps)),
+        HdrOutputArg::Pq => (F::Rgb10a2Unorm, Space::Bt2100Pq),
+        HdrOutputArg::Scrgb => (F::Rgba16Float, Space::ExtendedSrgbLinear),
+    };
+    let offered = wanted.1.to_color_spaces().is_some_and(|s| caps.color_spaces(wanted.0).contains(s));
+    if !offered {
+        return Err(format!("the window surface does not offer {:?} on {:?} (is the OS in HDR mode?)", wanted.1, wanted.0));
+    }
+    Ok(Some(wanted))
+}
+
+/// The name of an HDR surface in the window title.
+fn hdr_surface_name(space: wgpu::SurfaceColorSpace) -> &'static str {
+    if space == wgpu::SurfaceColorSpace::Bt2100Pq { "PQ" } else { "scRGB" }
 }
 
 /// The player capabilities: SDR or HDR variants first (`docs/features/hdr.md#tools`).
@@ -119,6 +169,22 @@ fn open_player(args: &Args, caps: &Capabilities) -> AnyResult<FilePlayer> {
 fn describe_adapter(adapter: &wgpu::Adapter) {
     let info = adapter.get_info();
     println!("adapter: {} ({:?})", info.name, info.backend);
+}
+
+fn describe_surface(config: &wgpu::SurfaceConfiguration, display: &wgpu::DisplayHdrInfo) {
+    let mut line = format!("surface: {:?} {:?}", config.format, config.color_space);
+    if let Some(l) = display.luminance {
+        if let Some(peak) = l.max_nits {
+            line += &format!(", display peak {peak:.0} nits");
+        }
+        if let Some(white) = l.sdr_white_nits {
+            line += &format!(", SDR white {white:.0} nits");
+        }
+    }
+    if let Some(headroom) = display.tone_map_headroom() {
+        line += &format!(", headroom {headroom:.1}x");
+    }
+    println!("{line}");
 }
 
 fn describe_tracks(player: &FilePlayer) {
@@ -411,6 +477,8 @@ struct Viewer {
     last: Instant,
     title_at: Instant,
     stats: Stats,
+    /// The HDR color space of the surface, if any.
+    hdr_output: Option<wgpu::SurfaceColorSpace>,
 }
 
 impl Viewer {
@@ -449,13 +517,23 @@ impl Viewer {
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("the window surface is not supported by the adapter")?;
         let surface_caps = surface.get_capabilities(&adapter);
-        if let Some(&srgb) = surface_caps.formats.iter().find(|f| f.is_srgb()) {
+        let display = surface.display_hdr_info(&adapter);
+        let track_hdr = player.tracks()[0].params.hdr();
+        let hdr_output = hdr_surface(args.hdr_output, track_hdr, &surface_caps, &display)?;
+        if let Some((format, space)) = hdr_output {
+            config.format = format;
+            config.color_space = space;
+        } else if let Some(&srgb) = surface_caps.formats.iter().find(|f| f.is_srgb()) {
             config.format = srgb;
         }
         config.present_mode = wgpu::PresentMode::Fifo;
         surface.configure(&device, &config);
+        describe_surface(&config, &display);
         let mut renderer = VideoRenderer::new(&device, config.format, &player);
         renderer.set_tonemap_white(&queue, args.tonemap_white);
+        if let Some((_, space)) = hdr_output {
+            renderer.set_output(&queue, praxi_wgpu::Output::for_surface(space, &display, args.hdr_white));
+        }
         let checker = Checker::new(&device, config.format);
 
         let video = player.tracks()[0].params;
@@ -495,6 +573,7 @@ impl Viewer {
             last: now,
             title_at: now,
             stats: Stats::default(),
+            hdr_output: hdr_output.map(|(_, space)| space),
         })
     }
 
@@ -626,7 +705,12 @@ impl Viewer {
             p.position().as_secs_f64(),
             p.duration().as_secs_f64(),
             video.format,
-            if video.hdr() && !video.format.name().ends_with("HDR") { " HDR" } else { "" }
+            match (self.hdr_output, video.hdr() && !video.format.name().ends_with("HDR")) {
+                (Some(space), true) => format!(" HDR {}", hdr_surface_name(space)),
+                (Some(space), false) => format!(" {}", hdr_surface_name(space)),
+                (None, true) => " HDR".to_string(),
+                (None, false) => String::new(),
+            }
         )
     }
 }
@@ -671,5 +755,34 @@ mod tests {
         assert_eq!(parse_size("640x480"), Ok((640, 480)));
         assert!(parse_size("640").is_err());
         assert!(parse_size("0x480").is_err());
+        assert_eq!(parse_nits("300"), Ok(300.0));
+        assert!(parse_nits("0").is_err() && parse_nits("20000").is_err() && parse_nits("x").is_err());
+    }
+
+    #[test]
+    fn chooses_hdr_surfaces() {
+        use wgpu::{SurfaceColorSpace as Space, SurfaceColorSpaces as Spaces, TextureFormat as F};
+        let caps = |list: &[(F, Spaces)]| wgpu::SurfaceCapabilities {
+            format_capabilities: list
+                .iter()
+                .map(|&(format, color_spaces)| wgpu::SurfaceFormatCapabilities { format, color_spaces })
+                .collect(),
+            ..Default::default()
+        };
+        let hdr = caps(&[(F::Bgra8UnormSrgb, Spaces::SRGB), (F::Rgba16Float, Spaces::EXTENDED_SRGB_LINEAR)]);
+        let sdr = caps(&[(F::Bgra8UnormSrgb, Spaces::SRGB)]);
+        let unknown = wgpu::DisplayHdrInfo::default();
+        let scrgb = Some((F::Rgba16Float, Space::ExtendedSrgbLinear));
+        assert_eq!(hdr_surface(HdrOutputArg::Auto, true, &hdr, &unknown), Ok(scrgb));
+        assert_eq!(hdr_surface(HdrOutputArg::Auto, false, &hdr, &unknown), Ok(None), "SDR track");
+        assert_eq!(hdr_surface(HdrOutputArg::Off, true, &hdr, &unknown), Ok(None));
+        assert_eq!(hdr_surface(HdrOutputArg::Auto, true, &sdr, &unknown), Ok(None));
+        let sdr_display = wgpu::DisplayHdrInfo {
+            coarse: Some(wgpu::DisplayCoarseRange { high_dynamic_range: Some(false), gamut: None }),
+            ..Default::default()
+        };
+        assert_eq!(hdr_surface(HdrOutputArg::Auto, true, &hdr, &sdr_display), Ok(None), "SDR display");
+        assert_eq!(hdr_surface(HdrOutputArg::Scrgb, false, &hdr, &sdr_display), Ok(scrgb), "forced");
+        assert!(hdr_surface(HdrOutputArg::Pq, true, &hdr, &unknown).is_err());
     }
 }

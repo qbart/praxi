@@ -29,7 +29,34 @@ struct Params {
     bt2020: f32,
     // HDR tracks drawn into an SDR target: the tonemap white; 0 draws linear values.
     tonemap_white: f32,
+    // 0: by target format (tonemap or linear), 1: scRGB, 2: BT.2100 PQ.
+    output: f32,
+    // scRGB and PQ: the encoded linear value of 1.0 (docs/features/hdr.md#hdr-output).
+    scale: f32,
+    pad: vec2<f32>,
 };
+
+// Columns of the BT.2020 to BT.709 matrix (docs/spec/PRAXI.md#hdr-color).
+const BT2020_TO_BT709 = mat3x3<f32>(
+    vec3<f32>(1.6605, -0.1246, -0.0182),
+    vec3<f32>(-0.5876, 1.1329, -0.1006),
+    vec3<f32>(-0.0728, -0.0083, 1.1187),
+);
+// Columns of the BT.709 to BT.2020 matrix.
+const BT709_TO_BT2020 = mat3x3<f32>(
+    vec3<f32>(0.6274, 0.0691, 0.0164),
+    vec3<f32>(0.3293, 0.9195, 0.0880),
+    vec3<f32>(0.0433, 0.0114, 0.8956),
+);
+
+// SMPTE ST 2084 inverse EOTF of luminance relative to 10000 nits.
+fn pq(l: vec3<f32>) -> vec3<f32> {
+    let y = select(pow(l, vec3<f32>(2610.0 / 16384.0)), vec3<f32>(0.0), l <= vec3<f32>(0.0));
+    let c1 = 3424.0 / 4096.0;
+    let c2 = 2413.0 / 4096.0 * 32.0;
+    let c3 = 2392.0 / 4096.0 * 32.0;
+    return pow((c1 + c2 * y) / (1.0 + c3 * y), vec3<f32>(2523.0 / 4096.0 * 128.0));
+}
 
 @group(0) @binding(0) var tex: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
@@ -58,15 +85,21 @@ fn fs_video(in: VsOut) -> @location(0) vec4<f32> {
     if params.decode_srgb > 0.5 {
         rgb = select(pow((rgb + 0.055) / 1.055, vec3<f32>(2.4)), rgb / 12.92, rgb <= vec3<f32>(0.04045));
     }
-    if params.bt2020 > 0.5 {
-        // Columns of the BT.2020 to BT.709 matrix (docs/spec/PRAXI.md#hdr-color).
-        rgb = mat3x3<f32>(
-            vec3<f32>(1.6605, -0.1246, -0.0182),
-            vec3<f32>(-0.5876, 1.1329, -0.1006),
-            vec3<f32>(-0.0728, -0.0083, 1.1187),
-        ) * rgb;
-        rgb = max(rgb, vec3<f32>(0.0));
+    if params.output > 1.5 {
+        // HDR10: BT.2020, PQ-encoded.
+        if params.bt2020 < 0.5 {
+            rgb = BT709_TO_BT2020 * rgb;
+        }
+        return vec4<f32>(pq(min(max(rgb, vec3<f32>(0.0)) * params.scale, vec3<f32>(1.0))), c.a * params.opacity);
     }
+    if params.bt2020 > 0.5 {
+        rgb = BT2020_TO_BT709 * rgb;
+    }
+    if params.output > 0.5 {
+        // scRGB keeps values outside 0..1: wide-gamut colors and highlights.
+        return vec4<f32>(rgb * params.scale, c.a * params.opacity);
+    }
+    rgb = max(rgb, vec3<f32>(0.0));
     let white = params.tonemap_white;
     if white > 0.0 {
         // Extended Reinhard on luminance (docs/features/hdr.md#tonemap-to-sdr).
@@ -79,10 +112,75 @@ fn fs_video(in: VsOut) -> @location(0) vec4<f32> {
 "#;
 
 /// Bytes of the `Params` uniform (`opacity` at 16, `decode_srgb` at 20, `bt2020` at 24,
-/// `tonemap_white` at 28).
-const PARAMS_SIZE: usize = 32;
+/// `tonemap_white` at 28, `output` at 32, `scale` at 36).
+const PARAMS_SIZE: usize = 48;
 /// Byte offset of `tonemap_white` in `Params`.
 const TONEMAP_WHITE_OFFSET: u64 = 28;
+/// Byte offset of `output` in `Params`, followed by `scale`.
+const OUTPUT_OFFSET: u64 = 32;
+
+/// How a [`VideoRenderer`] encodes tracks for its target (`docs/features/hdr.md#hdr-output`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Output {
+    /// From the target format: HDR tracks tonemapped into SDR targets, linear BT.709 values
+    /// (negatives clamped) into float targets.
+    #[default]
+    Auto,
+    /// For `SurfaceColorSpace::Bt2100Pq` (HDR10): BT.2020, PQ-encoded. Reference white (1.0)
+    /// is shown at `white_nits`, or at each track's reference white (203 for SDR tracks).
+    Pq { white_nits: Option<f32> },
+    /// For `SurfaceColorSpace::ExtendedSrgbLinear` (scRGB): linear BT.709, values outside
+    /// `0..=1` kept. Reference white is drawn as `white_nits / unit_nits`, `white_nits` as
+    /// for `Pq`; `unit_nits` is the nits of scRGB 1.0.
+    ScRgb { white_nits: Option<f32>, unit_nits: f32 },
+}
+
+impl Output {
+    /// The output for a surface configured with `color_space` on a display described by
+    /// `info`; `white_nits` as for [`Output::Pq`]. scRGB 1.0 is 80 nits where the display
+    /// reports absolute luminance (Windows), otherwise the system's SDR white, taken as 203.
+    pub fn for_surface(color_space: wgpu::SurfaceColorSpace, info: &wgpu::DisplayHdrInfo, white_nits: Option<f32>) -> Output {
+        match color_space {
+            wgpu::SurfaceColorSpace::Bt2100Pq => Output::Pq { white_nits },
+            wgpu::SurfaceColorSpace::ExtendedSrgbLinear => Output::ScRgb {
+                white_nits,
+                unit_nits: if info.luminance.is_some() { 80.0 } else { DEFAULT_WHITE_NITS },
+            },
+            _ => Output::Auto,
+        }
+    }
+
+    /// The `output` and `scale` uniforms of a track whose reference white is `track_white`
+    /// nits.
+    fn uniforms(self, track_white: f32) -> [f32; 2] {
+        match self {
+            Output::Auto => [0.0, 0.0],
+            Output::ScRgb { white_nits, unit_nits } => [1.0, white_nits.unwrap_or(track_white) / unit_nits],
+            Output::Pq { white_nits } => [2.0, white_nits.unwrap_or(track_white) / 10000.0],
+        }
+    }
+}
+
+/// Reference white of SDR tracks on an HDR output, in nits (ITU-R BT.2408).
+const DEFAULT_WHITE_NITS: f32 = praxi::format::color::DEFAULT_REFERENCE_WHITE as f32;
+
+/// The HDR surface to configure, the first the surface offers: `Rgb10a2Unorm` with
+/// `Bt2100Pq` (HDR10), then `Rgba16Float` with `ExtendedSrgbLinear` (scRGB). `None` when it
+/// offers neither (`docs/features/hdr.md#hdr-output`).
+pub fn hdr_surface(caps: &wgpu::SurfaceCapabilities) -> Option<(wgpu::TextureFormat, wgpu::SurfaceColorSpace)> {
+    [
+        (wgpu::TextureFormat::Rgb10a2Unorm, wgpu::SurfaceColorSpace::Bt2100Pq),
+        (wgpu::TextureFormat::Rgba16Float, wgpu::SurfaceColorSpace::ExtendedSrgbLinear),
+    ]
+    .into_iter()
+    .find(|&(format, space)| space.to_color_spaces().is_some_and(|s| caps.color_spaces(format).contains(s)))
+}
+
+/// Whether the display reports itself as SDR, so automatic choices skip HDR output
+/// (`docs/features/hdr.md#hdr-output`). Unknown is not SDR.
+pub fn is_sdr_display(info: &wgpu::DisplayHdrInfo) -> bool {
+    info.coarse.and_then(|c| c.high_dynamic_range) == Some(false)
+}
 
 /// Texture formats the adapter can sample, most preferred first: SDR formats, then HDR ones,
 /// so an SDR variant wins and HDR-only files still play (tonemapped when drawn).
@@ -196,6 +294,11 @@ pub fn wgpu_format(format: TextureFormat, srgb: bool) -> wgpu::TextureFormat {
     }
 }
 
+/// Nits of a track's 1.0: its reference white when HDR, 203 otherwise.
+fn track_white(p: &praxi::VideoParams) -> f32 {
+    if p.hdr() { p.color.reference_white as f32 } else { DEFAULT_WHITE_NITS }
+}
+
 /// Whether a render target holds floats, so HDR tracks keep values above 1.0.
 fn is_float(target: wgpu::TextureFormat) -> bool {
     use wgpu::TextureFormat as W;
@@ -238,6 +341,8 @@ struct TrackTexture {
     bind_group: wgpu::BindGroup,
     format: TextureFormat,
     hdr: bool,
+    /// Nits of 1.0: the reference white of HDR tracks, 203 for SDR ones.
+    white: f32,
     blocks: (u32, u32),
     /// `VideoFrame::index` of the uploaded frame.
     uploaded: Option<u64>,
@@ -268,6 +373,7 @@ pub struct VideoRenderer {
     /// Whether the target holds floats, so HDR tracks are drawn linear, not tonemapped.
     float_target: bool,
     tonemap_white: f32,
+    output: Output,
     /// The motion decoder's pipelines, when a track needs them.
     motion: Option<motion::Pipelines>,
 }
@@ -372,6 +478,7 @@ impl VideoRenderer {
             opacity: 1.0,
             float_target: is_float(target),
             tonemap_white: praxi::format::color::DEFAULT_TONEMAP_WHITE,
+            output: Output::Auto,
             motion: None,
         };
         if player.tracks().iter().any(|t| t.params.format == TextureFormat::Motion) {
@@ -410,7 +517,9 @@ impl VideoRenderer {
             },
             view_formats: &[],
         });
-        let values: [f32; 8] = [
+        let white = track_white(p);
+        let [output, scale] = self.output.uniforms(white);
+        let values: [f32; 10] = [
             width as f32 / padded_w as f32,
             height as f32 / padded_h as f32,
             (width as f32 - 0.5) / padded_w as f32,
@@ -419,6 +528,8 @@ impl VideoRenderer {
             (format == TextureFormat::Motion && srgb) as u32 as f32,
             (p.hdr() && p.color.primaries == praxi::Primaries::Bt2020) as u32 as f32,
             self.track_tonemap_white(p),
+            output,
+            scale,
         ];
         let mut bytes = [0u8; PARAMS_SIZE];
         for (dst, v) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
@@ -442,7 +553,7 @@ impl VideoRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: params.as_entire_binding() },
             ],
         });
-        TrackTexture { texture, params, bind_group, format, hdr: p.hdr(), blocks, uploaded: None, motion: None }
+        TrackTexture { texture, params, bind_group, format, hdr: p.hdr(), white, blocks, uploaded: None, motion: None }
     }
 
     /// The `tonemap_white` uniform of a track: the white for HDR tracks drawn into an SDR
@@ -463,6 +574,16 @@ impl VideoRenderer {
         }
         for t in self.tracks.iter().filter(|t| t.hdr) {
             queue.write_buffer(&t.params, TONEMAP_WHITE_OFFSET, &white.to_le_bytes());
+        }
+    }
+
+    /// Sets how tracks are encoded for the target (`docs/features/hdr.md#hdr-output`): the
+    /// target must be the surface format of the color space the output is for.
+    pub fn set_output(&mut self, queue: &wgpu::Queue, output: Output) {
+        self.output = output;
+        for t in &self.tracks {
+            let bytes: Vec<u8> = output.uniforms(t.white).iter().flat_map(|v| v.to_le_bytes()).collect();
+            queue.write_buffer(&t.params, OUTPUT_OFFSET, &bytes);
         }
     }
 
@@ -727,6 +848,7 @@ mod tests {
         player: &mut Player<std::io::Cursor<Vec<u8>>>,
         target: wgpu::TextureFormat,
         tonemap_white: f32,
+        output: Output,
     ) -> Vec<u8> {
         let (w, h) = (player.tracks()[0].params.width, player.tracks()[0].params.height);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -742,6 +864,7 @@ mod tests {
         let view = texture.create_view(&Default::default());
         let mut renderer = VideoRenderer::new(device, target, player);
         renderer.set_tonemap_white(queue, tonemap_white);
+        renderer.set_output(queue, output);
         player.seek(std::time::Duration::from_millis(200)).unwrap();
         renderer.prepare(device, queue, player, 1.0);
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -808,7 +931,7 @@ mod tests {
                 .collect();
 
             // Linear values in a float target, within half-float rounding (and the matrix).
-            let gpu = draw_frame(&device, &queue, &mut player, wgpu::TextureFormat::Rgba16Float, 4.0);
+            let gpu = draw_frame(&device, &queue, &mut player, wgpu::TextureFormat::Rgba16Float, 4.0, Output::Auto);
             let gpu: Vec<f32> = gpu.as_chunks::<2>().0.iter().map(|b| imgio::half::to_f32(u16::from_le_bytes(*b))).collect();
             for (g, c) in gpu.as_chunks::<4>().0.iter().zip(&cpu_709) {
                 for k in 0..3 {
@@ -816,7 +939,7 @@ mod tests {
                 }
             }
             // The tonemap in an sRGB target.
-            let gpu = draw_frame(&device, &queue, &mut player, wgpu::TextureFormat::Rgba8UnormSrgb, 2.0);
+            let gpu = draw_frame(&device, &queue, &mut player, wgpu::TextureFormat::Rgba8UnormSrgb, 2.0, Output::Auto);
             let worst = gpu
                 .as_chunks::<4>()
                 .0
@@ -829,12 +952,71 @@ mod tests {
                 .max()
                 .unwrap();
             assert!(worst <= 1, "{format} {primaries}: tonemapped channel differs by {worst}");
+
+            // HDR10 output: BT.2020 PQ codes, reference white at 203 nits, within 1 code.
+            use praxi::format::color::{convert_primaries, nits_to_pq};
+            let gpu = draw_frame(&device, &queue, &mut player, wgpu::TextureFormat::Rgb10a2Unorm, 2.0, Output::Pq { white_nits: None });
+            let worst = gpu
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(cpu.as_chunks::<4>().0)
+                .flat_map(|(g, c)| {
+                    let texel = u32::from_le_bytes(*g);
+                    let rgb = convert_primaries([c[0], c[1], c[2]], primaries, praxi::Primaries::Bt2020);
+                    (0..3).map(move |k| {
+                        let want = (nits_to_pq(rgb[k].max(0.0) * 203.0) * 1023.0).round() as i32;
+                        ((texel >> (10 * k)) & 1023) as i32 - want
+                    })
+                })
+                .map(i32::abs)
+                .max()
+                .unwrap();
+            assert!(worst <= 1, "{format} {primaries}: PQ code differs by {worst}");
+            // scRGB output: linear BT.709 with negatives kept, reference white at 160 / 80.
+            let output = Output::ScRgb { white_nits: Some(160.0), unit_nits: 80.0 };
+            let gpu = draw_frame(&device, &queue, &mut player, wgpu::TextureFormat::Rgba16Float, 2.0, output);
+            let gpu: Vec<f32> = gpu.as_chunks::<2>().0.iter().map(|b| imgio::half::to_f32(u16::from_le_bytes(*b))).collect();
+            for (g, c) in gpu.as_chunks::<4>().0.iter().zip(cpu.as_chunks::<4>().0) {
+                let want = convert_primaries([c[0], c[1], c[2]], primaries, praxi::Primaries::Bt709).map(|v| v * 2.0);
+                for k in 0..3 {
+                    assert!((g[k] - want[k]).abs() <= 0.004 + want[k].abs() * 0.002, "{format} {primaries} scRGB: GPU {g:?}, CPU {want:?}");
+                }
+            }
             drawn.push(format);
         }
         eprintln!("drawn: {drawn:?}");
         if drawn.is_empty() {
             skip("the adapter samples no HDR format");
         }
+    }
+
+    #[test]
+    fn hdr_surfaces_and_outputs() {
+        use wgpu::{SurfaceColorSpace as Space, SurfaceColorSpaces as Spaces, TextureFormat as F};
+        let caps = |list: &[(F, Spaces)]| wgpu::SurfaceCapabilities {
+            format_capabilities: list
+                .iter()
+                .map(|&(format, color_spaces)| wgpu::SurfaceFormatCapabilities { format, color_spaces })
+                .collect(),
+            ..Default::default()
+        };
+        let sdr = caps(&[(F::Bgra8UnormSrgb, Spaces::SRGB), (F::Rgba16Float, Spaces::SRGB)]);
+        assert_eq!(hdr_surface(&sdr), None);
+        let scrgb = caps(&[(F::Bgra8UnormSrgb, Spaces::SRGB), (F::Rgba16Float, Spaces::EXTENDED_SRGB_LINEAR)]);
+        assert_eq!(hdr_surface(&scrgb), Some((F::Rgba16Float, Space::ExtendedSrgbLinear)));
+        let both = caps(&[(F::Rgba16Float, Spaces::EXTENDED_SRGB_LINEAR), (F::Rgb10a2Unorm, Spaces::SRGB | Spaces::BT2100_PQ)]);
+        assert_eq!(hdr_surface(&both), Some((F::Rgb10a2Unorm, Space::Bt2100Pq)));
+
+        let unknown = wgpu::DisplayHdrInfo::default();
+        assert!(!is_sdr_display(&unknown));
+        let windows = wgpu::DisplayHdrInfo { luminance: Some(Default::default()), ..Default::default() };
+        assert_eq!(Output::for_surface(Space::ExtendedSrgbLinear, &windows, None), Output::ScRgb { white_nits: None, unit_nits: 80.0 });
+        assert_eq!(Output::for_surface(Space::ExtendedSrgbLinear, &unknown, None), Output::ScRgb { white_nits: None, unit_nits: 203.0 });
+        assert_eq!(Output::for_surface(Space::Bt2100Pq, &unknown, Some(300.0)), Output::Pq { white_nits: Some(300.0) });
+        assert_eq!(Output::for_surface(Space::Srgb, &unknown, None), Output::Auto);
+        assert_eq!(Output::Pq { white_nits: None }.uniforms(203.0), [2.0, 0.0203]);
+        assert_eq!(Output::ScRgb { white_nits: Some(160.0), unit_nits: 80.0 }.uniforms(203.0), [1.0, 2.0]);
     }
 
     fn read_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer) -> Vec<u8> {
