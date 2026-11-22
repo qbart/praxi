@@ -23,4 +23,4 @@ into game types (`cue.parse::<GameCue>()`), `cue-sheet` reads JSON cue sheets.
 Make files with the `praxi` command line tool (`cargo install praxi-cli`). Engines on
 `wgpu` can use `praxi-wgpu`, Bevy games `praxi-bevy`.
 
-Reads and writes file format 0.10.
+Reads and writes file format 0.11.

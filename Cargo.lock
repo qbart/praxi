@@ -4786,7 +4786,7 @@ dependencies = [
 
 [[package]]
 name = "praxi"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "praxi-format",
  "serde",
@@ -4794,7 +4794,7 @@ dependencies = [
 
 [[package]]
 name = "praxi-audio"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cpal 0.18.2",
  "praxi",
@@ -4802,7 +4802,7 @@ dependencies = [
 
 [[package]]
 name = "praxi-bevy"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bevy",
  "bevy_egui",
@@ -4817,7 +4817,7 @@ dependencies = [
 
 [[package]]
 name = "praxi-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "imgio",
@@ -4831,7 +4831,7 @@ dependencies = [
 
 [[package]]
 name = "praxi-editor"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "eframe",
@@ -4843,7 +4843,7 @@ dependencies = [
 
 [[package]]
 name = "praxi-encoder"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "imgio",
@@ -4854,7 +4854,7 @@ dependencies = [
 
 [[package]]
 name = "praxi-format"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lz4_flex",
  "opus1",
@@ -4864,7 +4864,7 @@ dependencies = [
 
 [[package]]
 name = "praxi-godot"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "godot",
  "praxi",
@@ -4873,7 +4873,7 @@ dependencies = [
 
 [[package]]
 name = "praxi-viewer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "png",
@@ -4887,7 +4887,7 @@ dependencies = [
 
 [[package]]
 name = "praxi-wgpu"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "imgio",

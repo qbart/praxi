@@ -135,6 +135,8 @@ machine is recorded in the baseline's `machine`).
     variants tonemapped from them, HDR drawing in `praxi-wgpu`, the viewer, Bevy and Godot
     ([hdr.md](hdr.md)); every texture encoder and decoder from `imgio`
     ([video-codec.md](video-codec.md#encoding-paths)).
+17. **0.3.0** Third release: HDR video in file format 0.11 and the move to `imgio`
+    ([releasing.md](releasing.md#versions-released)).
 
 ## Next
 

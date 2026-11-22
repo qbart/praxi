@@ -117,7 +117,7 @@ praxi cues import intro.praxi intro.cues.json subs.en.json -o intro.praxi
 
 ```toml
 [dependencies]
-praxi-bevy = "0.2"
+praxi-bevy = "0.3"
 ```
 
 ```rust

@@ -121,6 +121,12 @@ remote. It builds `praxi`, `praxi-viewer` and `praxi-editor` in release mode
 - 0.2.0: opt-in mipmaps for Bevy video images (`PraxiVideoOptions`), the Bevy 3D video box
   example, the machine in `praxi bench` results, and the first release with the Godot
   addon (`praxi-godot-v0.2.0.zip`). File format 0.10, unchanged.
+- 0.3.0: HDR video (BC6H, ASTC 4x4 and 6x6 HDR; PQ, HLG and OpenEXR sources; HDR drawing
+  in `praxi-wgpu`, the viewer, Bevy and Godot), and every texture codec from `imgio`
+  instead of `ktx-rs` (BC7 encoded directly, `--rdo` for ASTC). File format 0.11: 0.3.0
+  reads only 0.11 files and earlier releases cannot read them, so files from 0.2.0 must be
+  encoded again. Breaking API changes: new fields in `VideoParams`, `VideoFrame` and
+  `PraxiVideoOptions`, new `TextureFormat` variants, `VariantKind::Bc7` and `Astc`.
 
 ## Release steps
 
