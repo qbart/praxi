@@ -306,6 +306,32 @@ tonemapper (Bevy's default tonemapper needs the `tonemapping_luts` feature and d
 magenta without it), and the box material takes the video as `emissive_texture` (black
 `base_color`), so bright parts of the video glow.
 
+#### HDR demo
+
+`video_box --hdr` compares SDR and HDR side by side instead of mipmaps: the left box opens
+the file with `hdr: false` (its SDR variant, BC7, tonemapped at encode, so nothing is above
+1.0), the right box with `hdr: true` (its HDR variant, BC6H or ASTC HDR). Both have mipmaps
+and the same emissive material and strength, so whatever glows on the right and not on the
+left is light above reference white. A file without an SDR variant shows its HDR variant
+in both images (the left one tonemapped into `Rgba8UnormSrgb`), which the labels show.
+
+Each box's label adds, under its name (`SDR` or `HDR`), the variant's format, the image
+format (`Rgba8UnormSrgb` or `Rgba16Float`) and, for HDR variants, primaries, reference
+white, maxCLL and maxFALL in nits and the peak as a multiple of reference white
+(`maxCLL / reference white`: how far above 1.0 the brightest pixel of the file goes).
+
+An egui panel at the bottom right (`bevy_egui`, already used by the cue editor) controls
+the scene, with no extra render passes beyond the camera's bloom:
+
+| Control | Range, default | Effect |
+|---|---|---|
+| Strength | 0 to 4, 1 | Emissive multiplier of both boxes (exposure): 1.0 shows reference white as white |
+| Bloom | checkbox, on | Adds or removes the camera's `Bloom` |
+| Bloom intensity | 0 to 0.6, 0.15 (`Bloom::NATURAL`) | `Bloom::intensity` |
+| Tonemapper | `AcesFitted` | `AcesFitted`, `Reinhard`, `ReinhardLuminance`, `SomewhatBoringDisplayTransform`, `None` (clips at 1.0); the ones that need lookup tables are not offered |
+
+The panel also shows the frame rate and the camera (`Hdr`, `Rgba16Float` view target).
+
 ### Godot
 
 `VideoStreamPraxi` gets `hdr: bool` (default `false`); `formats` accepts `bc6h` and
