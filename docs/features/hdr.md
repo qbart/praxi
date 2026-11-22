@@ -242,6 +242,56 @@ work for every source.
 | `capabilities_hdr(adapter, only)` | Like `capabilities`, with `supported_formats_hdr`. |
 | `required_features(adapter)` | Also `TEXTURE_COMPRESSION_ASTC_HDR` when the adapter has it. |
 | `VideoRenderer` | Into a float target (`Rgba16Float`, `Rgba32Float`, `Rg11b10Ufloat`): HDR tracks drawn as linear BT.709 values, BT.2020 streams converted in the shader with negative results clamped to 0. Into any other target: HDR tracks [tonemapped](#tonemap-to-sdr) with `set_tonemap_white(queue, w)` (default 4.0). SDR tracks draw as before (linear values up to 1.0 in float targets). |
+| `VideoRenderer::set_output(queue, output)` | How tracks are encoded for an HDR surface, see [HDR output](#hdr-output). |
+| `hdr_surface(caps)` | The HDR surface format and color space to configure, see [HDR output](#hdr-output). |
+
+### HDR output
+
+An HDR display shows HDR tracks with their highlights instead of a tonemap. `wgpu` 30
+presents to HDR surfaces through `SurfaceConfiguration::color_space`; it does not encode
+or gamut-map, so the renderer writes what the color space expects.
+
+`praxi_wgpu::hdr_surface(&SurfaceCapabilities) -> Option<(TextureFormat,
+SurfaceColorSpace)>` picks the first the surface offers (from
+`format_capabilities`, which also lists HDR-only formats):
+
+1. `Rgb10a2Unorm` with `Bt2100Pq` (HDR10): the source's own encoding; absolute nits, so
+   the master's brightness is kept. Vulkan where the driver exposes it (Windows, Linux
+   with an HDR compositor), DX12, Metal.
+2. `Rgba16Float` with `ExtendedSrgbLinear` (scRGB): Windows, macOS (EDR), Vulkan.
+
+`None` when neither is offered: the display or compositor has no HDR, or the driver only
+lists HDR color spaces while the OS is in HDR mode. Callers then keep the sRGB surface and
+the tonemap. The capabilities say what can be configured, not that the OS is in HDR mode
+now, so callers choosing automatically also check `Surface::display_hdr_info`:
+`praxi_wgpu::is_sdr_display(&DisplayHdrInfo)` is true when the display reports itself as
+SDR (`coarse.high_dynamic_range == Some(false)`), and HDR output is then skipped.
+Unknown (`None`) counts as HDR-capable.
+
+`praxi_wgpu::Output`, set with `VideoRenderer::set_output(queue, output)`:
+
+| Output | Writes | 1.0 (reference white) becomes |
+|---|---|---|
+| `Auto` (default) | Today's behavior from the target format: tonemapped into SDR targets, linear BT.709 (negatives clamped) into float targets | 1.0 |
+| `Pq { white_nits }` | BT.2020 (BT.709 tracks converted), PQ-encoded, `0..=1` | `white_nits`, or the track's `reference_white` (203 for SDR tracks) when `None` |
+| `ScRgb { white_nits, unit_nits }` | Linear BT.709 (BT.2020 tracks converted); values above 1.0 and below 0.0 kept, so wide-gamut colors survive | `white_nits / unit_nits`, with `white_nits` as for `Pq` |
+
+`unit_nits` is the nits of scRGB 1.0: 80 on Windows (scRGB is absolute there), and on
+other platforms, where 1.0 is the system's SDR white, 203, so reference white is drawn at
+SDR white. `Output::for_surface(color_space, &DisplayHdrInfo, white_nits)` builds the
+output for the chosen color space: `unit_nits` 80 when the display reports absolute
+luminance (`DisplayHdrInfo::luminance` is `Some`, Windows), 203 otherwise.
+
+SDR tracks drawn to an HDR output are converted the same way (sRGB-decoded values, 1.0 at
+the white), so mixed files and SDR overlays keep their look. Alpha blending happens on the
+encoded values, which for PQ is not linear; HDR variants are opaque, so it only matters
+for SDR tracks with alpha. Values above the display's peak are left to the display and
+compositor (Windows clips, macOS and most TVs roll off); a tone curve to
+`DisplayHdrInfo::tone_map_headroom` is later work.
+
+The `Params` uniform grows to 48 bytes: `output` at 32 (0 `Auto`, 1 scRGB, 2 PQ) and
+`scale` at 36 (linear value of 1.0 before encoding: `white / unit_nits` for scRGB,
+`white / 10000` for PQ).
 
 ### Bevy
 
@@ -283,9 +333,13 @@ format, so `astc6x6-hdr` is not accepted.
   `--format` accepts `bc6h`, `astc4x4-hdr` and `astc6x6-hdr`. The library adds
   `praxi_encoder::decode_frame_hdr(&VideoParams, &[u8]) -> Vec<f32>` (RGBA, alpha 1),
   through `imgio::decode` (`Rgba16Float` output).
-- `praxi-viewer --hdr` prefers HDR variants (`capabilities_hdr`). The surface stays sRGB,
-  so HDR tracks are tonemapped, `--tonemap-white W` (default 4.0); the window title shows
-  `HDR` after the format. Screenshots are tonemapped PNGs.
+- `praxi-viewer --hdr` prefers HDR variants (`capabilities_hdr`). When the playing track
+  is HDR and the window's surface offers an [HDR output](#hdr-output), the viewer
+  configures it (`--hdr-output`, default `auto`, which also skips a display that reports
+  itself SDR) and the window title shows `HDR PQ` or `HDR scRGB`. Otherwise the surface stays sRGB and HDR tracks are tonemapped,
+  `--tonemap-white W` (default 4.0); the title shows `HDR` after the format. The viewer
+  prints the chosen surface and, when the display reports them, its peak and SDR white
+  nits. Screenshots are tonemapped PNGs.
 
 ## Tests
 
@@ -357,5 +411,7 @@ The BC6H frames tonemapped by `praxi frame` match `ffmpeg`'s own PQ to BT.709 co
   variants as opaque or a separate alpha track.
 - **`praxi bench`** with PQ-PSNR for HDR variants (and the result format in
   [BENCH.md](../spec/BENCH.md)).
-- **HDR output in the viewer**: an HDR swapchain where `wgpu` offers one.
+- **Display tone curve**: roll highlights off to `DisplayHdrInfo::tone_map_headroom`
+  instead of leaving values above the peak to the display; follow OS HDR being switched
+  on or off while the viewer runs.
 - **`praxi-ffi`** exposes the color description from the start (roadmap).

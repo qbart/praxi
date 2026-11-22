@@ -72,11 +72,12 @@ headless Godot. Still open:
 
 - [ ] **Real hardware and an HDR display**: the viewer, `video_box --hdr` and the Godot
   example on a desktop GPU; ASTC HDR on a GPU that samples it (llvmpipe has no ASTC).
-- [ ] **Real HDR footage**: encode measurements on HDR10 and HLG clips, next to the stills
-  in [hdr.md](docs/features/hdr.md#measurements).
+- [x] **Real HDR footage**: `make samples-hdr` (HDR10, CC BY) and its measurements in
+  [hdr.md](docs/features/hdr.md#measurements). HLG footage is still unmeasured.
 - [ ] **`praxi bench`** with PQ-PSNR for HDR variants.
-- [ ] Later: HDR motion codec (10-bit PQ planes), HDR with alpha, an HDR swapchain in the
-  viewer.
+- [ ] **HDR output** in the viewer (HDR10 PQ or scRGB surface, [hdr.md](docs/features/hdr.md#hdr-output)):
+  check on Windows, macOS and a Linux HDR compositor.
+- [ ] Later: HDR motion codec (10-bit PQ planes), HDR with alpha, a display tone curve.
 
 ## Not scheduled
 

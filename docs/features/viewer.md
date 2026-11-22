@@ -43,8 +43,10 @@ praxi-viewer intro.praxi --screenshot frame.png --at 2.5
 | `--cues <SHEET>` (repeatable) | | Play the cues of these cue sheets in place of the file's, reloading them when they change ([cue-preview.md](cue-preview.md)). |
 | `--screenshot <PNG>` | | Render the frame at `--at` without a window, write it and exit. |
 | `--size <WxH>` | video size | Screenshot size. |
-| `--hdr` | off | Prefer HDR variants (BC6H, ASTC HDR; `praxi_wgpu::capabilities_hdr`). The surface stays sRGB, so they are tonemapped ([hdr.md](hdr.md#tonemap-to-sdr)); the window title shows `HDR`. |
-| `--tonemap-white <W>` | `4.0` | The linear value HDR tracks are tonemapped to white. |
+| `--hdr` | off | Prefer HDR variants (BC6H, ASTC HDR; `praxi_wgpu::capabilities_hdr`). On an HDR display they are shown in HDR (`--hdr-output`), otherwise tonemapped to the sRGB surface ([hdr.md](hdr.md#tonemap-to-sdr)); the window title shows `HDR`. |
+| `--hdr-output <MODE>` | `auto` | Surface for HDR tracks ([hdr.md](hdr.md#hdr-output)): `auto` (HDR10 PQ, then scRGB, when the surface offers one, the display does not report itself SDR, and the track is HDR), `pq`, `scrgb` (fail when not offered), or `off` (sRGB and the tonemap). |
+| `--hdr-white <NITS>` | track's reference white | Nits that reference white (1.0) is shown at on an HDR output; raise it in a bright room. |
+| `--tonemap-white <W>` | `4.0` | The linear value HDR tracks are tonemapped to white on an sRGB surface. |
 
 The adapter and backend are chosen by wgpu and can be overridden with its environment
 variables, for example `WGPU_BACKEND=gl` or `WGPU_ADAPTER_NAME=llvmpipe`.
