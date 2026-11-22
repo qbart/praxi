@@ -93,13 +93,14 @@ fn main() -> AppExit {
     app.insert_resource(File(args.file, args.hdr)).run()
 }
 
+/// The asset stores `setup` adds the videos, boxes and materials to.
+type SceneAssets<'w> = (ResMut<'w, Assets<Image>>, ResMut<'w, Assets<Mesh>>, ResMut<'w, Assets<StandardMaterial>>);
+
 fn setup(
     mut commands: Commands,
     file: Res<File>,
     adapter: Res<RenderAdapter>,
-    mut images: ResMut<Assets<Image>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    (mut images, mut meshes, mut materials): SceneAssets,
     mut exit: MessageWriter<AppExit>,
     mut demo: Option<ResMut<HdrDemo>>,
 ) {
