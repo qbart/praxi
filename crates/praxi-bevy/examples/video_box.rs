@@ -2,8 +2,9 @@
 //! (`docs/features/bevy.md#video-box-example`).
 //!
 //! Up/Down move the camera away and back, Space plays and pauses the video, R starts and
-//! stops the spinning, Escape quits. `--hdr` shows HDR video glowing through bloom
-//! (`docs/features/hdr.md#bevy`).
+//! stops the spinning, Escape quits. `--hdr` puts the SDR variant (left) next to the HDR
+//! one (right), glowing through bloom, with a panel for strength, bloom and the tonemapper
+//! (`docs/features/hdr.md#hdr-demo`).
 
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
@@ -11,6 +12,7 @@ use bevy::render::renderer::RenderAdapter;
 use bevy::camera::Hdr;
 use bevy::post_process::bloom::Bloom;
 use bevy::render::view::Tonemapping;
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use clap::Parser;
 use praxi_bevy::{PraxiPlugin, PraxiSystems, PraxiVideo, PraxiVideoOptions};
 use std::path::PathBuf;
@@ -19,7 +21,7 @@ use std::path::PathBuf;
 struct Args {
     /// The praxi file to play.
     file: PathBuf,
-    /// Prefer HDR variants: the video is emissive on an HDR camera with bloom.
+    /// The SDR and HDR variants side by side, emissive on an HDR camera with bloom.
     #[arg(long)]
     hdr: bool,
 }
@@ -36,27 +38,59 @@ struct Spin(f32);
 #[derive(Resource)]
 struct Spinning(bool);
 
-/// The label of the box on `.0`, with its name.
+/// The label of the box on `.0`, with its name and whether its image is HDR.
 #[derive(Component)]
-struct Label(Entity, &'static str);
+struct Label(Entity, &'static str, bool);
+
+/// Settings of the HDR demo's panel (`docs/features/hdr.md#hdr-demo`).
+#[derive(Resource)]
+struct HdrDemo {
+    /// Emissive multiplier of the boxes.
+    strength: f32,
+    bloom: bool,
+    bloom_intensity: f32,
+    tonemapping: Tonemapping,
+    /// The boxes' materials.
+    materials: Vec<Handle<StandardMaterial>>,
+}
+
+/// Tonemappers that need no lookup tables (`tonemapping_luts`), with their names.
+const TONEMAPPERS: [(Tonemapping, &str); 5] = [
+    (Tonemapping::AcesFitted, "AcesFitted"),
+    (Tonemapping::Reinhard, "Reinhard"),
+    (Tonemapping::ReinhardLuminance, "ReinhardLuminance"),
+    (Tonemapping::SomewhatBoringDisplayTransform, "SomewhatBoringDisplayTransform"),
+    (Tonemapping::None, "None (clips at 1.0)"),
+];
 
 /// Tilts the boxes towards the camera, so their top shows.
 const TILT: f32 = 0.35;
 
 fn main() -> AppExit {
     let args = Args::parse();
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window { title: format!("praxi video box: {}", args.file.display()), resolution: (1280, 720).into(), ..default() }),
-            ..default()
-        }))
-        .add_plugins(PraxiPlugin)
-        .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.07)))
-        .insert_resource(File(args.file, args.hdr))
-        .insert_resource(Spinning(true))
-        .add_systems(Startup, setup)
-        .add_systems(Update, (input.before(PraxiSystems::Advance), spin, label.after(PraxiSystems::Advance)))
-        .run()
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window { title: format!("praxi video box: {}", args.file.display()), resolution: (1280, 720).into(), ..default() }),
+        ..default()
+    }))
+    .add_plugins(PraxiPlugin)
+    .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.07)))
+    .insert_resource(Spinning(true))
+    .add_systems(Startup, setup)
+    .add_systems(Update, (input.before(PraxiSystems::Advance), spin, label.after(PraxiSystems::Advance)));
+    if args.hdr {
+        app.add_plugins(EguiPlugin::default())
+            .insert_resource(HdrDemo {
+                strength: 1.0,
+                bloom: true,
+                bloom_intensity: Bloom::NATURAL.intensity,
+                tonemapping: Tonemapping::AcesFitted,
+                materials: Vec::new(),
+            })
+            .add_systems(EguiPrimaryContextPass, panel)
+            .add_systems(Update, apply_demo.run_if(resource_changed::<HdrDemo>));
+    }
+    app.insert_resource(File(args.file, args.hdr)).run()
 }
 
 fn setup(
@@ -67,6 +101,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut exit: MessageWriter<AppExit>,
+    mut demo: Option<ResMut<HdrDemo>>,
 ) {
     let hdr = file.1;
     let camera = (Camera3d::default(), Transform::from_xyz(0.0, 0.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y));
@@ -78,8 +113,13 @@ fn setup(
         // The video's colors as they are: unlit, and no tonemapping on the camera.
         commands.spawn((camera, Tonemapping::None));
     }
-    for (x, mipmaps, label) in [(-1.3, false, "no mipmaps"), (1.3, true, "mipmaps")] {
-        let options = PraxiVideoOptions { mipmaps, hdr };
+    // Mipmaps compared, or with --hdr the SDR and HDR variants (both with mipmaps).
+    let boxes = match hdr {
+        false => [(-1.3, false, false, "no mipmaps"), (1.3, true, false, "mipmaps")],
+        true => [(-1.3, true, false, "SDR"), (1.3, true, true, "HDR")],
+    };
+    for (i, (x, mipmaps, hdr_image, label)) in boxes.into_iter().enumerate() {
+        let options = PraxiVideoOptions { mipmaps, hdr: hdr_image };
         let mut video = match PraxiVideo::open_with(&file.0, &adapter, &mut images, options) {
             Ok(video) => video,
             Err(e) => {
@@ -103,6 +143,9 @@ fn setup(
             },
             false => StandardMaterial { base_color_texture: Some(video.image.clone()), unlit: true, ..default() },
         });
+        if let Some(demo) = demo.as_mut() {
+            demo.materials.push(material.clone());
+        }
         let entity = commands.spawn((
             video,
             Mesh3d(meshes.add(video_box(Vec3::new(aspect, 1.0, 1.0)))),
@@ -112,8 +155,8 @@ fn setup(
         )).id();
         commands.spawn((
             Text::new(label),
-            Label(entity, label),
-            Node { position_type: PositionType::Absolute, top: px(16), left: if mipmaps { percent(62) } else { percent(18) }, ..default() },
+            Label(entity, label, hdr_image),
+            Node { position_type: PositionType::Absolute, top: px(16), left: if i == 1 { percent(62) } else { percent(18) }, ..default() },
         ));
     }
     commands.spawn((
@@ -194,13 +237,93 @@ fn spin(time: Res<Time>, spinning: Res<Spinning>, mut boxes: Query<(&mut Spin, &
     }
 }
 
-/// Shows each box's format, clock and the index of the frame decoded last.
-fn label(mut videos: Query<&mut PraxiVideo>, mut labels: Query<(&Label, &mut Text)>) {
+/// Shows each box's format, clock and the index of the frame decoded last; in the HDR demo
+/// also the image format and the HDR stream's color description.
+fn label(mut videos: Query<&mut PraxiVideo>, mut labels: Query<(&Label, &mut Text)>, demo: Option<Res<HdrDemo>>) {
     for (label, mut text) in &mut labels {
         let Ok(mut video) = videos.get_mut(label.0) else { continue };
         let player = video.player();
-        let format = player.tracks()[0].params.format;
+        let params = player.tracks()[0].params;
         let frame = player.video_frame(0).map_or(0, |f| f.index);
-        text.0 = format!("{}\n{format:?}  {:.2} s  frame {frame}", label.1, player.position().as_secs_f32());
+        let clock = format!("{:.2} s  frame {frame}", player.position().as_secs_f32());
+        text.0 = match demo {
+            None => format!("{}\n{:?}  {clock}", label.1, params.format),
+            Some(_) => {
+                let image = if label.2 { "Rgba16Float" } else { "Rgba8UnormSrgb" };
+                let mut s = format!("{}\n{:?} -> {image}\n", label.1, params.format);
+                if params.hdr() {
+                    let c = params.color;
+                    let peak = c.max_cll as f32 / c.reference_white as f32;
+                    s += &format!(
+                        "{}  white {} nits\nmaxCLL {}  maxFALL {} nits\npeak {peak:.1}x reference white\n",
+                        c.primaries, c.reference_white, c.max_cll, c.max_fall
+                    );
+                } else {
+                    s += "SDR: values up to 1.0\n";
+                }
+                s + &clock
+            }
+        };
+    }
+}
+
+/// The HDR demo's panel: strength, bloom and tonemapper, frame rate and camera.
+fn panel(mut contexts: EguiContexts, mut demo: ResMut<HdrDemo>, time: Res<Time>, mut fps: Local<f32>) -> Result {
+    let dt = time.delta_secs();
+    if dt > 0.0 {
+        *fps = if *fps == 0.0 { 1.0 / dt } else { *fps * 0.95 + 0.05 / dt };
+    }
+    let ctx = contexts.ctx_mut()?;
+    egui::Window::new("HDR")
+        .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -16.0])
+        .resizable(false)
+        .collapsible(true)
+        .show(ctx, |ui| {
+            // Only mark the resource changed when a control moves, so the scene is updated then.
+            let mut d = (demo.strength, demo.bloom, demo.bloom_intensity, demo.tonemapping);
+            ui.add(egui::Slider::new(&mut d.0, 0.0..=4.0).text("strength"));
+            ui.checkbox(&mut d.1, "bloom");
+            ui.add_enabled(d.1, egui::Slider::new(&mut d.2, 0.0..=0.6).text("bloom intensity"));
+            let name = TONEMAPPERS.iter().find(|t| t.0 == d.3).map_or("?", |t| t.1);
+            egui::ComboBox::from_label("tonemapper").selected_text(name).show_ui(ui, |ui| {
+                for (t, name) in TONEMAPPERS {
+                    ui.selectable_value(&mut d.3, t, name);
+                }
+            });
+            if d != (demo.strength, demo.bloom, demo.bloom_intensity, demo.tonemapping) {
+                (demo.strength, demo.bloom, demo.bloom_intensity, demo.tonemapping) = d;
+            }
+            ui.separator();
+            ui.label(format!("{:.0} fps", *fps));
+            ui.label("camera: Hdr, Rgba16Float view target");
+            ui.label("left: SDR variant, right: HDR variant;\nwhat glows only on the right is above 1.0");
+        });
+    Ok(())
+}
+
+/// Applies the panel's settings to the materials and the camera.
+fn apply_demo(
+    mut commands: Commands,
+    demo: Res<HdrDemo>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut camera: Query<(Entity, &mut Tonemapping, Option<&mut Bloom>), With<Camera3d>>,
+) {
+    for handle in &demo.materials {
+        if let Some(mut material) = materials.get_mut(handle) {
+            material.emissive = LinearRgba::WHITE * demo.strength;
+        }
+    }
+    for (entity, mut tonemapping, bloom) in &mut camera {
+        *tonemapping = demo.tonemapping;
+        match (demo.bloom, bloom) {
+            (true, Some(mut bloom)) => bloom.intensity = demo.bloom_intensity,
+            (true, None) => {
+                commands.entity(entity).insert(Bloom { intensity: demo.bloom_intensity, ..Bloom::NATURAL });
+            }
+            (false, Some(_)) => {
+                commands.entity(entity).remove::<Bloom>();
+            }
+            (false, None) => {}
+        }
     }
 }
