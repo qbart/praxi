@@ -72,7 +72,8 @@ fn setup(
     let camera = (Camera3d::default(), Transform::from_xyz(0.0, 0.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y));
     if hdr {
         // Values above 1.0 bloom and go through the camera's tonemapper like the scene.
-        commands.spawn((camera, Hdr, Bloom::NATURAL));
+        // AcesFitted needs no lookup tables (Bevy's default needs `tonemapping_luts`).
+        commands.spawn((camera, Hdr, Bloom::NATURAL, Tonemapping::AcesFitted));
     } else {
         // The video's colors as they are: unlit, and no tonemapping on the camera.
         commands.spawn((camera, Tonemapping::None));
