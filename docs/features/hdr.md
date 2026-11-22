@@ -196,6 +196,11 @@ YUV matrix of the primaries (`bt2020nc` for BT.2020, `bt709` for BT.709). Withou
 matrix, `ffmpeg` converts untagged YUV to RGB with BT.601, which shifts the hues of a
 BT.2020 source. Range is left to `ffmpeg` (narrow, the default for untagged YUV).
 
+Keep `--primaries bt2020` for a BT.2020 source. With the default `bt709` the wide-gamut
+colors fall outside BT.709: negative components are clipped to 0 and saturated ones grow
+past the source peak (the HDR sample reaches maxCLL 14263 nits that way, against 10001
+with `bt2020`).
+
 For `pq`, `hlg` and `linear` sources, `ffmpeg` decodes to float RGB without changing the
 transfer (`-pix_fmt gbrapf32le`, `gbrpf32le` without alpha), and the CLI converts:
 
@@ -331,6 +336,17 @@ of the SDR formats.
 
 Every HDR variant encodes a 1080p frame in under 0.25 s, so a 10 s clip at 60 fps takes
 under a minute per variant at `fast`.
+
+Real footage, the [sample](#sample-footage) (130 frames of 2048x858 HDR10), `make
+examples-hdr` on the same machine, BC6H and BC7 in one run of 17 s:
+
+| Variant | Bytes | Encode MB/s | Skipped | maxCLL / maxFALL |
+|---|---|---|---|---|
+| BC6H, BT.2020 | 183,030,484 | 33.8 | 0.5% | 10001 / 140 nits |
+| BC7 (tonemapped) | 151,950,671 | 28.1 | 5.4% | |
+
+The BC6H frames tonemapped by `praxi frame` match `ffmpeg`'s own PQ to BT.709 conversion
+(`zscale` and `tonemap=reinhard`) of the source in hue and brightness.
 
 ## Later
 

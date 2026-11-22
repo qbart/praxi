@@ -50,7 +50,7 @@ HDR_EXAMPLE := target/cosmos.praxi
 examples-hdr: samples-hdr
 	mkdir -p target
 	cargo run --release -p praxi-cli -- encode $(HDR_INPUT) -o $(HDR_EXAMPLE) --input-transfer pq --input-primaries bt2020 \
-		--variant bc6h --variant bc7
+		--primaries bt2020 --variant bc6h --variant bc7
 	cargo run --release -p praxi-cli -- info $(HDR_EXAMPLE)
 
 bench: samples
