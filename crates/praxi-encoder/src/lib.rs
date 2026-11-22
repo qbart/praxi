@@ -8,13 +8,6 @@ mod opus;
 pub use decode::decode_frame;
 pub use motion::MotionStats;
 
-use ktx::astcenc::{
-    self, AstcencContext, AstcencImage, AstcencImageData, AstcencOutput, AstcencProfile,
-    AstcencSwizzle,
-};
-use ktx::basisu::dxt::Dxt1Block;
-use ktx::basisu::etc::Color32;
-use ktx::basisu::{uastc_bc1, uastc_bc7, uastc_enc};
 use praxi_format::{
     AudioParams, COLOR_FLAG_ALPHA, adpcm, COLOR_FLAG_SRGB, Compression, Cue, StreamInfo, TextureFormat, TimeBase,
     VideoParams, Writer,
@@ -73,12 +66,13 @@ pub enum Quality {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VariantKind {
-    /// UASTC transcoded to BC7, with optional UASTC RDO (`rdo_lambda > 0`).
-    Bc7 { rdo_lambda: f32 },
+    /// BC7 (`docs/features/video-codec.md#encoding-paths`).
+    Bc7,
     /// Opaque BC1 (`docs/features/texture-variants.md#formats`).
     Bc1,
-    /// ASTC with square blocks of 4, 6 or 8 pixels.
-    Astc { block: u8 },
+    /// ASTC with square blocks of 4, 6 or 8 pixels, with optional astcenc LZ RDO
+    /// (`rdo_lambda > 0`).
+    Astc { block: u8, rdo_lambda: f32 },
     /// The motion codec (`docs/features/motion-codec.md`).
     Motion { qp: u8, chroma: Chroma, slices: u32 },
 }
@@ -91,7 +85,7 @@ pub struct VariantConfig {
 
 impl VariantConfig {
     pub fn bc7() -> VariantConfig {
-        VariantConfig { kind: VariantKind::Bc7 { rdo_lambda: 0.0 }, quality: Quality::Fast }
+        VariantConfig { kind: VariantKind::Bc7, quality: Quality::Fast }
     }
 
     /// Opaque BC1: half the size of BC7, lower quality; alpha is dropped.
@@ -100,7 +94,7 @@ impl VariantConfig {
     }
 
     pub fn astc(block: u8) -> VariantConfig {
-        VariantConfig { kind: VariantKind::Astc { block }, quality: Quality::Fast }
+        VariantConfig { kind: VariantKind::Astc { block, rdo_lambda: 0.0 }, quality: Quality::Fast }
     }
 
     /// The motion codec with `qp` 16 (about BC7's PSNR), 4:2:0 chroma and 16 slices.
@@ -137,9 +131,10 @@ impl VariantConfig {
         self
     }
 
-    /// Sets the UASTC RDO strength of a BC7 variant; ignored by ASTC.
+    /// Sets the astcenc LZ RDO strength of an ASTC variant (typically 10 to 40, 0 off);
+    /// ignored by others.
     pub fn rdo(mut self, lambda: f32) -> VariantConfig {
-        if let VariantKind::Bc7 { rdo_lambda } = &mut self.kind {
+        if let VariantKind::Astc { rdo_lambda, .. } = &mut self.kind {
             *rdo_lambda = lambda;
         }
         self
@@ -147,11 +142,11 @@ impl VariantConfig {
 
     pub fn format(&self) -> Option<TextureFormat> {
         match self.kind {
-            VariantKind::Bc7 { .. } => Some(TextureFormat::Bc7),
+            VariantKind::Bc7 => Some(TextureFormat::Bc7),
             VariantKind::Bc1 => Some(TextureFormat::Bc1),
-            VariantKind::Astc { block: 4 } => Some(TextureFormat::Astc4x4),
-            VariantKind::Astc { block: 6 } => Some(TextureFormat::Astc6x6),
-            VariantKind::Astc { block: 8 } => Some(TextureFormat::Astc8x8),
+            VariantKind::Astc { block: 4, .. } => Some(TextureFormat::Astc4x4),
+            VariantKind::Astc { block: 6, .. } => Some(TextureFormat::Astc6x6),
+            VariantKind::Astc { block: 8, .. } => Some(TextureFormat::Astc8x8),
             VariantKind::Astc { .. } => None,
             VariantKind::Motion { .. } => Some(TextureFormat::Motion),
         }
@@ -292,7 +287,8 @@ pub struct EncoderConfig {
     pub cue_streams: Vec<CueStreamConfig>,
     /// Whether the alpha channel is meaningful (sets the stream's alpha flag).
     pub alpha: bool,
-    /// Worker threads; 0 uses `std::thread::available_parallelism`.
+    /// Worker threads of the motion encoder; 0 uses `std::thread::available_parallelism`.
+    /// Block formats are encoded by `imgio` on all cores.
     pub threads: usize,
     pub audio: Vec<AudioTrackConfig>,
     /// How far ahead of their time audio chunks are stored.
@@ -441,9 +437,8 @@ struct AudioTrack {
 }
 
 enum BlockEncoder {
-    Bc7 { level: u32, rdo_lambda: f32 },
-    Bc1 { flags: u32 },
-    Astc { ctx: Box<AstcencContext> },
+    /// A block format encoded by `imgio`.
+    Texture { format: imgio::Format, options: imgio::EncodeOptions },
     Motion(Box<MotionEncoder>),
 }
 
@@ -463,7 +458,6 @@ struct Variant {
 pub struct Encoder<W: Write + Seek> {
     writer: Writer<W>,
     config: EncoderConfig,
-    threads: usize,
     variants: Vec<Variant>,
     audio: Vec<AudioTrack>,
     time_base: TimeBase,
@@ -513,33 +507,16 @@ impl<W: Write + Seek> Encoder<W> {
             }
             streams.push(StreamInfo::video(0, time_base, params));
             let encoder = match v.kind {
-                VariantKind::Bc7 { rdo_lambda } => {
-                    let level = match v.quality {
-                        Quality::Fast => uastc_enc::C_PACK_UASTC_LEVEL_FASTEST,
-                        Quality::Medium => uastc_enc::C_PACK_UASTC_LEVEL_DEFAULT,
-                        Quality::Thorough => uastc_enc::C_PACK_UASTC_LEVEL_SLOWER,
+                VariantKind::Bc7 | VariantKind::Bc1 | VariantKind::Astc { .. } => {
+                    let (texture, quality) = texture_encoding(v.kind, v.quality);
+                    let rdo_lambda = match v.kind {
+                        VariantKind::Astc { rdo_lambda, .. } if rdo_lambda.is_finite() && rdo_lambda >= 0.0 => rdo_lambda,
+                        VariantKind::Astc { rdo_lambda, .. } => {
+                            return Err(Error::Config(format!("invalid RDO lambda {rdo_lambda}")));
+                        }
+                        _ => 0.0,
                     };
-                    BlockEncoder::Bc7 { level, rdo_lambda }
-                }
-                VariantKind::Bc1 => BlockEncoder::Bc1 {
-                    flags: match v.quality {
-                        Quality::Fast => 0,
-                        Quality::Medium => uastc_bc1::ENCODE_BC1_HIGH_QUALITY,
-                        Quality::Thorough => uastc_bc1::ENCODE_BC1_HIGHER_QUALITY,
-                    },
-                },
-                VariantKind::Astc { block } => {
-                    let preset = match v.quality {
-                        Quality::Fast => astcenc::ASTCENC_PRE_FAST,
-                        Quality::Medium => astcenc::ASTCENC_PRE_MEDIUM,
-                        Quality::Thorough => astcenc::ASTCENC_PRE_THOROUGH,
-                    };
-                    let b = block as u32;
-                    let cfg = astcenc::astcenc_config_init(AstcencProfile::LdrSrgb, b, b, 1, preset, 0)
-                        .map_err(|e| Error::Encode(format!("astcenc config: {e:?}")))?;
-                    let ctx = astcenc::astcenc_context_alloc(&cfg, threads as u32)
-                        .map_err(|e| Error::Encode(format!("astcenc context: {e:?}")))?;
-                    BlockEncoder::Astc { ctx }
+                    BlockEncoder::Texture { format: texture, options: imgio::EncodeOptions { quality, rdo_lambda } }
                 }
                 VariantKind::Motion { qp, slices, .. } => {
                     if qp > praxi_format::motion::MAX_QP || slices == 0 {
@@ -647,7 +624,7 @@ impl<W: Write + Seek> Encoder<W> {
         cues.sort_by_key(|(at, _, _)| *at);
         let mut writer = Writer::new(out, streams)?;
         writer.set_plane_min_saving(config.plane_min_saving);
-        Ok(Encoder { writer, config, threads, variants, audio, time_base, cues, next_cue: 0, frame: 0 })
+        Ok(Encoder { writer, config, variants, audio, time_base, cues, next_cue: 0, frame: 0 })
     }
 
     /// Encodes one frame: `width * height * 4` bytes of sRGB RGBA8, rows top to bottom.
@@ -676,12 +653,8 @@ impl<W: Write + Seek> Encoder<W> {
             }
             let (bw, bh) = v.params.format.block_size();
             gather_blocks(rgba, w, h, bw as usize, bh as usize, &mut v.src_blocks);
-            match &mut v.encoder {
-                BlockEncoder::Bc7 { level, rdo_lambda } => {
-                    encode_bc7(&v.src_blocks, *level, *rdo_lambda, self.threads, &mut v.encoded)
-                }
-                BlockEncoder::Bc1 { flags } => encode_bc1(&v.src_blocks, *flags, self.threads, &mut v.encoded),
-                BlockEncoder::Astc { ctx } => encode_astc(ctx, rgba, w, h, &v.params, self.threads, &mut v.encoded)?,
+            match &v.encoder {
+                BlockEncoder::Texture { format, options } => encode_texture(rgba, &v.params, *format, options, &mut v.encoded)?,
                 BlockEncoder::Motion(_) => unreachable!("handled above"),
             }
             build_payload(v, keyframe, self.config.skip_threshold);
@@ -827,90 +800,41 @@ fn gather_blocks(rgba: &[u8], w: usize, h: usize, bw: usize, bh: usize, out: &mu
     }
 }
 
-fn encode_bc7(src_blocks: &[u8], level: u32, rdo_lambda: f32, threads: usize, out: &mut Vec<u8>) {
-    let n = src_blocks.len() / 64;
-    let flags = level | uastc_enc::C_PACK_UASTC_FAVOR_BC7_ERROR;
-    let mut uastc = vec![[0u8; 16]; n];
-    let per_thread = n.div_ceil(threads).max(1);
-    std::thread::scope(|s| {
-        for (ci, part) in uastc.chunks_mut(per_thread).enumerate() {
-            s.spawn(move || {
-                for (i, block) in part.iter_mut().enumerate() {
-                    let at = (ci * per_thread + i) * 64;
-                    let px: &[u8; 64] = src_blocks[at..at + 64].try_into().expect("64-byte block");
-                    uastc_enc::encode_uastc(px, block, flags);
-                }
-            });
+/// The `imgio` format and quality of a block variant (`docs/features/video-codec.md#encoding-paths`).
+fn texture_encoding(kind: VariantKind, quality: Quality) -> (imgio::Format, imgio::Quality) {
+    use imgio::Quality as Q;
+    let q = |fast, medium, thorough| match quality {
+        Quality::Fast => fast,
+        Quality::Medium => medium,
+        Quality::Thorough => thorough,
+    };
+    match kind {
+        // BC7: imgio's bc7f (fastest, partially analytical) and bc7e (slow).
+        VariantKind::Bc7 => (imgio::Format::Bc7Srgb, q(Q::Fastest, Q::Default, Q::High)),
+        // BC1: basisu encode_bc1 with 1, 2 or 3 least-squares passes.
+        VariantKind::Bc1 => (imgio::Format::Bc1Srgb, q(Q::Fast, Q::Default, Q::High)),
+        // ASTC: astcenc presets fast, medium and thorough.
+        VariantKind::Astc { block, .. } => {
+            let b = imgio::AstcBlock::from_dim(block as u32, block as u32).expect("square ASTC block size");
+            (imgio::Format::Astc(b, imgio::AstcKind::Srgb), q(Q::Fast, Q::Default, Q::High))
         }
-    });
-    if rdo_lambda > 0.0 {
-        let pixels: Vec<[u8; 4]> = src_blocks.as_chunks::<4>().0.to_vec();
-        let params = uastc_enc::UastcRdoParams { lambda: rdo_lambda, ..Default::default() };
-        uastc_enc::uastc_rdo(n as u32, &mut uastc, &pixels, &params, flags, threads as u32);
-    }
-    out.resize(n * 16, 0);
-    for (dst, src) in out.as_chunks_mut::<16>().0.iter_mut().zip(&uastc) {
-        uastc_bc7::transcode_uastc_to_bc7(src, dst);
+        VariantKind::Motion { .. } => unreachable!("motion is not a block format"),
     }
 }
 
-/// Opaque BC1 in the four-color mode; alpha is ignored.
-fn encode_bc1(src_blocks: &[u8], flags: u32, threads: usize, out: &mut Vec<u8>) {
-    let n = src_blocks.len() / 64;
-    out.resize(n * 8, 0);
-    let per_thread = n.div_ceil(threads).max(1);
-    std::thread::scope(|s| {
-        for (ci, part) in out.chunks_mut(per_thread * 8).enumerate() {
-            s.spawn(move || {
-                for (i, dst) in part.as_chunks_mut::<8>().0.iter_mut().enumerate() {
-                    let at = (ci * per_thread + i) * 64;
-                    let px: [Color32; 16] = std::array::from_fn(|p| {
-                        let c = &src_blocks[at + p * 4..at + p * 4 + 4];
-                        Color32::new(c[0] as u32, c[1] as u32, c[2] as u32, 255)
-                    });
-                    let mut block = Dxt1Block::default();
-                    uastc_bc1::encode_bc1(&mut block, &px, flags);
-                    *dst = block.bytes;
-                }
-            });
-        }
-    });
-}
-
-fn encode_astc(
-    ctx: &mut AstcencContext,
+/// Encodes a `width * height` RGBA8 frame into `out` (`params.frame_size()` bytes). Partial
+/// blocks repeat the last column and row.
+fn encode_texture(
     rgba: &[u8],
-    w: usize,
-    h: usize,
     params: &VideoParams,
-    threads: usize,
+    format: imgio::Format,
+    options: &imgio::EncodeOptions,
     out: &mut Vec<u8>,
 ) -> Result<()> {
-    let image = AstcencImage {
-        dim_x: w as u32,
-        dim_y: h as u32,
-        dim_z: 1,
-        data: AstcencImageData::U8(vec![rgba.to_vec()]),
-    };
+    let fail = |e: imgio::Error| Error::Encode(format!("{format:?}: {e}"));
+    let src = imgio::Surface::new(imgio::Format::Rgba8Srgb, params.width, params.height, rgba).map_err(fail)?;
     out.resize(params.frame_size(), 0);
-    let result = {
-        let work: AstcencOutput = std::sync::Mutex::new(&mut out[..]);
-        let ctx: &AstcencContext = ctx;
-        std::thread::scope(|s| {
-            let handles: Vec<_> = (0..threads)
-                .map(|t| {
-                    let (image, work) = (&image, &work);
-                    s.spawn(move || astcenc::astcenc_compress_image(ctx, image, &AstcencSwizzle::RGBA, work, t as u32))
-                })
-                .collect();
-            handles.into_iter().map(|h| h.join().unwrap_or(Err(astcenc::AstcencError::BadContext))).collect::<Vec<_>>()
-        })
-    };
-    if let Some(Err(e)) = result.into_iter().find(|r| r.is_err()) {
-        return Err(Error::Encode(format!("astcenc: {e:?}")));
-    }
-    astcenc::astcenc_compress_reset(ctx).map_err(|e| Error::Encode(format!("astcenc reset: {e:?}")))?;
-    Ok(())
+    imgio::encode(&src, format, options, out).map_err(fail)
 }
 
 /// Builds the chunk payload (`docs/spec/PRAXI.md#video-payload`) and updates the references.
@@ -946,3 +870,4 @@ fn build_payload(v: &mut Variant, keyframe: bool, threshold: u8) {
         v.stats.skipped_blocks += 1;
     }
 }
+

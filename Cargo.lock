@@ -3361,6 +3361,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "imgio"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc425b2fbc24d7ec113e28329b6037ae74504a1a4666a66e038f4524295a1ba3"
+dependencies = [
+ "bytemuck",
+ "png",
+ "ruzstd",
+ "vas",
+ "zstd-pure-rs",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3522,25 +3535,6 @@ name = "khronos_api"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
-
-[[package]]
-name = "ktx-rs"
-version = "4.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b795b80ee108a09b1258de666c35d2fc15c0a9a9d990b210b97a1e6a548ebc2"
-dependencies = [
- "bytemuck",
- "ktx-rs-macros",
- "miniz_oxide 0.9.1",
- "ruzstd",
- "zstd-pure-rs",
-]
-
-[[package]]
-name = "ktx-rs-macros"
-version = "4.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41a0107729f8fc147359095e4b9c44dccabb276f9b8e354fee2bd386eb3e7fc7"
 
 [[package]]
 name = "kurbo"
@@ -4727,7 +4721,7 @@ name = "praxi-cli"
 version = "0.2.0"
 dependencies = [
  "clap",
- "ktx-rs",
+ "imgio",
  "praxi",
  "praxi-encoder",
  "praxi-format",
@@ -4752,7 +4746,7 @@ dependencies = [
 name = "praxi-encoder"
 version = "0.2.0"
 dependencies = [
- "ktx-rs",
+ "imgio",
  "opus1",
  "praxi",
  "praxi-format",
@@ -5860,6 +5854,12 @@ dependencies = [
  "quote",
  "unsynn",
 ]
+
+[[package]]
+name = "vas"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d648e35d4841492360299a284a61c0914bd9baa9742a1ea5daaa7e87d8a64236"
 
 [[package]]
 name = "vello_common"

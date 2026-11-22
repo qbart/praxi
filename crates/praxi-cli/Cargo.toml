@@ -18,7 +18,7 @@ path = "src/main.rs"
 [dependencies]
 praxi.workspace = true
 praxi-format = { workspace = true, features = ["cue-sheet"] }
-ktx-rs.workspace = true
+imgio = { workspace = true, features = ["png"] }
 praxi-encoder.workspace = true
 clap.workspace = true
 serde.workspace = true

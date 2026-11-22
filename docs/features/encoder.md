@@ -16,8 +16,8 @@ praxi info intro.praxi
 | Option | Default | Meaning |
 |---|---|---|
 | `--variant <V>` (repeatable) | `bc7` | `bc7`, `bc1` (opaque, [texture-variants.md](texture-variants.md#formats)), `astc4x4`, `astc6x6`, `astc8x8`, `motion` ([motion-codec.md](motion-codec.md#encoder) for `--qp`, `--chroma`, `--slices`) |
-| `--quality <Q>` | `fast` | `fast`, `medium`, `thorough`: UASTC level / BC1 least-squares passes (1, 2, 3) / astcenc preset |
-| `--rdo <LAMBDA>` | `0` (off) | UASTC RDO strength for `bc7`; higher is smaller and lower quality |
+| `--quality <Q>` | `fast` | `fast`, `medium`, `thorough`: encoder effort per format ([video-codec.md](video-codec.md#encoding-paths)) |
+| `--rdo <LAMBDA>` | `0` (off) | astcenc LZ RDO strength for `astc*` variants (typically 10 to 40); higher is smaller and lower quality. An error without an ASTC variant. |
 | `--keyint <N>` | `60` | Frames between keyframes |
 | `--skip-threshold <T>` | `3` | Temporal skip threshold, see [video-codec.md](video-codec.md) |
 | `--plane-min-saving <PCT>` | `8` | Use byte planes for a chunk, and Huffman for a plane, only when they save at least this many percent over the faster form, see [video-codec.md](video-codec.md#decode-cost-and-writer-policy). `0`: always the smallest form; `100`: never byte planes. |
@@ -79,7 +79,9 @@ let (_file, stats) = encoder.finish()?;
 ```
 
 `EncoderConfig::plane_min_saving(percent)` (default 8) sets the byte-plane policy, like
-`--plane-min-saving`. Frames are encoded on all CPU cores (`std::thread::available_parallelism`). Audio tracks
+`--plane-min-saving`. Frames are encoded on all CPU cores: block formats by `imgio`, the
+motion codec on `EncoderConfig::threads` workers (default `std::thread::available_parallelism`).
+`VariantConfig::rdo(lambda)` sets the RDO strength of an ASTC variant. Audio tracks
 are added with `EncoderConfig::audio` ([audio.md](audio.md#encoder)).
 
 ## Output

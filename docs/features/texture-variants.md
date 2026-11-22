@@ -39,7 +39,7 @@ A CPU fallback (decoding blocks to RGBA) may be added later behind an opt-in fea
 | ASTC 6x6 | 6x6 | 16 | yes | yes |
 | ASTC 8x8 | 8x8 | 16 | yes | yes |
 | ASTC 4x4 HDR | 4x4 | 16 | no | yes |
-| ASTC 6x6 HDR | 6x6 | 16 | no | no (reserved) |
+| ASTC 6x6 HDR | 6x6 | 16 | no | yes |
 | motion | 16x16 macroblock | variable | yes | yes |
 
 `motion` is not a GPU texture format: it is a transform codec with motion compensation,
@@ -55,7 +55,7 @@ alpha, and every block uses the four-color mode, so it decodes with alpha 1. The
 alpha mode is not produced.
 
 On the bench input (`make bench`, 1080p60, first 3 s), BC1 is 24.0 MB/s at 36.2 dB against
-BC7's 55.6 MB/s at 41.0 dB, ASTC 6x6's 34.1 MB/s at 37.4 dB and ASTC 8x8's 18.4 MB/s at
+BC7's 54.6 MB/s at 41.1 dB, ASTC 6x6's 34.1 MB/s at 37.4 dB and ASTC 8x8's 18.4 MB/s at
 34.0 dB, with 1.0 ms mean decode time per frame (BC7 1.5 ms). `--quality medium` and
 `thorough` (2 and 3 least-squares passes) gain 0.2 dB, so `fast` is the default.
 

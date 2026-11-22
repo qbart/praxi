@@ -43,7 +43,7 @@ Cargo workspace under `crates/`:
 |---|---|---|
 | `praxi-format` | Container reader and writer, chunk compression, cue sheets (feature `cue-sheet`) | `lz4_flex`, optional `serde_json` |
 | `praxi` | Runtime player: variant selection, frame reconstruction, clock, events | `praxi-format` |
-| `praxi-encoder` | Encoder library: RGBA frames to `.praxi` | `ktx-rs`, `praxi-format` |
+| `praxi-encoder` | Encoder library: RGBA frames to `.praxi` | `imgio`, `praxi-format` |
 | `praxi-cli` | `praxi` command line tool (encode via ffmpeg, inspect files, edit cues) | `praxi-encoder`, `clap`, `serde_json` |
 | `praxi-wgpu` | Texture upload and drawing for `wgpu` engines ([engine-integration.md](engine-integration.md)) | `praxi`, `wgpu` |
 | `praxi-viewer` | GPU viewer: plays files in a window, screenshots ([viewer.md](viewer.md)) | `praxi-wgpu`, `winit`, `praxi-audio` |
@@ -52,8 +52,9 @@ Cargo workspace under `crates/`:
 | `praxi-godot` | Godot 4.4+ extension: `VideoStreamPraxi` for `VideoStreamPlayer`, cues as signals ([godot.md](godot.md)) | `praxi`, `godot` (godot-rust) |
 | `praxi-audio` | Audio output for the viewer and the editor, with rate and channel conversion ([audio-output.md](audio-output.md)) | `praxi`, `cpal` |
 
-The runtime (`praxi`, `praxi-format`) does not depend on `ktx-rs`. Only the encoder does,
-with default features off (no Vulkan loader). See [video-codec.md](video-codec.md) and
+The runtime (`praxi`, `praxi-format`) does not depend on `imgio`, the pure-Rust texture
+codec library. Only the encoder does, with default features off (no image files, no GPU
+loaders); the CLI adds its `png` feature for `praxi frame`. See [video-codec.md](video-codec.md) and
 [encoder.md](encoder.md).
 
 ## Baseline measurements

@@ -39,13 +39,13 @@ known scale and gamut, not PQ or HLG code values that every engine would decode 
 |---|---|---|---|---|---|---|
 | BC6H (unsigned) | `0x0006` | 4x4 | 16 | RGB half float | Every GPU with BC7 (desktop, consoles, Apple silicon) | yes |
 | ASTC 4x4 HDR | `0x0111` | 4x4 | 16 | RGBA half float | ASTC HDR GPUs (Apple A13+ and M1+, Mali since Valhall; not every Adreno) | yes |
-| ASTC 6x6 HDR | `0x0113` | 6x6 | 16 | RGBA half float | as above | no (reserved, see [Later](#later)) |
+| ASTC 6x6 HDR | `0x0113` | 6x6 | 16 | RGBA half float | as above | yes |
 
 BC6H is the HDR format: it costs the same 16 bytes per block as BC7, so an HDR file is as
 large as a BC7 one (about 56 MB/s at 1080p60 before compression gains; the byte-plane and
 Huffman stages of [video-codec.md](video-codec.md#compression) apply unchanged).
-ASTC 4x4 HDR serves mobile GPUs that have it; elsewhere an SDR ASTC variant is the
-fallback. A format id names the data's interpretation: ASTC HDR blocks need a texture
+ASTC HDR serves mobile GPUs that have it, 4x4 at BC6H's size and 6x6 at 44% of it;
+elsewhere an SDR ASTC variant is the fallback. A format id names the data's interpretation: ASTC HDR blocks need a texture
 created with the HDR channel type, so they are not the LDR ASTC ids.
 
 The motion codec stays SDR for now ([Later](#later)).
@@ -107,8 +107,8 @@ Typical setups:
 
 - Desktop and consoles: `bc6h` + `bc7` (HDR and its SDR fallback), or `bc6h` alone when
   every target renders HDR.
-- Shipping one file everywhere: `bc6h` + `bc7` + `astc6x6`; add `astc4x4-hdr` for HDR on
-  recent mobile GPUs.
+- Shipping one file everywhere: `bc6h` + `bc7` + `astc6x6`; add `astc6x6-hdr` (or
+  `astc4x4-hdr` for higher quality) for HDR on recent mobile GPUs.
 
 ## Encoder
 
@@ -127,7 +127,7 @@ for frame in frames {
 }
 ```
 
-- `VariantConfig::bc6h()` and `VariantConfig::astc_hdr(4)` add HDR variants.
+- `VariantConfig::bc6h()` and `VariantConfig::astc_hdr(4)` / `astc_hdr(6)` add HDR variants.
 - `push_frame_hdr(&[f32])`: linear RGBA in the configured primaries, relative to reference
   white, straight alpha in `0..1`. HDR variants store RGB; SDR variants get the
   [tonemapped](#tonemap-to-sdr) frame with its alpha.
@@ -142,24 +142,15 @@ for frame in frames {
 
 ### Encoding paths
 
-Both from `ktx-rs`, like the SDR formats ([video-codec.md](video-codec.md#encoding-paths)):
+From `imgio`, like the SDR formats ([video-codec.md](video-codec.md#encoding-paths)):
+`imgio::encode` on the frame as `Rgba32Float`, on all cores.
 
-- **BC6H**: `basisu::astc_6x6_hdr::fast_encode_bc6h` per 4x4 block of half floats
-  (unsigned). `--quality` picks its search:
+| Variant | Encoder | `fast` | `medium` | `thorough` |
+|---|---|---|---|---|
+| BC6H | basisu `fast_encode_bc6h` (unsigned), from RGB halves | `Quality::Default`: 2 endpoint modes, 1 two-subset pattern | `Quality::High`: 4 modes, 8 patterns | `Quality::Best`: 9 modes, 32 patterns, brute-force weights |
+| ASTC 4x4 / 6x6 HDR | astcenc 6.0 port, HDR profile (`AstcKind::Float`) | `Quality::Fastest` (preset 0) | `Quality::Fast` (preset 10) | `Quality::Default` (preset 60) |
 
-  | Quality | Endpoint modes | 2-subset patterns | Brute-force weights |
-  |---|---|---|---|
-  | `fast` | 2 | 1 | no |
-  | `medium` | 4 | 8 | no |
-  | `thorough` | 9 | 32 | yes |
-
-- **ASTC 4x4 HDR**: the UASTC HDR 4x4 block encoder (`basisu::uastc_hdr_4x4_enc::
-  astc_hdr_4x4_enc_block`, BC6H error weight 0.1 so it optimizes for ASTC), at level 0, 1
-  and 2 for `fast`, `medium` and `thorough`. UASTC HDR 4x4 blocks are standard ASTC 4x4
-  HDR blocks.
-
-The BC6H that the UASTC HDR search also produces is not used: on detailed frames it is
-about 2 dB worse than `fast_encode_bc6h` and 5 times slower ([Measurements](#measurements)).
+`--rdo` does not apply: astcenc's LZ RDO is for LDR profiles only.
 
 ### Temporal skip
 
@@ -177,7 +168,7 @@ praxi encode sunset_hdr10.mkv -o sunset.praxi --variant bc6h --variant bc7
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--variant bc6h`, `--variant astc4x4-hdr` | | HDR variants (with the existing SDR ones) |
+| `--variant bc6h`, `--variant astc4x4-hdr`, `--variant astc6x6-hdr` | | HDR variants (with the existing SDR ones) |
 | `--primaries <P>` | `bt709` | `bt709` or `bt2020`: primaries of the HDR variants |
 | `--reference-white <NITS>` | `203` | Nits that become 1.0 |
 | `--tonemap-white <W>` | `4.0` | `W` of the [SDR tonemap](#tonemap-to-sdr), for SDR variants of an HDR source |
@@ -210,8 +201,8 @@ work for every source.
 
 ## Player
 
-- `TextureFormat::Bc6h` and `TextureFormat::Astc4x4Hdr` (and the reserved
-  `Astc6x6Hdr`); `TextureFormat::is_hdr()`.
+- `TextureFormat::Bc6h`, `TextureFormat::Astc4x4Hdr` and `TextureFormat::Astc6x6Hdr`;
+  `TextureFormat::is_hdr()`.
 - `VideoParams::hdr()`, `primaries()` (`Primaries::Bt709` / `Bt2020`),
   `reference_white()`, `max_cll()`, `max_fall()`.
 - `VideoFrame` gets `hdr` next to `srgb`. HDR frames are uploaded like any other: rows of
@@ -223,9 +214,9 @@ work for every source.
 
 | Item | Change |
 |---|---|
-| `wgpu_format(format, srgb)` | `Bc6h` → `Bc6hRgbUfloat`; `Astc4x4Hdr` → `Astc { block: B4x4, channel: Hdr }`. |
-| `supported_formats(features)` | As today, then `Bc6h` (with `TEXTURE_COMPRESSION_BC`) and `Astc4x4Hdr` (with `TEXTURE_COMPRESSION_ASTC_HDR`) last: SDR preferred, HDR-only files still play. |
-| `supported_formats_hdr(features)` | `Bc6h`, then the BC formats; `Astc4x4Hdr`, then the ASTC formats. |
+| `wgpu_format(format, srgb)` | `Bc6h` → `Bc6hRgbUfloat`; `Astc4x4Hdr` and `Astc6x6Hdr` → `Astc { block: B4x4 / B6x6, channel: Hdr }`. |
+| `supported_formats(features)` | As today, then `Bc6h` (with `TEXTURE_COMPRESSION_BC`) and `Astc4x4Hdr`, `Astc6x6Hdr` (with `TEXTURE_COMPRESSION_ASTC_HDR`) last: SDR preferred, HDR-only files still play. |
+| `supported_formats_hdr(features)` | `Bc6h`, then the BC formats; `Astc4x4Hdr`, `Astc6x6Hdr`, then the ASTC formats. |
 | `capabilities_hdr(adapter, only)` | Like `capabilities`, with `supported_formats_hdr`. |
 | `required_features(adapter)` | Also `TEXTURE_COMPRESSION_ASTC_HDR` when the adapter has it. |
 | `VideoRenderer` | Into a float target (`Rgba16Float`, `Rgba32Float`, `Rg11b10Ufloat`): HDR tracks drawn as linear BT.709 values, BT.2020 streams converted in the shader. Into any other target: HDR tracks [tonemapped](#tonemap-to-sdr) with `set_tonemap_white(w)` (default 4.0). SDR tracks draw as today (linear values up to 1.0 in float targets). |
@@ -255,18 +246,19 @@ glow.
 With `hdr`, these come before the SDR formats; without it, after them. Godot draws the
 texture without a praxi shader, so it gets the values as stored: files for Godot use
 `bt709` (the default), and a project without HDR 2D (`rendering/viewport/hdr_2d`) clips
-values above 1.0; such projects should ship an SDR variant.
+values above 1.0; such projects should ship an SDR variant. Godot has no ASTC 6x6 image
+format, so `astc6x6-hdr` is not accepted.
 
 ## Tools
 
 - `praxi info` shows HDR streams as `video BC6H 1920x1080 HDR bt709 white 203 nits
   maxCLL 3249 maxFALL 410`.
 - `praxi frame` on an HDR variant: `-o FILE.exr` writes the linear half floats as OpenEXR
-  (RGB, the stream's primaries, through `ktx-rs`'s `tinyexr`); `-o FILE.png` writes the
-  [tonemapped](#tonemap-to-sdr) 8-bit image, with `--tonemap-white`. `--format` accepts
-  `bc6h` and `astc4x4-hdr`. The library adds `praxi_encoder::decode_frame_hdr(&VideoParams,
-  &[u8]) -> Vec<f32>` (RGBA, alpha 1), through `ktx-rs`'s `unpack_bc6h` and ASTC HDR
-  decoder.
+  (RGB, the stream's primaries, through `imgio::file` with its `exr` feature); `-o
+  FILE.png` writes the [tonemapped](#tonemap-to-sdr) 8-bit image, with `--tonemap-white`.
+  `--format` accepts `bc6h`, `astc4x4-hdr` and `astc6x6-hdr`. The library adds
+  `praxi_encoder::decode_frame_hdr(&VideoParams, &[u8]) -> Vec<f32>` (RGBA, alpha 1),
+  through `imgio::decode` (`Rgba16Float` output).
 - `praxi-viewer --hdr` prefers HDR variants (`capabilities_hdr`). The surface stays sRGB,
   so HDR tracks are tonemapped, `--tonemap-white W` (default 4.0); the window title shows
   `HDR` after the format. Screenshots are tonemapped PNGs.
@@ -278,10 +270,10 @@ values above 1.0; such projects should ship an SDR variant.
   and an HDR stream with reference white 0.
 - `praxi-encoder`: PQ, HLG and primaries conversions against reference values (PQ code
   0.5807 is 203 nits, so 1.0; HLG 0.75 is 203 nits on the 1000-nit display); the tonemap
-  curve at fixed points; BC6H and ASTC 4x4 HDR of a generated HDR frame (a gradient to 40.0
+  curve at fixed points; BC6H and ASTC 4x4 and 6x6 HDR of a generated HDR frame (a gradient to 40.0
   with colored highlights) decode within a PQ-PSNR floor; `max_cll`/`max_fall` of known
   frames; alpha is dropped from HDR variants and kept in SDR ones.
-- `praxi-wgpu`: `block_formats_draw_like_the_cpu_decoder` covers BC6H (and ASTC 4x4 HDR
+- `praxi-wgpu`: `block_formats_draw_like_the_cpu_decoder` covers BC6H (and ASTC HDR
   where the adapter has it) into an `Rgba16Float` target, within half-float rounding of
   the CPU decoder; an HDR track into an sRGB target matches the CPU tonemap within 1 per
   channel.
@@ -291,40 +283,41 @@ values above 1.0; such projects should ship an SDR variant.
 
 ## Measurements
 
-One 1080p frame per input, encoded with `ktx-rs` 4.4.4 on 24 threads (Ryzen AI 9 HX
-370), decoded with `ktx-rs`'s CPU decoders. Quality is PSNR of PQ code values (linear
-1.0 = 100 nits) against the source rounded to half floats; it is not comparable with the
-8-bit sRGB PSNR of the SDR formats.
+One 1080p frame per input, encoded with `imgio` 0.1.0 on 24 threads (Ryzen AI 9 HX 370)
+and decoded with `imgio`. Quality is PSNR of PQ code values (linear 1.0 = 100 nits)
+against the source rounded to half floats; it is not comparable with the 8-bit sRGB PSNR
+of the SDR formats.
 
 - *sky*: an OpenEXR sky panorama (1024x512) upscaled to 1920x1080, peak 3249 nits, 20% of
   pixels above 100 nits. Smooth.
 - *bunny*: a frame of the bench input with highlights expanded (`x / (1 - 0.95x)` on
   linear values, so SDR white becomes 2000 nits), 9% of pixels above 100 nits. Detailed.
 
-| Encoder | sky ms | sky dB | bunny ms | bunny dB |
+| Variant, `--quality` | sky ms | sky dB | bunny ms | bunny dB |
 |---|---|---|---|---|
-| BC6H `fast` | 8.6 | 55.40 | 20.0 | 43.07 |
-| BC6H `medium` | 10.4 | 55.44 | 46.1 | 43.56 |
-| BC6H `thorough` | 20.0 | 55.47 | 127.0 | 43.85 |
-| ASTC 4x4 HDR level 0 (`fast`) | 124 | 57.10 | 128 | 41.29 |
-| ASTC 4x4 HDR level 1 (`medium`) | 559 | 57.20 | 576 | 41.74 |
-| ASTC 4x4 HDR level 2 (`thorough`) | 1194 | 57.31 | 1208 | 41.88 |
-| BC6H from the UASTC HDR 4x4 search, levels 0-2 | 124-1194 | 56.00-56.93 | 128-1208 | 41.15-41.79 |
-| ASTC 6x6 HDR (`compress_photo`, levels 0 and 2) | 1618-1636 | 51.9 | 3434-5380 | 38.2 |
-| BC7 `fast` (SDR, for scale) | | | 73 | |
+| BC6H `fast` | 6.6 | 55.40 | 12.1 | 43.07 |
+| BC6H `medium` | 8.0 | 55.44 | 27.9 | 43.56 |
+| BC6H `thorough` | 13.2 | 55.47 | 81.1 | 43.85 |
+| ASTC 4x4 HDR `fast` | 81.9 | 58.99 | 78.8 | 45.31 |
+| ASTC 4x4 HDR `medium` | 115.4 | 59.25 | 115.5 | 45.87 |
+| ASTC 4x4 HDR `thorough` | 182.5 | 60.52 | 183.6 | 46.35 |
+| ASTC 6x6 HDR `fast` | 87.1 | 53.64 | 85.1 | 39.91 |
+| ASTC 6x6 HDR `medium` | 125.1 | 54.57 | 132.9 | 40.16 |
+| ASTC 6x6 HDR `thorough` | 218.4 | 55.16 | 239.9 | 40.49 |
+| BC7 `fast` (SDR, for scale) | | | 19 | |
 
-BC6H encodes faster than the BC7 praxi already writes. ASTC 4x4 HDR at `fast` is about 8
-frames per second at 1080p, fine for offline encoding. ASTC 6x6 HDR is too slow for video
-(a 10 s clip at 60 fps would take 16 to 54 minutes) and stays reserved.
+Every HDR variant encodes a 1080p frame in under 0.25 s, so a 10 s clip at 60 fps takes
+under a minute per variant at `fast`. Basis Universal's encoders (through `ktx-rs` 4.4.4,
+before praxi moved to `imgio`) were slower and worse for ASTC: UASTC HDR 4x4 took 128 ms
+per bunny frame at level 0 for 41.29 dB, and ASTC 6x6 HDR 3.4 s for 38.2 dB.
 
 ## Later
 
-- **ASTC 6x6 HDR**: once its encoder is fast enough (in `ktx-rs`), for smaller mobile HDR.
 - **HDR motion codec**: 10-bit PQ planes (`u16`, about twice the plane memory), decoded
   by the color pass into `Rgba16Float` as linear values. This is where HDR files become
   small; BC6H costs what BC7 does.
-- **HDR with alpha**: ASTC HDR RGB with LDR alpha (`astcenc`'s `HdrRgbLdrA` profile, once
-  `ktx-rs` encodes it), or a separate alpha track.
+- **HDR with alpha**: ASTC HDR with alpha (astcenc's HDR profile encodes it), with BC6H
+  variants as opaque or a separate alpha track.
 - **`praxi bench`** with PQ-PSNR for HDR variants (and the result format in
   [BENCH.md](../spec/BENCH.md)).
 - **HDR output in the viewer**: an HDR swapchain where `wgpu` offers one.

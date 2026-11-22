@@ -67,19 +67,18 @@ keyframes at scene cuts. Each needs a spec in `docs/features/` first.
 ## 4. HDR
 
 Spec: [hdr.md](docs/features/hdr.md), format 0.11. HDR video as linear half-float textures,
-for HDR displays and for video as an emissive material. The encoders are in `ktx-rs`
+for HDR displays and for video as an emissive material. The encoders are in `imgio`
 already (measured in the spec).
 
 - [ ] **Format and player**: texture formats BC6H and ASTC 4x4/6x6 HDR, the HDR color flag
   and the color description (primaries, reference white, MaxCLL/MaxFALL); `praxi info`.
-- [ ] **Encoder**: `bc6h` and `astc4x4-hdr` variants, `push_frame_hdr`, PQ/HLG/linear
+- [ ] **Encoder**: `bc6h`, `astc4x4-hdr` and `astc6x6-hdr` variants, `push_frame_hdr`, PQ/HLG/linear
   sources in the CLI, SDR variants tonemapped from HDR sources, PQ-based temporal skip.
 - [ ] **Playback**: `praxi-wgpu` formats and HDR/SDR drawing, `praxi frame` to EXR and
   tonemapped PNG, `praxi-viewer --hdr`.
 - [ ] **Engines**: Bevy `Rgba16Float` video images and `video_box --hdr` with bloom; Godot
   `hdr` and BC6H / ASTC HDR images.
-- [ ] Later: HDR motion codec (10-bit PQ planes), ASTC 6x6 HDR once its encoder is fast
-  enough, HDR with alpha.
+- [ ] Later: HDR motion codec (10-bit PQ planes), HDR with alpha.
 
 ## Not scheduled
 

@@ -62,7 +62,7 @@ without changing the version; readers ignore unknown fields.
 | `fps_num`, `fps_den` | integer | Frame rate as a fraction. |
 | `frames` | integer | Frames encoded. |
 | `settings.quality` | string | `fast`, `medium` or `thorough`. |
-| `settings.rdo` | number | UASTC RDO lambda for BC7 (`0` = off). |
+| `settings.rdo` | number | astcenc LZ RDO lambda for ASTC variants (`0` = off). In files from praxi 0.2.0 and earlier, UASTC RDO lambda for BC7. |
 | `settings.keyint` | integer | Frames between keyframes. |
 | `settings.skip_threshold` | integer | Temporal skip threshold. |
 | `settings.plane_min_saving` | number | Byte-plane policy in percent (`--plane-min-saving`). Missing in older files, read as `0`. |

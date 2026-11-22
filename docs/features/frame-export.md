@@ -26,12 +26,13 @@ praxi frame intro.praxi --at 2.5 --format astc6x6 --track 1 -o overlay.png
   The exported frame is the latest one at or before `--at`.
 - Without `--format`, each group uses its first variant in stream order. With `--format`,
   every group must have that variant.
-- Blocks are decoded to RGBA8 with the `ktx-rs` decoders. Padding blocks past the frame
+- Blocks are decoded to RGBA8 with the `imgio` decoders. Padding blocks past the frame
   edge are cropped, so the PNG has the stream's width and height.
 - Pixel values are written as stored. praxi frames are sRGB encoded, which is what PNG
   viewers expect, so no conversion happens.
-- Supported formats: BC1, BC7 and ASTC (LDR, every block size). BC3, BC4 and BC5 fail with
-  an error until a decoder is added.
+- Supported formats: every block format praxi defines (BC1, BC3, BC4, BC5, BC7 and LDR
+  ASTC of every block size). BC4 and BC5 are written as stored, as the viewer shows them:
+  red, and red plus green, with blue 0 and alpha 255.
 - `motion` frames are rebuilt with the CPU reference reconstruction
   (`motion::reconstruct` and `motion::to_rgba`, [motion-codec.md](motion-codec.md#coded-frames))
   from the coded frames the player queued since the preceding keyframe. The GPU decoder
@@ -42,4 +43,5 @@ praxi frame intro.praxi --at 2.5 --format astc6x6 --track 1 -o overlay.png
 
 `praxi_encoder::decode_frame(&VideoParams, &[u8]) -> Result<Vec<u8>>` returns
 `width * height * 4` bytes of RGBA8 for a frame's block data. It lives in the encoder crate
-because it needs `ktx-rs`; the runtime crates stay free of it.
+because it needs `imgio`; the runtime crates stay free of it. The PNG is written with
+`imgio::file` too.

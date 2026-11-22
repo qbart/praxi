@@ -226,7 +226,7 @@ Big Buck Bunny, 1080p60 (`make bench`, first 3 s):
 
 | Variant | Size | PSNR |
 |---|---|---|
-| BC7 | 55.6 MB/s | 41.0 dB |
+| BC7 | 54.6 MB/s | 41.1 dB |
 | BC1 | 24.0 MB/s | 36.2 dB |
 | ASTC 6x6 | 34.1 MB/s | 37.4 dB |
 | ASTC 8x8 | 18.4 MB/s | 34.0 dB |

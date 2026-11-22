@@ -186,7 +186,7 @@ pub fn bench(args: BenchArgs) -> AnyResult<()> {
 
     eprintln!("encoding {} ({}x{} @ {}/{} fps)", args.input.display(), p.width, p.height, p.fps_num, p.fps_den);
     let started = Instant::now();
-    let mut encoder = Encoder::new(BufWriter::new(File::create(&encoded.path)?), video_config(&p, &args.video))?;
+    let mut encoder = Encoder::new(BufWriter::new(File::create(&encoded.path)?), video_config(&p, &args.video)?)?;
     pump_frames(spawn_video(&args.input, &p, args.video.frames)?, frame_bytes, |frame| {
         encoder.push_frame(frame)?;
         Ok(())

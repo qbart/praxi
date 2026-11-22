@@ -19,7 +19,7 @@ praxi-audio = { path = "crates/praxi-audio", version = "0.2.0" }
 lz4_flex = "0.14"
 # Opus in pure Rust; the encoder adds the "analysis" feature.
 opus1 = { version = "0.3.0", default-features = false, features = ["std", "heap"] }
-ktx-rs = { version = "4.4.3", default-features = false }
+imgio = { version = "0.1.0", default-features = false }
 clap = { version = "4.6", features = ["derive"] }
 wgpu = "30"
 # Already a dependency of wgpu.
@@ -30,6 +30,6 @@ serde = { version = "1", features = ["derive"] }
 # preserve_order keeps cue field order; arbitrary_precision lets cue sheets reject integers outside i64.
 serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 
-# ktx-rs encoders are very slow unoptimised; keep dependencies fast in dev and test builds.
+# imgio encoders are very slow unoptimised; keep dependencies fast in dev and test builds.
 [profile.dev.package."*"]
 opt-level = 3

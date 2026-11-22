@@ -80,7 +80,7 @@ struct VideoOptions {
     variants: Vec<VariantArg>,
     #[arg(long, value_enum, default_value_t = QualityArg::Fast)]
     quality: QualityArg,
-    /// UASTC RDO strength for bc7 (0 = off).
+    /// astcenc LZ RDO strength for astc variants (0 = off, typically 10 to 40).
     #[arg(long, default_value_t = 0.0)]
     rdo: f32,
     /// Frames between keyframes.
@@ -456,7 +456,11 @@ fn pix_fmt_has_alpha(pix_fmt: &str) -> bool {
 }
 
 /// The encoder configuration for the video options, without audio and cues.
-fn video_config(p: &Probe, o: &VideoOptions) -> EncoderConfig {
+fn video_config(p: &Probe, o: &VideoOptions) -> AnyResult<EncoderConfig> {
+    let astc = |v: &&VariantArg| matches!(v, VariantArg::Astc4x4 | VariantArg::Astc6x6 | VariantArg::Astc8x8);
+    if o.rdo != 0.0 && !o.variants.iter().any(|v| astc(&v)) {
+        return Err("--rdo applies to astc variants only".into());
+    }
     let quality = match o.quality {
         QualityArg::Fast => Quality::Fast,
         QualityArg::Medium => Quality::Medium,
@@ -469,11 +473,11 @@ fn video_config(p: &Probe, o: &VideoOptions) -> EncoderConfig {
         .alpha(p.alpha);
     for v in &o.variants {
         let variant = match v {
-            VariantArg::Bc7 => VariantConfig::bc7().rdo(o.rdo),
+            VariantArg::Bc7 => VariantConfig::bc7(),
             VariantArg::Bc1 => VariantConfig::bc1(),
-            VariantArg::Astc4x4 => VariantConfig::astc(4),
-            VariantArg::Astc6x6 => VariantConfig::astc(6),
-            VariantArg::Astc8x8 => VariantConfig::astc(8),
+            VariantArg::Astc4x4 => VariantConfig::astc(4).rdo(o.rdo),
+            VariantArg::Astc6x6 => VariantConfig::astc(6).rdo(o.rdo),
+            VariantArg::Astc8x8 => VariantConfig::astc(8).rdo(o.rdo),
             VariantArg::Motion => VariantConfig::motion().qp(o.qp).slices(o.slices).chroma(match o.chroma {
                 ChromaArg::C420 => Chroma::C420,
                 ChromaArg::C444 => Chroma::C444,
@@ -481,7 +485,7 @@ fn video_config(p: &Probe, o: &VideoOptions) -> EncoderConfig {
         };
         config = config.variant(variant.quality(quality));
     }
-    config
+    Ok(config)
 }
 
 /// Starts an ffmpeg process decoding the video to the RGBA frames of `source` on its stdout.
@@ -521,7 +525,7 @@ fn pump_frames(mut ffmpeg: Child, frame_bytes: usize, mut push: impl FnMut(&[u8]
 
 fn encode(args: EncodeArgs) -> AnyResult<()> {
     let p = source(&args.input, &args.video)?;
-    let mut config = video_config(&p, &args.video);
+    let mut config = video_config(&p, &args.video)?;
     for cue in &args.cues {
         config = config.cue_with(cue.clone());
     }
@@ -683,9 +687,9 @@ fn frame(args: FrameArgs) -> AnyResult<()> {
     } else {
         praxi_encoder::decode_frame(&params, frame.data)?
     };
-    let png = ktx::lodepng::encode(&rgba, params.width, params.height, &mut ktx::lodepng::State::new())
-        .map_err(|code| format!("PNG encoding failed: {}", ktx::lodepng::lodepng_error_text(code)))?;
-    std::fs::write(&args.output, png)?;
+    let image = imgio::Surface::new(imgio::Format::Rgba8Srgb, params.width, params.height, &rgba)?;
+    let png = imgio::file::encode(imgio::file::FileFormat::Png, &image).map_err(|e| format!("PNG encoding failed: {e}"))?;
+    std::fs::write(&args.output, &png[..])?;
     println!(
         "{}: frame at {:.3} s, {} {}x{}",
         args.output.display(),

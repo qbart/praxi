@@ -138,12 +138,32 @@ Measured on the same input, 180 frames, and not worth their cost for camera foot
 
 ## Encoding paths
 
-Both come from `ktx-rs` (encoder only):
+Every block format comes from `imgio` (`imgio::encode` on the sRGB RGBA8 frame, on all
+cores), the encoder crate's only codec dependency:
 
-- **BC7**: each 4x4 block is encoded to UASTC (`basisu::uastc_enc::encode_uastc`), optionally
-  post-processed by UASTC RDO (`uastc_rdo`), then transcoded to BC7
-  (`basisu::uastc_bc7::transcode_uastc_to_bc7`).
-- **ASTC**: `astcenc::astcenc_compress_image` with the LDR sRGB profile.
+| Variant | Encoder | `fast` | `medium` | `thorough` |
+|---|---|---|---|---|
+| BC7 | `bc7f` up to `medium`, `bc7e` (slow) for `thorough` | `Quality::Fastest` | `Quality::Default` | `Quality::High` |
+| BC1 | basisu `encode_bc1`, 1, 2 or 3 least-squares passes | `Quality::Fast` | `Quality::Default` | `Quality::High` |
+| ASTC | astcenc 6.0 port, LDR sRGB profile, presets fast (10), medium (60), thorough (98) | `Quality::Fast` | `Quality::Default` | `Quality::High` |
+
+ASTC variants take astcenc's LZ rate-distortion optimization with `--rdo LAMBDA`
+(`EncodeOptions::rdo_lambda`, typically 10 to 40): block bytes that LZ4 and the byte-plane
+coders compress better, at some loss of quality. BC7 has no RDO.
+
+BC7 on the bench input (180 frames, video MB/s and PSNR, encoding time of the BC7 variant
+alone on 24 threads):
+
+| `--quality` | MB/s | PSNR | Encoding |
+|---|---|---|---|
+| `fast` | 54.6 | 41.08 dB | 3.5 s |
+| `medium` | 71.5 | 43.23 dB | 4.1 s |
+| `thorough` | 73.1 | 43.61 dB | 65 s |
+
+Until 0.2.0, BC7 was UASTC transcoded to BC7 (through `ktx-rs`), with UASTC RDO as `--rdo`;
+at `fast` it gave 55.6 MB/s at 41.00 dB, so `imgio`'s fastest mode is 1.8% smaller and
+0.08 dB better. BC1 output is byte for byte the same; ASTC sizes and PSNR are within 0.02%
+and 0.01 dB.
 
 Frames whose size is not a multiple of the block size are padded by repeating the last
 column and row; the stream's width and height keep the real size.
