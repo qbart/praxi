@@ -23,7 +23,8 @@ Audio is read separately, from the engine's audio callback, through `AudioOutput
   on mobile and Apple silicon ([texture-variants.md](texture-variants.md)). The player
   picks one variant per video group and `tracks()` reports it.
 - Create one texture per video track in the track's format (`*Srgb` when
-  `VideoParams::srgb()`), sized up to whole blocks (`blocks_x * block_width` by `blocks_y *
+  `VideoParams::srgb()`; a float format such as `Bc6hRgbUfloat` for HDR tracks,
+  `VideoParams::hdr()`, [hdr.md](hdr.md)), sized up to whole blocks (`blocks_x * block_width` by `blocks_y *
   block_height`); crop the padding through texture coordinates.
 - Upload the whole frame: rows of `blocks_x * block_bytes` bytes, `blocks_y` rows. The data
   is in the GPU's own layout; there is no conversion. A 1080p BC7 frame is 2 MB.
@@ -85,14 +86,16 @@ video.draw(&mut pass, praxi_wgpu::Rect::fit(width, height, target_w, target_h));
 
 | Item | Meaning |
 |---|---|
-| `supported_formats(features)` | Texture formats `wgpu` features allow, most preferred first: BC7, BC3, BC1, BC5, BC4, then ASTC 4x4, 5x5, 6x6, 8x8. |
+| `supported_formats(features)` | Texture formats `wgpu` features allow, most preferred first: BC7, BC3, BC1, BC5, BC4, then ASTC 4x4, 5x5, 6x6, 8x8, then the HDR formats BC6H and ASTC 4x4 / 6x6 HDR (with `TEXTURE_COMPRESSION_ASTC_HDR`). |
+| `supported_formats_hdr(features)`, `capabilities_hdr(adapter, only)` | The same with HDR formats first in each family ([hdr.md](hdr.md#praxi-wgpu)). |
 | `supports_motion(adapter)` | Whether the adapter can run the motion decoder's compute shaders ([motion-codec.md](motion-codec.md#gpu-decoder-praxi-wgpu)). |
 | `capabilities(adapter, only)` | `Capabilities` from the adapter's features, then `motion` when supported, or only `only` (error if not supported). |
-| `required_features(adapter)` | The texture compression features to request with the device. |
+| `required_features(adapter)` | The texture compression features to request with the device (BC, ASTC, ASTC HDR). |
 | `required_limits(adapter, base)` | `base` raised to what the motion decoder needs when the adapter supports it (`base` unchanged otherwise). Request the device with it whenever `capabilities` may contain `motion`: a device made with lower limits fails validation when a motion track's pipelines are created. |
 | `wgpu_format(format, srgb)` | The `wgpu` texture format of a praxi texture format. |
 | `Rect` | A pixel rectangle of the render target; `Rect::fit(w, h, target_w, target_h)` letterboxes; `point` and `position` map cue positions to pixels and back ([cue-runtime.md](cue-runtime.md#screen-positions)). |
 | `VideoRenderer::new(device, target_format, player)` | Pipelines for `target_format` and one texture per video track of `player`. One renderer per player. |
+| `set_tonemap_white(queue, w)` | HDR tracks drawn into a target that is not a float format are tonemapped with this white (default 4.0, [hdr.md](hdr.md#tonemap-to-sdr)); into `Rgba16Float`, `Rgba32Float` or `Rg11b10Ufloat` they are drawn as linear BT.709 values. |
 | `prepare(device, queue, player, opacity)` | Uploads the tracks whose frame changed and reconstructs the queued frames of `motion` tracks on the GPU; returns how many tracks changed. Sets the opacity (0 to 1) for the next draws. |
 | `set_gpu_timing(device, enabled)`, `gpu_times(device, queue)` | Profiling: GPU time of each motion pass from timestamp queries (needs `Features::TIMESTAMP_QUERY`; `gpu_times` waits for the GPU) ([motion-codec.md](motion-codec.md#gpu-timing)). |
 | `draw(pass, rect)` | Draws every track that has a frame into `rect`, in track order, each blended over what is already there (straight alpha times opacity). Sets the pass's viewport to `rect`. |

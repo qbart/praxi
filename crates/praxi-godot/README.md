@@ -1,7 +1,7 @@
 # praxi for Godot
 
 Plays [praxi](https://github.com/qbart/praxi) video files in Godot 4.4 and newer. Frames
-stay block-compressed on the GPU (BC7, BC1, ASTC 4x4, ASTC 8x8), audio plays through
+stay block-compressed on the GPU (BC7, BC1, ASTC 4x4, ASTC 8x8, and BC6H for HDR), audio plays through
 `VideoStreamPlayer`, and timed cues stored in the video arrive as signals.
 
 ## Install

@@ -35,19 +35,21 @@ value these tests fail instead, which shows they all ran.
 | `praxi-godot`: `plays_in_godot` | Godot 4.4 or newer: `GODOT`, or `godot` / `godot4` on `PATH` ([godot.md](godot.md#tests)) |
 | `praxi-bevy`: `plays_into_the_image_and_sends_events` | An adapter (the motion clip also needs compute shaders) |
 | `praxi-bevy`: `mipmaps_are_drawn_from_the_frames` | An adapter that samples BC7 |
+| `praxi-bevy`: `hdr_images_hold_linear_values` | An adapter that samples BC6H |
+| `praxi-wgpu`: `hdr_formats_draw_like_the_cpu_decoder` | An adapter that samples BC6H or ASTC HDR; draws BC6H (BT.709 and BT.2020) and ASTC 4x4 / 6x6 HDR into `Rgba16Float` against the CPU decoder (within half-float rounding) and into `Rgba8UnormSrgb` against the CPU tonemap (within 1 per channel) ([hdr.md](hdr.md#tests)). |
 
 ## What the tests cover
 
 | Crate | Tests |
 |---|---|
-| `praxi-format` | Container round trips, corrupt input, byte planes, cue payloads and cue sheets, cue replacement, ADPCM, the motion entropy decoder and decode-ahead |
+| `praxi-format` | Container round trips, corrupt input, byte planes, cue payloads and cue sheets, cue replacement, ADPCM, the motion entropy decoder and decode-ahead, the HDR color description and its color math (PQ, HLG, primaries, tonemap) |
 | `praxi` | Player: variant selection, events, cues, seeking, looping, audio outputs and clocks |
-| `praxi-encoder` | Encoding every variant and playing it back, CPU decoding, BC1, motion frames, audio, cue replacement on a motion file |
-| `praxi-wgpu` | Format mapping, the GPU motion decoder against the CPU reference, block formats drawn against the CPU decoder |
-| `praxi-cli` | Argument parsing, SRT conversion, cue add and remove; `tests/cli.rs` runs the binary end to end on a video ffmpeg generates: `encode` (BC1, BC7, motion, `--scale`, `--fps`, audio, cues), `info`, `frame`, `cues export / import / add / remove / srt` and `bench --json` |
+| `praxi-encoder` | Encoding every variant and playing it back, CPU decoding, BC1, motion frames, audio, cue replacement on a motion file, HDR variants (`tests/hdr.rs`: PQ-PSNR, light levels, tonemapped SDR variants) |
+| `praxi-wgpu` | Format mapping, the GPU motion decoder against the CPU reference, block and HDR formats drawn against the CPU decoder |
+| `praxi-cli` | Argument parsing, SRT conversion, cue add and remove; `tests/cli.rs` runs the binary end to end on a video ffmpeg generates: `encode` (BC1, BC7, motion, `--scale`, `--fps`, audio, cues), `info`, `frame`, `cues export / import / add / remove / srt` and `bench --json`; HDR sources (`encodes_hdr_sources`: a PQ clip to BC6H, ASTC 6x6 HDR and BC7, `info`, `frame` to EXR and PNG) |
 | `praxi-viewer`, `praxi-editor` | Argument parsing, the editor's document, drafts and file closing |
 | `praxi-audio` | Resampling and channel mapping, without a device |
-| `praxi-bevy` | The plugin in a headless Bevy app: frames drawn and copied into the image, events as messages |
+| `praxi-bevy` | The plugin in a headless Bevy app: frames drawn and copied into the image, events as messages, mipmaps, HDR images |
 
 ## Window checks under Xvfb
 

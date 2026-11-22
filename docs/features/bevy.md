@@ -65,8 +65,10 @@ let video = PraxiVideo::open_with(path, &adapter, &mut images, options)?;
 ```
 
 - `PraxiVideo::open(path, adapter, images)` is `open_with` with
-  `PraxiVideoOptions::default()` (`mipmaps: false`): the image has one mip level, as
-  before.
+  `PraxiVideoOptions::default()` (`mipmaps: false`, `hdr: false`): the image has one mip
+  level, as before.
+- `PraxiVideoOptions::hdr` prefers HDR variants and makes the image `Rgba16Float`, linear
+  ([hdr.md](hdr.md#bevy)); mipmaps work the same on it.
 - With `mipmaps`, the image has the full chain (`floor(log2(max(width, height))) + 1`
   levels), `RENDER_ATTACHMENT` usage, and a trilinear sampler (linear min, mag and mipmap
   filters; `ImageSamplerDescriptor::linear`).
@@ -148,6 +150,7 @@ whose `base_color_texture` is the video's image: no render target beyond the plu
 own. The left box plays without mipmaps, the right one with them (two `PraxiVideo`s on
 the same file), so the shimmering of the left box at a distance shows what mipmaps fix.
 Each label shows the box's texture format, its clock and the index of the frame decoded last. Up and Down move the camera away and back, Space plays and pauses the video, R starts and stops the spinning (to compare the boxes standing still), Escape quits. There is no audio.
+With `--hdr` the boxes are emissive on an HDR camera with bloom ([hdr.md](hdr.md#bevy)).
 `make video-box` runs it on a moving test pattern (ffmpeg's `testsrc2`, 1280x720 at 30 fps for 10 s, encoded to BC7): the sample is one slow shot whose motion is hard to see on a small spinning box. `make video-box-bunny` runs it on the Big Buck Bunny sample (`make cue-game`'s file).
 
 ![Far away: without mipmaps (left) the video sparkles, with them (right) it is smooth](../images/mipmaps.jpg)

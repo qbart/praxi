@@ -1,7 +1,7 @@
 # praxi
 
 The praxi video player for games. Frames are stored as GPU block-compressed textures
-(BC7, BC1, ASTC) or as a GPU-decoded motion codec, so playback is a light decompress and a
+(BC7, BC1, ASTC, and BC6H or ASTC HDR for HDR video) or as a GPU-decoded motion codec, so playback is a light decompress and a
 texture upload, with no YUV conversion and no per-pixel CPU work. The player also plays
 PCM, ADPCM and Opus audio and emits timed cues (subtitles, markers, anything the game
 defines) as events.

@@ -20,7 +20,10 @@ sounds all come from cues stored in the video file.*
   compressed in VRAM. The motion codec decodes on the GPU and reaches BC7's quality at
   about a sixth of its size.
 - **One file for every platform.** A video can hold several texture formats (BC7 or BC1
-  for desktop, ASTC for mobile); the player picks the one the GPU supports.
+  for desktop, ASTC for mobile, BC6H and ASTC HDR for HDR); the player picks the one the
+  GPU supports.
+- **HDR.** BC6H and ASTC HDR variants decode to linear floats for HDR rendering, bloom
+  and emissive screens; PQ, HLG and OpenEXR sources, with SDR variants tonemapped from them.
 - **Alpha.** Straight alpha for videos composited over the game.
 - **Seamless.** Fast seeking, gapless looping, several videos and several tracks at once.
 - **Audio.** PCM, IMA ADPCM and Opus tracks in any channel layout, handed to your mixer
@@ -87,7 +90,7 @@ praxi info intro.praxi
 For a BC7 and Opus file, `praxi info` prints:
 
 ```
-version   0.10
+version   0.11
 duration  10.000 s
 stream 0  group 0  time base 1/60  600 chunks  video BC7 1280x720 sRGB
 stream 1  group 0  time base 1/48000  101 chunks  audio "main" 48000 Hz 2 ch mask 0x0 opus preload 250 ms
@@ -241,7 +244,7 @@ decode cost; it does not compete with H.264 or AV1 on size
 
 - Features and design: [docs/features/](docs/features/), starting with
   [overview.md](docs/features/overview.md)
-- File format: [docs/spec/PRAXI.md](docs/spec/PRAXI.md) (version 0.10), cue sheets:
+- File format: [docs/spec/PRAXI.md](docs/spec/PRAXI.md) (version 0.11), cue sheets:
   [docs/spec/CUESHEET.md](docs/spec/CUESHEET.md)
 - Tests and checks: [testing.md](docs/features/testing.md) (`make check`)
 - Releasing: [releasing.md](docs/features/releasing.md)

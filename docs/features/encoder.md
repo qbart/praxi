@@ -15,7 +15,7 @@ praxi info intro.praxi
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--variant <V>` (repeatable) | `bc7` | `bc7`, `bc1` (opaque, [texture-variants.md](texture-variants.md#formats)), `astc4x4`, `astc6x6`, `astc8x8`, `motion` ([motion-codec.md](motion-codec.md#encoder) for `--qp`, `--chroma`, `--slices`) |
+| `--variant <V>` (repeatable) | `bc7` | `bc7`, `bc1` (opaque, [texture-variants.md](texture-variants.md#formats)), `astc4x4`, `astc6x6`, `astc8x8`, `motion` ([motion-codec.md](motion-codec.md#encoder) for `--qp`, `--chroma`, `--slices`), and the HDR variants `bc6h`, `astc4x4-hdr`, `astc6x6-hdr` ([hdr.md](hdr.md#cli)) |
 | `--quality <Q>` | `fast` | `fast`, `medium`, `thorough`: encoder effort per format ([video-codec.md](video-codec.md#encoding-paths)) |
 | `--rdo <LAMBDA>` | `0` (off) | astcenc LZ RDO strength for `astc*` variants (typically 10 to 40); higher is smaller and lower quality. An error without an ASTC variant. |
 | `--keyint <N>` | `60` | Frames between keyframes |
@@ -26,9 +26,12 @@ praxi info intro.praxi
 | `--fps <N[/D]>` | source rate | Resample to this frame rate, `N` or `N/D` frames per second, by dropping or repeating frames |
 | `--frames <N>` | all | Encode only the first `N` frames (after `--fps`) |
 | `--no-audio`, `--audio-layout`, `--audio-rate`, `--audio-format`, `--audio-name` | | Audio options, see [audio.md](audio.md#cli) |
+| `--primaries`, `--reference-white`, `--tonemap-white`, `--input-transfer` | | HDR options, see [hdr.md](hdr.md#cli) |
 
-The CLI runs `ffprobe` for width, height and frame rate, and `ffmpeg` to decode frames as
-raw RGBA (`-f rawvideo -pix_fmt rgba`), so alpha is kept when the source has it. Both must be
+The CLI runs `ffprobe` for width, height, frame rate, transfer function and primaries, and
+`ffmpeg` to decode frames as raw RGBA (`-f rawvideo -pix_fmt rgba`), so alpha is kept when
+the source has it. PQ, HLG and linear (OpenEXR) sources are decoded as float RGB instead
+and converted to linear light ([hdr.md](hdr.md#cli)). Both must be
 on `PATH`. All variants become streams of group 0. The first audio stream of the input is
 encoded too, through a separate `ffmpeg` process per audio variant.
 
@@ -81,7 +84,8 @@ let (_file, stats) = encoder.finish()?;
 `EncoderConfig::plane_min_saving(percent)` (default 8) sets the byte-plane policy, like
 `--plane-min-saving`. Frames are encoded on all CPU cores: block formats by `imgio`, the
 motion codec on `EncoderConfig::threads` workers (default `std::thread::available_parallelism`).
-`VariantConfig::rdo(lambda)` sets the RDO strength of an ASTC variant. Audio tracks
+`VariantConfig::rdo(lambda)` sets the RDO strength of an ASTC variant. HDR frames go
+through `Encoder::push_frame_hdr` with an HDR `ColorConfig` ([hdr.md](hdr.md#library)). Audio tracks
 are added with `EncoderConfig::audio` ([audio.md](audio.md#encoder)).
 
 ## Output

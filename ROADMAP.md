@@ -64,21 +64,19 @@ keyframes at scene cuts. Each needs a spec in `docs/features/` first.
   the exact frame (`SeekMode::Keyframe`), for scrubbing and skipping, where precision
   matters less than speed.
 
-## 4. HDR
+## 4. HDR: what is left
 
-Spec: [hdr.md](docs/features/hdr.md), format 0.11. HDR video as linear half-float textures,
-for HDR displays and for video as an emissive material. The encoders are in `imgio`
-already (measured in the spec).
+HDR video in BC6H and ASTC 4x4 / 6x6 HDR is done (M13, [hdr.md](docs/features/hdr.md)).
+Checked on llvmpipe (GPU tests, viewer screenshots, `video_box --hdr` under Xvfb) and in
+headless Godot. Still open:
 
-- [ ] **Format and player**: texture formats BC6H and ASTC 4x4/6x6 HDR, the HDR color flag
-  and the color description (primaries, reference white, MaxCLL/MaxFALL); `praxi info`.
-- [ ] **Encoder**: `bc6h`, `astc4x4-hdr` and `astc6x6-hdr` variants, `push_frame_hdr`, PQ/HLG/linear
-  sources in the CLI, SDR variants tonemapped from HDR sources, PQ-based temporal skip.
-- [ ] **Playback**: `praxi-wgpu` formats and HDR/SDR drawing, `praxi frame` to EXR and
-  tonemapped PNG, `praxi-viewer --hdr`.
-- [ ] **Engines**: Bevy `Rgba16Float` video images and `video_box --hdr` with bloom; Godot
-  `hdr` and BC6H / ASTC HDR images.
-- [ ] Later: HDR motion codec (10-bit PQ planes), HDR with alpha.
+- [ ] **Real hardware and an HDR display**: the viewer, `video_box --hdr` and the Godot
+  example on a desktop GPU; ASTC HDR on a GPU that samples it (llvmpipe has no ASTC).
+- [ ] **Real HDR footage**: encode measurements on HDR10 and HLG clips, next to the stills
+  in [hdr.md](docs/features/hdr.md#measurements).
+- [ ] **`praxi bench`** with PQ-PSNR for HDR variants.
+- [ ] Later: HDR motion codec (10-bit PQ planes), HDR with alpha, an HDR swapchain in the
+  viewer.
 
 ## Not scheduled
 

@@ -34,7 +34,7 @@ praxi-viewer intro.praxi --screenshot frame.png --at 2.5
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--format <F>` | best supported | Only accept this format: `bc1`, `bc3`, `bc4`, `bc5`, `bc7`, `astc4x4`, `astc5x5`, `astc6x6`, `astc8x8`, `motion` (case and spaces ignored, as parsed by `TextureFormat::parse`). Fails if the GPU cannot sample it or, for `motion`, cannot run compute shaders. |
+| `--format <F>` | best supported | Only accept this format: `bc1`, `bc3`, `bc4`, `bc5`, `bc7`, `bc6h`, `astc4x4`, `astc5x5`, `astc6x6`, `astc8x8`, `astc4x4-hdr`, `astc6x6-hdr`, `motion` (case, spaces and dashes ignored, as parsed by `TextureFormat::parse`). Fails if the GPU cannot sample it or, for `motion`, cannot run compute shaders. |
 | `--loop` | off | Start with looping on. |
 | `--paused` | off | Open paused at the first frame. |
 | `--at <SECONDS>` | `0` | Start position. |
@@ -43,6 +43,8 @@ praxi-viewer intro.praxi --screenshot frame.png --at 2.5
 | `--cues <SHEET>` (repeatable) | | Play the cues of these cue sheets in place of the file's, reloading them when they change ([cue-preview.md](cue-preview.md)). |
 | `--screenshot <PNG>` | | Render the frame at `--at` without a window, write it and exit. |
 | `--size <WxH>` | video size | Screenshot size. |
+| `--hdr` | off | Prefer HDR variants (BC6H, ASTC HDR; `praxi_wgpu::capabilities_hdr`). The surface stays sRGB, so they are tonemapped ([hdr.md](hdr.md#tonemap-to-sdr)); the window title shows `HDR`. |
+| `--tonemap-white <W>` | `4.0` | The linear value HDR tracks are tonemapped to white. |
 
 The adapter and backend are chosen by wgpu and can be overridden with its environment
 variables, for example `WGPU_BACKEND=gl` or `WGPU_ADAPTER_NAME=llvmpipe`.
@@ -51,7 +53,8 @@ variables, for example `WGPU_BACKEND=gl` or `WGPU_ADAPTER_NAME=llvmpipe`.
 
 The viewer builds the player's `Capabilities` from the adapter's features:
 
-1. With `--format F`: `[F]` if the adapter supports it, otherwise an error.
+1. With `--format F`: `[F]` if the adapter supports it, otherwise an error. With `--hdr`,
+   the order of `praxi_wgpu::supported_formats_hdr` below: HDR formats first in each family.
 2. Otherwise BC formats if `TEXTURE_COMPRESSION_BC` is available (BC7, BC3, BC1, BC5,
    BC4), followed by ASTC formats if `TEXTURE_COMPRESSION_ASTC` is available (4x4, 5x5,
    6x6, 8x8). Desktop GPUs get BC, mobile and Apple silicon ASTC, as in

@@ -15,9 +15,10 @@ praxi frame intro.praxi --at 2.5 --format astc6x6 --track 1 -o overlay.png
 | Option | Default | Meaning |
 |---|---|---|
 | `--at <SECONDS>` | `0` | Time of the frame |
-| `--format <F>` | first variant | Variant to decode: `bc1`, `bc3`, `bc4`, `bc5`, `bc7`, `astc4x4`, `astc5x5`, `astc6x6`, `astc8x8`, `motion` |
+| `--format <F>` | first variant | Variant to decode: `bc1`, `bc3`, `bc4`, `bc5`, `bc7`, `bc6h`, `astc4x4`, `astc5x5`, `astc6x6`, `astc8x8`, `astc4x4-hdr`, `astc6x6-hdr`, `motion` |
 | `--track <N>` | `0` | Track (group) index, as listed by the player |
-| `-o, --output <PNG>` | | Output file |
+| `-o, --output <FILE>` | | Output file: PNG, or for HDR frames OpenEXR (`.exr`) |
+| `--tonemap-white <W>` | `4.0` | HDR frames written as PNG: the linear value tonemapped to white |
 
 ## Behaviour
 
@@ -37,11 +38,16 @@ praxi frame intro.praxi --at 2.5 --format astc6x6 --track 1 -o overlay.png
   (`motion::reconstruct` and `motion::to_rgba`, [motion-codec.md](motion-codec.md#coded-frames))
   from the coded frames the player queued since the preceding keyframe. The GPU decoder
   produces the same pixels.
+- HDR frames (BC6H, ASTC HDR) decode to linear floats ([hdr.md](hdr.md#tools)). With an
+  `.exr` output they are written as RGBA half floats, alpha 1, in the stream's primaries;
+  otherwise as an 8-bit PNG through the [SDR tonemap](hdr.md#tonemap-to-sdr).
 - The command prints the frame's timestamp, format and size.
 
 ## Library
 
 `praxi_encoder::decode_frame(&VideoParams, &[u8]) -> Result<Vec<u8>>` returns
-`width * height * 4` bytes of RGBA8 for a frame's block data. It lives in the encoder crate
+`width * height * 4` bytes of RGBA8 for a frame's block data;
+`praxi_encoder::decode_frame_hdr(&VideoParams, &[u8]) -> Result<Vec<f32>>` the linear RGBA
+floats of an HDR frame. It lives in the encoder crate
 because it needs `imgio`; the runtime crates stay free of it. The PNG is written with
 `imgio::file` too.

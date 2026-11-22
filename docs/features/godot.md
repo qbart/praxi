@@ -62,7 +62,8 @@ The resource for a `.praxi` file, set as a `VideoStreamPlayer`'s `stream`.
 |---|---|
 | `file: String` | The file (inherited from `VideoStream`); `res://`, `user://` or an absolute path. |
 | `looping: bool` | Seamless looping in the player (default `false`). `VideoStreamPlayer.loop` restarts the stream instead, with a gap. |
-| `formats: PackedStringArray` | Texture formats to accept, by name (`bc7`, `bc1`, `astc4x4`, `astc8x8`). Empty (default): what the rendering device supports. |
+| `formats: PackedStringArray` | Texture formats to accept, by name (`bc7`, `bc1`, `astc4x4`, `astc8x8`, `bc6h`, `astc4x4-hdr`). Empty (default): what the rendering device supports. |
+| `hdr: bool` | Prefer HDR variants (default `false`): BC6H and ASTC 4x4 HDR before the SDR formats instead of after them ([hdr.md](hdr.md#godot)). |
 | `active_cues() -> Array[Dictionary]` | Cues active at the clock of the playback that plays this stream ([cue-runtime.md](cue-runtime.md#active-cues)), each as in [Cue dictionaries](#cue-dictionaries). Empty when nothing plays. |
 | `upcoming_cues(within: float) -> Array[Dictionary]` | Cues starting within `within` seconds, each with an extra `until` (seconds) ([cue-runtime.md](cue-runtime.md#upcoming-cues)). |
 | signal `cue(id: int, type: String, fields: Dictionary, time: float, duration: float, position: Variant)` | A cue started. `position` is a `Vector2` in `0..1` of the video (`x`, `y` fields, [cues.md](cues.md#screen-position)) or `null`. |
@@ -115,7 +116,7 @@ playing.
 
 | Feature | praxi format | Godot `Image` format |
 |---|---|---|
-| `bptc` | BC7 | `FORMAT_BPTC_RGBA` |
+| `bptc` | BC7, and BC6H after the others ([hdr.md](hdr.md#godot)) | `FORMAT_BPTC_RGBA`, `FORMAT_BPTC_RGBFU` |
 | `s3tc` | BC1 | `FORMAT_DXT1` |
 | `astc` | ASTC 4x4, ASTC 8x8 | `FORMAT_ASTC_4x4`, `FORMAT_ASTC_8x8` |
 

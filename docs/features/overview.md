@@ -130,6 +130,11 @@ machine is recorded in the baseline's `machine`).
 15. **0.2.0** Second release: the Godot addon in a release for the first time, opt-in
     mipmaps for video on 3D surfaces in Bevy and the video box example
     ([bevy.md](bevy.md#mipmaps)), and the machine recorded in benchmarks.
+16. **M13** HDR video in format 0.11: BC6H and ASTC 4x4 / 6x6 HDR variants as linear
+    half-float textures with a color description, PQ, HLG and OpenEXR sources, SDR
+    variants tonemapped from them, HDR drawing in `praxi-wgpu`, the viewer, Bevy and Godot
+    ([hdr.md](hdr.md)); every texture encoder and decoder from `imgio`
+    ([video-codec.md](video-codec.md#encoding-paths)).
 
 ## Next
 

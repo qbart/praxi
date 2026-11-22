@@ -1,6 +1,7 @@
 # praxi-encoder
 
-Encoder library for `.praxi` files: RGBA frames in, BC7, BC1, ASTC or motion-codec video
+Encoder library for `.praxi` files: RGBA or linear HDR frames in, BC7, BC1, ASTC, BC6H,
+ASTC HDR or motion-codec video
 out, with audio tracks and cues.
 
 ```rust
